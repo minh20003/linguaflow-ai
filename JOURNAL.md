@@ -1,4 +1,25 @@
-# Weekly Journal — Team [Tên Team]
+# Weekly Journal — Team [T
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ên Team]
 
 > Ghi lại mỗi tuần: học được gì, khó khăn gì, quyết định gì, kế hoạch tiếp.
 
