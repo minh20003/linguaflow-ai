@@ -2,7 +2,6 @@
 
 ## System Overview
 
-[Tóm tắt 2-3 câu về kiến trúc hệ thống]
 
 ## Architecture Diagram
 
