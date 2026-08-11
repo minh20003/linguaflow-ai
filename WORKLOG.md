@@ -67,7 +67,7 @@ Tài liệu ghi nhận công việc theo ngày: người thực hiện, nội du
 
 | Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
 |---|---|---|---|---|
-| Toàn nhóm | Xây dựng 6 sơ đồ thiết kế Gate 2 (System Design, Sequence, Use Case, Agent Flow, Data Flow, ER) | Hoàn thành | `docs/T217/Gate 2/ArchitectureDesign.drawio` và 4 tệp PNG | — |
+| Toàn nhóm | Xây dựng 6 sơ đồ thiết kế Gate 2 (System Design, Sequence, Use Case, Agent Flow, Data Flow, ER) | Hoàn thành | Bộ 6 sơ đồ thiết kế và hình ảnh minh họa | — |
 | Minh | Review System Design, đề xuất phương án lựa chọn LLM | Hoàn thành | Ý kiến ghi trong sheet *Design* (TO DO LIST) | — |
 | Hưởng | Review Sequence Diagram, đề xuất thống nhất ngữ cảnh 3-5 tin và tách Main Database khỏi Context Memory | Hoàn thành | Ý kiến ghi trong sheet *Design* | — |
 | Thuận | Review Use Case Diagram, đề xuất loại bỏ use case kỹ thuật và tách riêng hai actor | Hoàn thành | Ý kiến ghi trong sheet *Design* | — |
