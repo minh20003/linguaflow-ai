@@ -13,6 +13,24 @@ from src.database.models import User
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+async def get_user_by_token(token: str, db: AsyncSession) -> User | None:
+    """Resolve a database user from a validated access token.
+
+    The helper is transport-neutral so HTTP dependencies and WebSocket handlers
+    use the same token validation and user lookup path.
+    """
+    payload = decode_token(token)
+    if payload is None:
+        return None
+
+    user_id = payload.get("sub")
+    if not isinstance(user_id, str) or not user_id:
+        return None
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
@@ -41,19 +59,7 @@ async def get_current_user(
     if credentials is None:
         raise credentials_exception
 
-    token = credentials.credentials
-    payload = decode_token(token)
-
-    if payload is None:
-        raise credentials_exception
-
-    user_id: str | None = payload.get("sub")
-    if user_id is None:
-        raise credentials_exception
-
-    # Fetch user from database
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    user = await get_user_by_token(credentials.credentials, db)
 
     if user is None:
         raise credentials_exception
