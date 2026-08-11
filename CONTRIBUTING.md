@@ -7,11 +7,8 @@
 
 ## Phạm vi và hiệu lực
 
-Tài liệu này chuẩn hoá quy định làm việc của nhóm, tổng hợp từ `docs/T217/1. T217 - Project Chart + Report.xlsx` (sheet *Quy Định*, *Quy Định Nội Bộ*) và `docs/T217/2. T217 - Team Project Management.xlsx`.
+Tài liệu này chuẩn hoá quy định làm việc của nhóm và là **nguồn tham chiếu duy nhất** về quy trình làm việc, tiêu chuẩn chất lượng và quản lý mã nguồn trong suốt dự án.
 
-Đây là nguồn tham chiếu duy nhất về quy trình làm việc. Trường hợp có khác biệt với các tệp Excel nêu trên, áp dụng theo tài liệu này.
-
-> **Ghi chú:** thư mục `docs/T217/` không được đưa vào kho mã nguồn (khai báo trong `.gitignore`). Các tệp Excel nêu trên được lưu trữ và chia sẻ qua kênh nội bộ của nhóm. Danh mục đầy đủ: xem [`ARCHITECTURE.md`](ARCHITECTURE.md) mục 10.2.
 
 ## Mục lục
 
@@ -84,8 +81,6 @@ docs: update api contract for translation_id
 test: add unit tests for translate node
 chore: bump langchain-groq version
 ```
-
-> Quy định này thay thế hướng dẫn trong tệp Excel gốc. Hướng dẫn cũ không nhất quán: quy định viết tiếng Anh nhưng ví dụ minh hoạ sử dụng tiền tố tiếng Việt (`Thêm:`, `Sửa:`, `Cập nhật:`).
 
 ### 4.3. Pull Request và review
 

@@ -38,18 +38,33 @@ Hệ thống sử dụng một nguồn dữ liệu duy nhất (`DB`), đảm nhi
 
 ```mermaid
 graph TD
-    START([Agent nhận tin nhắn cần dịch]) --> Detect[Xác định ngôn ngữ nguồn/đích]
-    Detect --> SameLang{Ngôn ngữ nguồn = đích?}
+    START([Agent nhận tin nhắn cần dịch]) --> TooShort{Quá ngắn hoặc<br/>không có chữ cái?}
+    TooShort -->|Có| UseTemp[Giữ giá trị tạm<br/>= preferred_language người gửi]
+    TooShort -->|Không| Local[langdetect cục bộ<br/>~2ms, không gọi API]
+    Local --> Agree{Trùng giá trị tạm?}
+    Agree -->|Có| UseLocal[Dùng kết quả langdetect]
+    Agree -->|Không / thất bại| LLMDetect[LLM detect phân xử<br/>~1300ms]
+
+    UseTemp --> SameLang
+    UseLocal --> SameLang
+    LLMDetect --> SameLang
+
+    SameLang{Ngôn ngữ nguồn = đích?}
     SameLang -->|Có| ReturnOriginal[Trả về nguyên bản]
     SameLang -->|Không| BuildContext[Đọc 3-5 tin gần nhất<br/>từ bảng messages]
     BuildContext --> Prompt[Tạo prompt: text + context + target_lang]
     Prompt --> CallLLM[Gọi LLM — streaming]
     CallLLM --> Valid{Bản dịch hợp lệ?}
-    Valid -->|Không / timeout| Fallback[Fallback: trả về nguyên bản]
+    Valid -->|Không / timeout| FallbackProvider[Provider dự phòng<br/>deep-translator, ADR-07]
     Valid -->|Có| ReturnTranslated[Trả về bản dịch]
 
+    FallbackProvider --> FallbackOk{Dự phòng dịch được?}
+    FallbackOk -->|Có| ReturnFallback[Trả bản dịch dự phòng<br/>is_fallback = true]
+    FallbackOk -->|Không| ReturnOriginalOnError[Trả về nguyên bản<br/>is_fallback = true]
+
     ReturnOriginal --> Deliver([Gửi kết quả tới người nhận])
-    Fallback --> Deliver
+    ReturnFallback --> Deliver
+    ReturnOriginalOnError --> Deliver
     ReturnTranslated --> Deliver
 
     ReturnTranslated -.async, không chặn response.-> Persist[(Lưu translation_results)]
@@ -60,7 +75,21 @@ graph TD
     Correction --> END
 ```
 
-**Thay đổi so với thiết kế Gate 2:** thành phần "Temporary Context Store" được loại bỏ. Bước "Đọc 3-5 tin gần nhất" truy vấn trực tiếp bảng `messages`, do ngữ cảnh là cửa sổ trượt theo thời gian, không yêu cầu tìm kiếm ngữ nghĩa.
+**Đặc điểm kiến trúc của Agent Flow:**
+
+1. Hệ thống không sử dụng Vector Store riêng; bước "Đọc 3-5 tin gần nhất" truy vấn trực tiếp bảng `messages`, do ngữ cảnh là cửa sổ trượt theo thời gian (ADR-01).
+2. Bước xác định ngôn ngữ nguồn sử dụng chiến lược hai tầng: `langdetect` cục bộ trước, chỉ gọi LLM phân xử khi có mâu thuẫn (ADR-11).
+3. Nhánh fallback xử lý theo cơ chế hai tầng: khi LLM lỗi hoặc bản dịch không hợp lệ, Agent gọi provider dự phòng `deep-translator` (ADR-07); nếu provider dự phòng cũng thất bại thì trả về nguyên bản kèm `is_fallback = true`.
+
+**Chi phí mỗi tin nhắn theo nhánh:**
+
+| Nhánh | Số lần gọi LLM | Latency đo được (Groq) |
+|---|---|---|
+| Quá ngắn hoặc chỉ emoji | 0 | ~0ms |
+| langdetect trùng, nguồn = đích | 0 | ~2ms |
+| langdetect trùng, cần dịch | 1 | ~1501ms |
+| langdetect mâu thuẫn, cần dịch | 2 | ~2800ms |
+| LLM lỗi, provider dự phòng dịch thay | 1 (thất bại) | phụ thuộc mạng, giới hạn bởi `FALLBACK_TRANSLATOR_TIMEOUT_SECONDS` |
 
 ## 3. Data Flow
 
@@ -157,7 +186,7 @@ erDiagram
 
 **SD-01 — Dịch tin nhắn real-time trong hội thoại 1-1**
 
-Sơ đồ này thay thế bản trong `docs/T217/Gate 2/ArchitectureDesign.drawio`. Bản cũ chứa hai điểm không nhất quán với PRD: kích thước ngữ cảnh ghi 10 tin (PRD quy định 3-5 tin) và có bước áp dụng Glossary (thuộc Post-MVP). Bản `.drawio` không còn được sử dụng làm nguồn tham chiếu.
+Sơ đồ dưới đây mô tả chi tiết trình tự tương tác giữa các thành phần trong luồng dịch tin nhắn thời gian thực giữa hai người dùng khác ngôn ngữ.
 
 ```mermaid
 sequenceDiagram
@@ -277,4 +306,4 @@ graph LR
 
 1. Actor "Người gửi" chỉ liên kết với UC-04 (gửi tin nhắn). Actor "Người nhận" chỉ liên kết với UC-05, UC-07, UC-08 (nhận, xem, phản hồi). Không tồn tại liên kết chéo giữa hai vai trò.
 2. UC-06 là use case được gọi qua quan hệ `<<include>>` từ UC-04, không phải use case do người dùng kích hoạt trực tiếp.
-3. Sơ đồ này áp dụng đầy đủ các ý kiến review nội bộ ở giai đoạn W2 (sheet *Design*, tệp TO DO LIST): loại bỏ các use case mang tính kỹ thuật, tách riêng hai actor, hiệu chỉnh quan hệ `<<include>>`.
+3. Sơ đồ tập trung vào các chức năng người dùng tương tác trực tiếp, không đưa các thao tác kỹ thuật nội bộ vào use case.

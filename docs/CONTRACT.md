@@ -63,8 +63,10 @@ class AgentState(TypedDict, total=False):
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05
     is_valid: bool                # Kết quả của node validate_output
-    is_fallback: bool             # True khi trả về bản gốc do lỗi hoặc timeout
-    model: str                    # Ví dụ: "llama-3.3-70b-versatile"
+    is_fallback: bool             # True khi kết quả không đến từ LLM đã cấu hình:
+                                  # provider dự phòng dịch thay, hoặc trả về bản gốc
+    model: str                    # Ví dụ: "llama-3.3-70b-versatile";
+                                  # "deep-translator:google" khi do provider dự phòng dịch
     latency_ms: int
     error: str
 ```
@@ -164,7 +166,11 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 
 1. Khi `INSERT`: gán `messages.source_language` bằng `preferred_language` của người gửi. Đây là giá trị tạm, chưa xác nhận.
 2. Sự kiện `message.received` phát kèm giá trị tạm này.
-3. Sau khi Agent hoàn tất detect: nếu kết quả khác giá trị tạm, thực hiện `UPDATE messages.source_language` và phát giá trị đã xác nhận trong `translation.completed`.
+3. Agent xác định ngôn ngữ nguồn theo chiến lược hai tầng (ADR-11):
+   - Văn bản dưới 5 ký tự hoặc không chứa chữ cái: giữ giá trị tạm, không detect.
+   - `langdetect` (cục bộ, khoảng 2ms) trùng giá trị tạm: dùng kết quả này, không gọi LLM.
+   - `langdetect` mâu thuẫn với giá trị tạm hoặc thất bại: gọi LLM phân xử. `langdetect` kém tin cậy với câu ngắn nên kết quả của nó không được dùng khi có mâu thuẫn.
+4. Sau khi hoàn tất detect: nếu kết quả khác giá trị tạm, thực hiện `UPDATE messages.source_language` và phát giá trị đã xác nhận trong `translation.completed`.
 4. Nếu ngôn ngữ nguồn đã xác nhận trùng `target_language` của một người nhận, người nhận đó chỉ nhận `message.received` với `translation_status = "not_required"`, không nhận `translation.chunk` và `translation.completed`.
 
 ### 4.4. Quy tắc định tuyến chat nhóm (F-02, US-010)
