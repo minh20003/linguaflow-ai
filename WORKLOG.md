@@ -1,5 +1,4 @@
 # Worklog — Team P-217
-# NHẬT KÝ CÔNG VIỆC THEO NGÀY
 
 **Dự án:** LinguaFlow — AI Agent dịch tin nhắn đa ngôn ngữ real-time trong hội thoại
 **Mã dự án:** P-217 · **Nhóm thực hiện:** 4U
@@ -140,7 +139,7 @@ BOM nằm trước `#!` khiến git không nhận ra shebang → pre-push hook k
 | Hook ghi log tiếng Việt | Không lỗi mã hoá |
 | pre-push hook | `23 21 2F` — không BOM |
 | `submit_log.py` | `Submitted 13 entries → 202` |
-| Fhttps://github.com/AI20K-Build-Phase-Cohort-3/P-217/pull/3/conflict?name=WORKLOG.md&ancestor_oid=675408c254bfea5b87ac3b9fcd1c628353c3dfdf&base_oid=5a27567defcbffe9c4e62c71354a9147fe66fdc4&head_oid=0d126680b39218468921ac2b21e56323829d0147allback khi máy chưa có `.venv` | `C:\Program Files\Python313\python.exe` |
+| Fallback khi máy chưa có `.venv` | `C:\Program Files\Python313\python.exe` |
 | Overhead thêm mỗi lần gọi hook | ~0.2s |
 
 **Ghi chú cho team**
