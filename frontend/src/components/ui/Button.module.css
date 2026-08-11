@@ -1,0 +1,109 @@
+.button {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--s-3);
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  font-weight: 500;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    background-color var(--dur-hover) linear,
+    border-color var(--dur-hover) linear,
+    color var(--dur-hover) linear;
+}
+
+/* Nút được ấn XUỐNG. Nhãn giấy không nhấc lên khỏi bìa (§6). */
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+  transition-duration: var(--dur-press);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  color: var(--ink-disabled);
+  background: var(--surface-sunken);
+  border-color: var(--rule);
+}
+
+/* ─── Biến thể ───────────────────────────────────────────── */
+
+.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--ink-inverse);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--ink-hover);
+  border-color: var(--ink-hover);
+}
+
+.secondary {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--ink-secondary);
+}
+
+.ghost:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+
+/* ─── Cỡ ─────────────────────────────────────────────────── */
+
+.sm {
+  min-height: 30px;
+  padding-inline: var(--s-3);
+  font-size: var(--fs-small);
+}
+
+.md {
+  min-height: 38px;
+  padding-inline: var(--s-5);
+  font-size: var(--fs-body);
+}
+
+.lg {
+  min-height: 46px;
+  padding-inline: var(--s-6);
+  font-size: var(--fs-body);
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+/* ─── Trạng thái tải ─────────────────────────────────────── */
+
+/* Ô con trỏ luôn chiếm chỗ ở CẢ HAI phía: chiều rộng nút không đổi khi vào
+   trạng thái tải, và nhãn vẫn nằm đúng tâm. */
+.button::before,
+.caret {
+  content: "▌";
+  font-family: var(--font-mono);
+  visibility: hidden;
+}
+
+.loading .caret {
+  visibility: visible;
+  animation: caretBlink 1s steps(1) infinite;
+}
+
+/* Nhấp nháy chỉ chạy trong lúc chờ và tắt theo prefers-reduced-motion — khi
+   iteration-count bị ép về 1, con trỏ đứng yên ở trạng thái hiện. */
+@keyframes caretBlink {
+  50% {
+    opacity: 0;
+  }
+}
