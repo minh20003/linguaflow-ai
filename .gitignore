@@ -12,6 +12,7 @@ venv/
 .venv/
 env/
 
+
 # Environment variables
 .env
 .env.local
@@ -58,3 +59,6 @@ out/
 # AI logs — tracked structure, ignored content
 .ai-log/*.jsonl
 .ai-log/archive/
+
+# Team Docs
+docs/T217/

@@ -1,33 +1,63 @@
 #!/usr/bin/env bash
 # Cross-platform Python launcher for AI log hooks.
-# Tries python3 → python → py -3 on PATH; on Windows, falls back to common
-# Python install locations because Git Bash launched by some hooks gets a
-# stripped PATH that omits the Windows Python directory.
-# Designed to be sourced or called as: bash scripts/_pyrun.sh <script> [args...]
+# Order: repo .venv → python3 → python → py -3 → common Windows install dirs.
+# Every candidate is *probed* (`-c pass`) before use, because on Windows
+# `python3` is often the Microsoft Store redirector stub, which is on PATH,
+# prints "Python was not found" and exits 0 — silently swallowing every log.
+# The repo venv comes first so submit_log.py can import python-dotenv.
+# Designed to be called as: bash scripts/_pyrun.sh <script> [args...]
 #
 # Exits 0 silently if no Python is found — hooks must never block the AI tool.
 set -u
 
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-elif command -v python >/dev/null 2>&1; then
-  PY=python
-elif command -v py >/dev/null 2>&1; then
-  PY="py -3"
-else
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
+
+# Usable = runs a trivial program successfully. Filters out Store stubs.
+# Args stay quoted so interpreter paths containing spaces (e.g. "Program
+# Files") work.
+_usable() {
+  [ -n "${1:-}" ] || return 1
+  if [ -n "${2:-}" ]; then
+    "$1" "$2" -c pass >/dev/null 2>&1
+  else
+    "$1" -c pass >/dev/null 2>&1
+  fi
+}
+
+PY=""
+PY_ARG=""
+for cand in \
+  "$REPO_ROOT/.venv/Scripts/python.exe" \
+  "$REPO_ROOT/.venv/bin/python" \
+  python3 \
+  python \
+  py; do
+  # `py` is the Windows launcher: it needs an explicit -3.
+  arg=""
+  [ "$cand" = "py" ] && arg="-3"
+  case "$cand" in
+    /*|[A-Za-z]:*) [ -x "$cand" ] || continue ;;
+    *) command -v "$cand" >/dev/null 2>&1 || continue ;;
+  esac
+  if _usable "$cand" "$arg"; then PY="$cand"; PY_ARG="$arg"; break; fi
+done
+
+if [ -z "$PY" ]; then
   # PATH lookup failed — probe standard Windows install locations.
-  PY=""
   shopt -s nullglob 2>/dev/null || true
   for cand in \
     /c/Users/*/AppData/Local/Programs/Python/Python*/python.exe \
     "/c/Program Files/Python"*/python.exe \
     "/c/Program Files (x86)/Python"*/python.exe \
     /c/Python*/python.exe; do
-    if [ -x "$cand" ]; then PY="$cand"; break; fi
+    if [ -x "$cand" ] && _usable "$cand"; then PY="$cand"; break; fi
   done
   shopt -u nullglob 2>/dev/null || true
   [ -n "$PY" ] || exit 0
 fi
 
-# shellcheck disable=SC2086
-exec $PY "$@"
+if [ -n "$PY_ARG" ]; then
+  exec "$PY" "$PY_ARG" "$@"
+else
+  exec "$PY" "$@"
+fi
