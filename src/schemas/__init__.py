@@ -7,9 +7,33 @@ from src.schemas.auth import (
     UpdateLanguageRequest,
     UserResponse,
 )
+from src.schemas.chat import (
+    AuthEvent,
+    AuthOkEvent,
+    ConversationCreateRequest,
+    ConversationResponse,
+    ConversationType,
+    ErrorEvent,
+    MessageCreatedEvent,
+    MessageReceivedEvent,
+    MessageResponse,
+    RealtimeMessage,
+    SendMessageEvent,
+)
 
 __all__ = [
+    "AuthEvent",
+    "AuthOkEvent",
+    "ConversationCreateRequest",
+    "ConversationResponse",
+    "ConversationType",
+    "ErrorEvent",
     "LoginRequest",
+    "MessageCreatedEvent",
+    "MessageReceivedEvent",
+    "MessageResponse",
+    "RealtimeMessage",
+    "SendMessageEvent",
     "SUPPORTED_LANGUAGES",
     "TokenResponse",
     "UpdateLanguageRequest",
