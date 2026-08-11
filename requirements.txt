@@ -15,6 +15,10 @@ langchain-google-genai>=2.0.0
 # Observability cho Agent (F-03.4). API CallbackHandler khác nhau giữa các major
 # version — module src/agents/observability.py viết theo v4.
 langfuse>=4.0.0,<5.0.0
+# Nhan dien ngon ngu cuc bo (~1ms), giam so lan goi LLM detect
+langdetect>=1.0.9
+# Provider dich du phong khi LLM loi (ADR-07) — khong can API key
+deep-translator>=1.11.0
 
 # Database (uncomment as needed)
 # sqlalchemy>=2.0.0

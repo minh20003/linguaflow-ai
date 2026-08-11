@@ -1,7 +1,7 @@
-"""State schema cho Translation Agent.
+"""State schema for the Translation Agent.
 
-Định nghĩa bắt buộc theo docs/CONTRACT.md §2. Không đổi tên trường —
-Frontend, Backend và Agent dùng chung bộ tên này.
+Defined by docs/CONTRACT.md section 2. Field names are shared across Frontend,
+Backend and Agent — do not rename them here without updating the contract first.
 """
 
 from __future__ import annotations
@@ -10,32 +10,32 @@ from typing import TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """State truyền giữa các node trong translation graph.
+    """State passed between nodes of the translation graph.
 
-    total=False cho phép mọi trường là tuỳ chọn: node chỉ trả về phần
-    mình thay đổi, LangGraph tự gộp vào state chung.
+    ``total=False`` lets each node return only the fields it changes; LangGraph
+    merges those partial updates into the shared state.
     """
 
-    # Định danh — do Chat Service truyền vào
+    # Identifiers supplied by the Chat Service
     conversation_id: str
     message_id: str
     sender_id: str
 
-    # Đầu vào
+    # Input
     original_text: str
-    source_language: str  # ISO 639-1; giá trị tạm khi vào, detect sẽ ghi đè
-    target_language: str  # Lấy từ users.preferred_language của người nhận
+    source_language: str  # ISO 639-1; provisional on entry, overwritten by detection
+    target_language: str  # Taken from users.preferred_language of the recipient
 
-    # Ngữ cảnh hội thoại
-    context_messages: list[str]  # 3-5 tin gần nhất, đã định dạng cho prompt
+    # Conversation context
+    context_messages: list[str]  # 3-5 recent messages, preformatted for the prompt
 
-    # Kết quả
+    # Output
     translated_text: str
-    translation_id: str  # Định danh bản ghi translation_results, phục vụ F-05
-    is_valid: bool  # Kết quả của node validate_output
-    is_fallback: bool  # True khi trả về bản gốc do lỗi hoặc timeout
+    translation_id: str  # Row id in translation_results, required by F-05
+    is_valid: bool  # Result of the validate_output node
+    is_fallback: bool  # True when the original text is returned after a failure
 
-    # Đo lường — ghi vào translation_results và Langfuse
+    # Measurements persisted to translation_results and reported to Langfuse
     model: str
     latency_ms: int
 

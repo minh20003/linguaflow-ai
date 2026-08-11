@@ -1,43 +1,44 @@
-"""Nguồn cung cấp ngữ cảnh hội thoại cho Translation Agent.
+"""Conversation context sources for the Translation Agent.
 
-Agent cần 3-5 tin nhắn gần nhất trong cùng cuộc hội thoại để dịch đúng đại từ
-nhân xưng và mạch hội thoại (docs/CONTRACT.md §2, ADR-01).
+The agent needs the most recent messages of a conversation to resolve pronouns
+and keep the translation coherent across turns (docs/CONTRACT.md section 2,
+ADR-01).
 
-Bảng `messages` chưa được hiện thực hoá (xem docs/architecture_diagram.md §4),
-nên nguồn ngữ cảnh được trừu tượng hoá qua Protocol dưới đây. Khi bảng `messages`
-sẵn sàng, chỉ cần bổ sung một implementation mới đọc từ cơ sở dữ liệu — không
-phải sửa bất kỳ node nào.
+The `messages` table does not exist yet (see docs/architecture_diagram.md
+section 4), so the context source is abstracted behind the protocol below. Once
+that table lands, add an implementation that reads from the database — no node
+has to change.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
-# Số tin nhắn gần nhất dùng làm ngữ cảnh (PRD quy định 3-5)
+# Fallback window size when no explicit limit is given. The configured value
+# lives in Settings.agent_context_size (the PRD specifies 3-5).
 DEFAULT_CONTEXT_SIZE = 5
 
 
-@runtime_checkable
 class ContextProvider(Protocol):
-    """Giao diện lấy ngữ cảnh hội thoại."""
+    """Supplies recent conversation history to the agent."""
 
     async def get_recent_messages(
         self,
         conversation_id: str,
         limit: int = DEFAULT_CONTEXT_SIZE,
     ) -> list[str]:
-        """Trả về tối đa `limit` tin nhắn gần nhất, cũ trước mới sau.
+        """Return up to `limit` recent messages, oldest first.
 
-        Mỗi phần tử là một dòng đã định dạng sẵn để đưa vào prompt.
-        Trả về danh sách rỗng nếu cuộc hội thoại chưa có tin nào.
+        Each item is a line already formatted for inclusion in the prompt.
+        Returns an empty list when the conversation has no history.
         """
         ...
 
 
 class NullContextProvider:
-    """Không cung cấp ngữ cảnh. Dùng làm mặc định khi chưa cấu hình nguồn thật.
+    """Supplies no context. Default when no real source is configured.
 
-    Agent vẫn dịch được, chỉ mất khả năng bám ngữ cảnh hội thoại.
+    Translation still works, it just loses conversation awareness.
     """
 
     async def get_recent_messages(
@@ -49,16 +50,16 @@ class NullContextProvider:
 
 
 class InMemoryContextProvider:
-    """Lưu ngữ cảnh trong bộ nhớ tiến trình. Dùng cho kiểm thử và demo.
+    """Keeps context in process memory. For tests and demos only.
 
-    Không bền vững qua các lần khởi động lại — không dùng ở production.
+    Nothing survives a restart, so this must not be used in production.
     """
 
     def __init__(self, messages: dict[str, list[str]] | None = None) -> None:
         self._store: dict[str, list[str]] = messages or {}
 
     def add_message(self, conversation_id: str, message: str) -> None:
-        """Thêm một tin nhắn vào cuối lịch sử của cuộc hội thoại."""
+        """Append a message to a conversation's history."""
         self._store.setdefault(conversation_id, []).append(message)
 
     async def get_recent_messages(

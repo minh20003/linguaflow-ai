@@ -1,6 +1,7 @@
-"""Test cho tích hợp Langfuse (F-03.4).
+"""Tests for the Langfuse integration (F-03.4).
 
-Trọng tâm: thiếu cấu hình hoặc lỗi khởi tạo đều không được làm hỏng luồng dịch.
+Focus: neither missing configuration nor a failed init may break the
+translation flow.
 """
 
 from __future__ import annotations
@@ -14,11 +15,12 @@ MODULE = "src.agents.observability"
 
 
 def setup_function() -> None:
-    """Xoá cache giữa các test — handler được cache bằng lru_cache."""
+    """Clear the cache between tests — the handler is memoised with lru_cache."""
     observability._init_langfuse_handler.cache_clear()
 
 
 def make_settings(public_key: str = "", secret_key: str = ""):
+    """Create a mock settings object for observability tests."""
     class FakeSettings:
         langfuse_public_key = public_key
         langfuse_secret_key = secret_key
@@ -27,23 +29,26 @@ def make_settings(public_key: str = "", secret_key: str = ""):
     return FakeSettings()
 
 
-def test_khong_co_key_thi_tra_none():
+def test_no_keys():
+    """Missing both keys must skip tracing and return None."""
     with patch(f"{MODULE}.get_settings", return_value=make_settings()):
         assert get_langfuse_handler() is None
 
 
-def test_chi_co_mot_key_thi_tra_none():
-    """Thiếu secret_key cũng phải bỏ qua, không được khởi tạo nửa vời."""
+def test_single_key():
+    """A missing secret_key must also skip tracing, not half-initialise it."""
     with patch(f"{MODULE}.get_settings", return_value=make_settings(public_key="pk")):
         assert get_langfuse_handler() is None
 
 
-def test_config_rong_khi_khong_co_tracing():
+def test_tracing_disabled():
+    """When tracing is disabled, runnable config must be empty."""
     with patch(f"{MODULE}.get_settings", return_value=make_settings()):
         assert build_runnable_config() == {}
 
 
-def test_metadata_duoc_dua_vao_config():
+def test_metadata():
+    """Provided metadata keys must be attached under config metadata."""
     with patch(f"{MODULE}.get_settings", return_value=make_settings()):
         config = build_runnable_config(conversation_id="c1", message_id="m1")
 
@@ -51,15 +56,16 @@ def test_metadata_duoc_dua_vao_config():
     assert "callbacks" not in config
 
 
-def test_metadata_bo_qua_gia_tri_none():
+def test_none_metadata():
+    """None values in metadata arguments must be filtered out."""
     with patch(f"{MODULE}.get_settings", return_value=make_settings()):
         config = build_runnable_config(conversation_id="c1", translation_id=None)
 
     assert config["metadata"] == {"conversation_id": "c1"}
 
 
-def test_loi_khoi_tao_khong_lam_vo_luong():
-    """Langfuse lỗi (sai key, không kết nối được) thì Agent vẫn phải chạy."""
+def test_init_failure():
+    """A Langfuse failure (bad key, no connection) must still let the agent run."""
     settings = make_settings(public_key="pk", secret_key="sk")
 
     with (
@@ -68,3 +74,5 @@ def test_loi_khoi_tao_khong_lam_vo_luong():
     ):
         assert get_langfuse_handler() is None
         assert build_runnable_config() == {}
+
+

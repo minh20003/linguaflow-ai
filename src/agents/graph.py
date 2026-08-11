@@ -1,38 +1,45 @@
 """Translation Agent — LangGraph state machine.
 
-Luồng theo Agent Flow (docs/architecture_diagram.md §2):
+Flow per docs/architecture_diagram.md section 2:
 
-    START -> detect_language -> [nguồn == đích?]
-                                  ├── Có    -> passthrough      -> END
-                                  ├── Lỗi   -> validate_output  -> END  (fallback)
-                                  └── Không -> build_context -> translate
-                                                             -> validate_output -> END
+    START -> detect_language -> [source == target?]
+                                  |-- yes   -> passthrough     -> END
+                                  |-- error -> validate_output
+                                  `-- no    -> build_context -> translate
+                                                             -> validate_output
+
+    validate_output -> [translation usable?]
+                         |-- yes -> END
+                         `-- no  -> fallback_translate -> END
+
+The fallback branch asks the secondary provider (ADR-07) for a translation. If
+that fails too, the original text validate_output already stored is what the
+recipient receives.
 """
 
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from src.agents.context_provider import (
-    DEFAULT_CONTEXT_SIZE,
-    ContextProvider,
-)
+from src.agents.context_provider import DEFAULT_CONTEXT_SIZE, ContextProvider
 from src.agents.nodes.translation import (
     detect_language,
+    fallback_translate,
     make_build_context,
     passthrough,
     translate,
     validate_output,
 )
 from src.agents.state import AgentState
+from src.config import get_settings
 
 
 def route_after_detect(state: AgentState) -> str:
-    """Quyết định nhánh sau khi xác định ngôn ngữ nguồn.
+    """Pick the branch to take once the source language is known.
 
-    - Có lỗi ở bước detect: đi thẳng validate_output để trả fallback.
-    - Ngôn ngữ nguồn trùng đích: bỏ qua LLM (tiết kiệm token và độ trễ).
-    - Còn lại: dịch bình thường.
+    - Detection failed: go straight to validate_output, which emits the fallback.
+    - Source equals target: skip the LLM entirely, saving tokens and latency.
+    - Otherwise: translate normally.
     """
     if state.get("error"):
         return "validate_output"
@@ -45,26 +52,52 @@ def route_after_detect(state: AgentState) -> str:
     return "build_context"
 
 
+def route_after_validate(state: AgentState) -> str:
+    """Send a failed translation to the secondary provider before giving up.
+
+    validate_output has already put the original text into the state, so this
+    branch can only improve the result, never lose the message (ADR-07).
+    """
+    if state.get("is_fallback"):
+        return "fallback_translate"
+
+    return END
+
+
 def build_translation_graph(
     context_provider: ContextProvider | None = None,
-    context_size: int = DEFAULT_CONTEXT_SIZE,
+    context_size: int | None = None,
 ):
-    """Dựng và compile translation graph.
+    """Build and compile the translation graph.
 
     Args:
-        context_provider: nguồn lấy 3-5 tin gần nhất. Mặc định không có ngữ cảnh
-            (xem src/agents/context_provider.py).
-        context_size: số tin nhắn dùng làm ngữ cảnh.
+        context_provider: source of the recent messages used as context.
+            Defaults to no context (see src/agents/context_provider.py).
+        context_size: how many recent messages to include. Defaults to the
+            AGENT_CONTEXT_SIZE setting.
     """
+    if context_size is None:
+        if context_provider is None:
+            # NullContextProvider returns nothing regardless of the limit, so
+            # reading settings here would only load .env at import time for a
+            # value this graph can never use.
+            context_size = DEFAULT_CONTEXT_SIZE
+        else:
+            context_size = get_settings().agent_context_size
+
     graph = StateGraph(AgentState)
 
     graph.add_node("detect_language", detect_language)
     graph.add_node("build_context", make_build_context(context_provider, context_size))
     graph.add_node("translate", translate)
     graph.add_node("validate_output", validate_output)
+    graph.add_node("fallback_translate", fallback_translate)
     graph.add_node("passthrough", passthrough)
 
     graph.add_edge(START, "detect_language")
+    # The path map is what puts the three branch edges into the compiled graph:
+    # without it draw_mermaid() shows detect_language as terminating the flow,
+    # and compile() cannot check the router's return values against node names.
     graph.add_conditional_edges(
         "detect_language",
         route_after_detect,
@@ -76,15 +109,20 @@ def build_translation_graph(
     )
     graph.add_edge("build_context", "translate")
     graph.add_edge("translate", "validate_output")
-    graph.add_edge("validate_output", END)
+    graph.add_conditional_edges(
+        "validate_output",
+        route_after_validate,
+        {"fallback_translate": "fallback_translate", END: END},
+    )
+    graph.add_edge("fallback_translate", END)
     graph.add_edge("passthrough", END)
 
     return graph.compile()
 
 
-# Instance mặc định (không có ngữ cảnh). Chat Service nên tự dựng graph riêng
-# với ContextProvider thật thay vì dùng biến này.
+# Default instance without conversation context. The Chat Service should build
+# its own graph with a real ContextProvider rather than reuse this one.
 #
-# LƯU Ý: tên `agent` được src/api/routes.py import. Không đổi tên khi chưa gỡ
-# endpoint legacy /chat (xem docs/CONTRACT.md §3.3).
+# NOTE: src/api/routes.py imports the name `agent`. Do not rename it until the
+# legacy /chat endpoint is removed (docs/CONTRACT.md section 3.3).
 agent = build_translation_graph()

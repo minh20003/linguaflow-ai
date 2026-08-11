@@ -1,27 +1,35 @@
-"""Test cho Translation Agent (F-03.1).
+"""Tests for the Translation Agent (F-03.1).
 
-Toàn bộ test mock LLM, không gọi API thật: kết quả LLM không tất định, gọi thật
-thì chậm, tốn chi phí và test sẽ đỏ khi hết hạn mức free tier.
+Every test mocks the LLM instead of calling a real API: model output is not
+deterministic, real calls are slow and cost money, and the suite would turn red
+as soon as the free tier runs out.
 
-Fixture đặt cục bộ trong file này thay vì tests/conftest.py để tránh xung đột với
-nhánh feature/f-01-2-auth-user-config (nhánh đó viết lại conftest).
+Fixtures live in this file rather than tests/conftest.py to avoid conflicting
+with feature/f-01-2-auth-user-config, which rewrites conftest.
 """
+
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from langgraph.graph import END
 
 from src.agents.context_provider import InMemoryContextProvider, NullContextProvider
-from src.agents.graph import build_translation_graph, route_after_detect
-from src.agents.nodes.translation import validate_output
+from src.agents.graph import (
+    build_translation_graph,
+    route_after_detect,
+    route_after_validate,
+)
+from src.agents.nodes.translation import detect_language, validate_output
+from src.services.fallback_translator import FALLBACK_MODEL_NAME
 
 NODES_MODULE = "src.agents.nodes.translation"
 
 
 def make_llm(*responses: str) -> AsyncMock:
-    """LLM giả trả về lần lượt các nội dung được truyền vào."""
+    """Fake LLM returning the given contents, one per successive call."""
     llm = AsyncMock()
     llm.ainvoke = AsyncMock(
         side_effect=[type("Msg", (), {"content": r})() for r in responses]
@@ -35,57 +43,78 @@ def make_llm(*responses: str) -> AsyncMock:
 # ============================================================
 
 
-def test_route_bo_qua_llm_khi_cung_ngon_ngu():
+def test_route_same_lang():
+    """Route to passthrough when source and target languages are identical."""
     state = {"source_language": "vi", "target_language": "vi"}
     assert route_after_detect(state) == "passthrough"
 
 
-def test_route_dich_khi_khac_ngon_ngu():
+def test_route_diff_lang():
+    """Route to build_context when source and target languages differ."""
     state = {"source_language": "vi", "target_language": "en"}
     assert route_after_detect(state) == "build_context"
 
 
-def test_route_di_thang_validate_khi_co_loi():
+def test_route_error():
+    """Route directly to validate_output when detection encountered an error."""
     state = {"error": "detect that bai", "source_language": "vi", "target_language": "en"}
     assert route_after_detect(state) == "validate_output"
 
 
+def test_route_success():
+    """Route to END when translation succeeds without fallback."""
+    assert route_after_validate({"is_fallback": False}) == END
+
+
+def test_route_fallback():
+    """Route to fallback_translate when is_fallback is True."""
+    assert route_after_validate({"is_fallback": True}) == "fallback_translate"
+
+
 # ============================================================
-# Luồng end-to-end
+# End-to-end flow
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_cung_ngon_ngu_thi_khong_goi_llm_dich():
-    """Nguồn trùng đích: chỉ tốn 1 lần gọi LLM để detect, không gọi để dịch."""
-    llm = make_llm("vi")  # chỉ có 1 response -> gọi lần 2 sẽ StopIteration
+async def test_same_language():
+    """Source equals target and langdetect agrees: no LLM call at all."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock()
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
         graph = build_translation_graph(NullContextProvider())
         result = await graph.ainvoke(
             {
                 "conversation_id": "c1",
-                "original_text": "Chào bạn",
+                "original_text": "Chào bạn nhé",
                 "source_language": "vi",
                 "target_language": "vi",
             }
         )
 
-    assert result["translated_text"] == "Chào bạn"
+    assert result["translated_text"] == "Chào bạn nhé"
     assert result["is_fallback"] is False
-    assert llm.ainvoke.await_count == 1
+    llm.ainvoke.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_khac_ngon_ngu_thi_dich():
-    llm = make_llm("vi", "Hello there")
+async def test_translation():
+    """langdetect agrees with the sender, so only the translate call is spent."""
+    llm = make_llm("Hello there")
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
         graph = build_translation_graph(NullContextProvider())
         result = await graph.ainvoke(
             {
                 "conversation_id": "c1",
-                "original_text": "Chào bạn",
+                "original_text": "Chào bạn nhé",
                 "source_language": "vi",
                 "target_language": "en",
             }
@@ -95,12 +124,13 @@ async def test_khac_ngon_ngu_thi_dich():
     assert result["is_valid"] is True
     assert result["is_fallback"] is False
     assert result["model"] == "mock-model"
-    assert "latency_ms" in result
+    assert llm.ainvoke.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_detect_ghi_de_gia_tri_tam():
-    """source_language vào là giá trị tạm, detect phải ghi đè (CONTRACT §4.3)."""
+async def test_detection_override():
+    """Incoming source_language is provisional; detection must override it
+    (docs/CONTRACT.md section 4.3)."""
     llm = make_llm("en", "Xin chào")
 
     with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
@@ -109,29 +139,33 @@ async def test_detect_ghi_de_gia_tri_tam():
             {
                 "conversation_id": "c1",
                 "original_text": "Hello",
-                "source_language": "vi",  # giá trị tạm, sai
+                "source_language": "vi",  # provisional, and wrong
                 "target_language": "vi",
             }
         )
 
-    # Detect ra "en" khác đích "vi" -> phải dịch, không passthrough
+    # Detected "en" differs from target "vi", so it must translate, not pass through
     assert result["source_language"] == "en"
     assert result["translated_text"] == "Xin chào"
 
 
 @pytest.mark.asyncio
-async def test_context_duoc_dua_vao_prompt():
-    llm = make_llm("vi", "Did you deploy it yet?")
+async def test_context_in_prompt():
+    """Conversation history messages are formatted and included in translation prompt."""
+    llm = make_llm("Did you deploy it yet?")
     provider = InMemoryContextProvider()
     provider.add_message("c1", "An: Tôi vừa merge PR rồi")
     provider.add_message("c1", "Bình: Ok để tôi review")
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
         graph = build_translation_graph(provider)
         result = await graph.ainvoke(
             {
                 "conversation_id": "c1",
-                "original_text": "Deploy chưa?",
+                "original_text": "Deploy xong chưa?",
                 "source_language": "vi",
                 "target_language": "en",
             }
@@ -141,23 +175,128 @@ async def test_context_duoc_dua_vao_prompt():
         "An: Tôi vừa merge PR rồi",
         "Bình: Ok để tôi review",
     ]
-    # Lần gọi thứ 2 là dịch — prompt user phải chứa lịch sử hội thoại
-    user_prompt = llm.ainvoke.await_args_list[1].args[0][1]["content"]
+    # Only one LLM call (translate), and its user prompt must carry the history
+    user_prompt = llm.ainvoke.await_args_list[0].args[0][1]["content"]
     assert "Tôi vừa merge PR rồi" in user_prompt
-    assert "Deploy chưa?" in user_prompt
+
+    assert "Deploy xong chưa?" in user_prompt
+
 
 
 # ============================================================
-# Fallback — NFR-02: lỗi LLM không được làm mất tin nhắn
+# detect_language — two-tier langdetect + LLM strategy
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_llm_loi_thi_fallback_tra_ban_goc():
+async def test_detect_match():
+    """Fast path: the user writes in the language they configured."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock()
+
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
+        result = await detect_language(
+            {"original_text": "Chị xem giúp em phần WebSocket", "source_language": "vi"}
+        )
+
+    assert result["source_language"] == "vi"
+    llm.ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_detect_conflict():
+    """langdetect misfires (e.g. 'Ok anh' -> tl), so the LLM must arbitrate."""
+    llm = make_llm("vi")
+
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="tl"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
+        result = await detect_language(
+            {"original_text": "Ok anh nhé em làm luôn", "source_language": "vi"}
+        )
+
+    assert result["source_language"] == "vi"
+    assert llm.ainvoke.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_detect_failure():
+    """When local langdetect returns None, LLM is called to detect source language."""
+    llm = make_llm("en")
+
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value=None),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
+        result = await detect_language(
+            {"original_text": "The API is ready", "source_language": "vi"}
+        )
+
+    assert result["source_language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_detect_both_fail():
+    """When both local detection and LLM fail, keep the provisional source language."""
     llm = AsyncMock()
     llm.ainvoke = AsyncMock(side_effect=RuntimeError("API down"))
 
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value=None),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
+        result = await detect_language(
+            {"original_text": "Một câu tiếng Việt", "source_language": "vi"}
+        )
+
+    assert result["source_language"] == "vi"
+
+
+@pytest.mark.asyncio
+async def test_short_text():
+    """Below the character threshold neither tier is reliable, so neither runs."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock()
+
     with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+        result = await detect_language({"original_text": "Ok", "source_language": "vi"})
+
+    assert result["source_language"] == "vi"
+    llm.ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_emoji_only():
+    """Text without letters skips detection and keeps the provisional language."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock()
+
+    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+        result = await detect_language({"original_text": "👍👍👍", "source_language": "vi"})
+
+    assert result["source_language"] == "vi"
+    llm.ainvoke.assert_not_awaited()
+
+
+# ============================================================
+# Fallback — NFR-02: an LLM failure must never drop the message
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_llm_error_fallback():
+    """Both providers down: the recipient still gets the untranslated message."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock(side_effect=RuntimeError("API down"))
+
+    with (
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+        patch(f"{NODES_MODULE}.translate_fallback", AsyncMock(return_value=None)),
+    ):
         graph = build_translation_graph(NullContextProvider())
         result = await graph.ainvoke(
             {
@@ -174,40 +313,48 @@ async def test_llm_loi_thi_fallback_tra_ban_goc():
 
 
 @pytest.mark.asyncio
-async def test_llm_tra_ve_rong_thi_fallback():
-    llm = make_llm("vi", "   ")
+async def test_llm_empty_fallback():
+    """Empty LLM output triggers fallback to the original message."""
+    llm = make_llm("   ")
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+        patch(f"{NODES_MODULE}.translate_fallback", AsyncMock(return_value=None)),
+    ):
         graph = build_translation_graph(NullContextProvider())
         result = await graph.ainvoke(
             {
                 "conversation_id": "c1",
-                "original_text": "Chào bạn",
+                "original_text": "Chào bạn nhé",
                 "source_language": "vi",
                 "target_language": "en",
             }
         )
 
-    assert result["translated_text"] == "Chào bạn"
+    assert result["translated_text"] == "Chào bạn nhé"
     assert result["is_fallback"] is True
 
 
 @pytest.mark.asyncio
-async def test_context_provider_loi_thi_van_dich_duoc():
-    """Mất ngữ cảnh làm giảm chất lượng nhưng không được chặn luồng."""
+async def test_context_error():
+    """Losing context degrades quality but must not block the flow."""
 
     class BrokenProvider:
         async def get_recent_messages(self, conversation_id, limit=5):
             raise ConnectionError("DB down")
 
-    llm = make_llm("vi", "Hello")
+    llm = make_llm("Hello")
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+    ):
         graph = build_translation_graph(BrokenProvider())
         result = await graph.ainvoke(
             {
                 "conversation_id": "c1",
-                "original_text": "Chào",
+                "original_text": "Chào bạn nhé",
                 "source_language": "vi",
                 "target_language": "en",
             }
@@ -218,8 +365,63 @@ async def test_context_provider_loi_thi_van_dich_duoc():
 
 
 @pytest.mark.asyncio
-async def test_ban_dich_dai_bat_thuong_thi_fallback():
-    """Chặn trường hợp LLM trả lời kèm giải thích thay vì chỉ dịch."""
+async def test_secondary_provider():
+    """ADR-07: the secondary provider translates when the LLM path fails."""
+    llm = AsyncMock()
+    llm.ainvoke = AsyncMock(side_effect=RuntimeError("API down"))
+
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+        patch(
+            f"{NODES_MODULE}.translate_fallback",
+            AsyncMock(return_value="Hello there"),
+        ),
+    ):
+        graph = build_translation_graph(NullContextProvider())
+        result = await graph.ainvoke(
+            {
+                "conversation_id": "c1",
+                "original_text": "Chào bạn nhé",
+                "source_language": "vi",
+                "target_language": "en",
+            }
+        )
+
+    assert result["translated_text"] == "Hello there"
+    assert result["model"] == FALLBACK_MODEL_NAME
+    # Still a degraded path, so the client keeps showing its fallback indicator
+    assert result["is_fallback"] is True
+
+
+@pytest.mark.asyncio
+async def test_skip_secondary_on_success():
+    """The secondary provider must stay off the happy path — it costs latency."""
+    llm = make_llm("Hello there")
+    fallback = AsyncMock(return_value="should not be used")
+
+    with (
+        patch(f"{NODES_MODULE}._detect_local", return_value="vi"),
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+        patch(f"{NODES_MODULE}.translate_fallback", fallback),
+    ):
+        graph = build_translation_graph(NullContextProvider())
+        result = await graph.ainvoke(
+            {
+                "conversation_id": "c1",
+                "original_text": "Chào bạn nhé",
+                "source_language": "vi",
+                "target_language": "en",
+            }
+        )
+
+    assert result["translated_text"] == "Hello there"
+    fallback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_long_output_fallback():
+    """Guards the case where the LLM explains itself instead of translating."""
     state = {
         "original_text": "Chào",
         "translated_text": "Đây là bản dịch của bạn: " + "x" * 300,
@@ -231,10 +433,14 @@ async def test_ban_dich_dai_bat_thuong_thi_fallback():
 
 
 @pytest.mark.asyncio
-async def test_original_text_rong_thi_bao_loi_khong_crash():
+async def test_empty_text_error():
+    """Empty original text is recorded as an error and falls back safely."""
     llm = make_llm("vi")
 
-    with patch(f"{NODES_MODULE}.get_llm", return_value=llm):
+    with (
+        patch(f"{NODES_MODULE}.get_llm", return_value=llm),
+        patch(f"{NODES_MODULE}.translate_fallback", AsyncMock(return_value=None)),
+    ):
         graph = build_translation_graph(NullContextProvider())
         result = await graph.ainvoke(
             {"conversation_id": "c1", "original_text": "", "target_language": "en"}
@@ -242,3 +448,5 @@ async def test_original_text_rong_thi_bao_loi_khong_crash():
 
     assert result["is_fallback"] is True
     assert "error" in result
+
+

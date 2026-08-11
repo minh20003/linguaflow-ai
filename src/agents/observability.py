@@ -1,12 +1,12 @@
-"""Tích hợp Langfuse để theo dõi token, độ trễ và vết xử lý của Agent (F-03.4).
+"""Langfuse tracing for the Translation Agent (F-03.4).
 
-Xác minh với langfuse 4.14.3: `CallbackHandler` nằm ở `langfuse.langchain` và
-chỉ nhận `public_key`; `secret_key` cùng `host` được cấu hình trên client
-`Langfuse(...)`. Các phiên bản 2.x và 3.x có API khác — nếu nâng cấp hoặc hạ cấp
-gói, phải kiểm tra lại module này.
+Verified against langfuse 4.14.3: `CallbackHandler` lives in
+`langfuse.langchain` and only accepts `public_key`; `secret_key` and `host` are
+configured on the `Langfuse` client. Versions 2.x and 3.x expose a different
+API — re-check this module if the pinned major version changes.
 
-Nguyên tắc: thiếu cấu hình hoặc lỗi khởi tạo đều không được làm hỏng luồng dịch.
-Mọi trường hợp thất bại đều trả về None và Agent chạy bình thường, chỉ mất tracing.
+Tracing is optional and degrades silently: a missing key, a missing package or a
+failed client init all return None and leave the translation flow untouched.
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def _init_langfuse_handler() -> Any | None:
-    """Khởi tạo Langfuse callback handler. Kết quả được cache cho toàn tiến trình."""
+    """Build the Langfuse callback handler once per process."""
     settings = get_settings()
 
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         logger.info(
-            "Chưa cấu hình LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY, bỏ qua tracing"
+            "LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY not set, skipping tracing"
         )
         return None
 
@@ -35,11 +35,11 @@ def _init_langfuse_handler() -> Any | None:
         from langfuse import Langfuse
         from langfuse.langchain import CallbackHandler
     except ImportError:
-        logger.info("Chưa cài gói langfuse, bỏ qua tracing")
+        logger.info("langfuse package not installed, skipping tracing")
         return None
 
     try:
-        # Khởi tạo client singleton — handler sẽ dùng lại client này
+        # Initialise the singleton client the handler will reuse
         Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
@@ -47,22 +47,22 @@ def _init_langfuse_handler() -> Any | None:
         )
         return CallbackHandler(public_key=settings.langfuse_public_key)
     except Exception as exc:
-        logger.warning("Khởi tạo Langfuse thất bại, bỏ qua tracing: %s", exc)
+        logger.warning("Langfuse init failed, skipping tracing: %s", exc)
         return None
 
 
 def get_langfuse_handler() -> Any | None:
-    """Trả về Langfuse callback handler, hoặc None nếu không khả dụng."""
+    """Return the Langfuse callback handler, or None when unavailable."""
     return _init_langfuse_handler()
 
 
 def build_runnable_config(**metadata: Any) -> dict[str, Any]:
-    """Dựng config truyền vào `graph.ainvoke()`.
+    """Build the config to pass to ``graph.ainvoke()``.
 
-    Gắn Langfuse callback khi khả dụng và đính kèm metadata (conversation_id,
-    message_id, target_language...) để lọc trace trên giao diện Langfuse.
+    Attaches the Langfuse callback when available, plus per-request metadata
+    (conversation_id, message_id, ...) used to filter traces in the Langfuse UI.
 
-    Ví dụ:
+    Example:
         config = build_runnable_config(conversation_id=cid, message_id=mid)
         result = await graph.ainvoke(state, config=config)
     """
