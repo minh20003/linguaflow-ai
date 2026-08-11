@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,22 @@ class Settings(BaseSettings):
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+
+    # JWT Authentication
+    jwt_secret: str = ""  # Required: set in environment
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = Field(default=1440, ge=1, le=10080)  # 24h default, max 7 days
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def jwt_secret_must_be_set(cls, v: str, info) -> str:
+        """Ensure JWT secret is not empty in production."""
+        if not v:
+            raise ValueError(
+                "JWT_SECRET environment variable is required. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+        return v
 
 
 @lru_cache

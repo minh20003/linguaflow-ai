@@ -1,3 +1,5 @@
+"""FastAPI application entry point."""
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -5,13 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
 from src.config import get_settings
+from src.database import create_tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan handler."""
     settings = get_settings()
     print(f"Starting {settings.app_name} in {settings.app_env} mode")
+
+    # Create database tables on startup
+    await create_tables()
+    print("Database tables created")
+
     yield
+
     print("Shutting down...")
 
 

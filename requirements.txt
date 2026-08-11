@@ -10,13 +10,19 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 langgraph>=0.2.0
 
-# Database (uncomment as needed)
-# sqlalchemy>=2.0.0
-# alembic>=1.14.0
-# psycopg2-binary>=2.9.0
+# Database
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.20.0
+# alembic>=1.14.0  # Uncomment when migrations are needed
+# psycopg2-binary>=2.9.0  # Uncomment for PostgreSQL
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 
 # Dev tools
 ruff>=0.8.0
