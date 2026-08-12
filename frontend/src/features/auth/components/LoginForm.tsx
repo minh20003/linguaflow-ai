@@ -3,11 +3,11 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import { login } from "@/lib/api";
-import { saveSession } from "@/lib/auth-session";
-import { mainLabel } from "@/lib/i18n";
+import Button from "@/shared/ui/Button";
+import Input from "@/shared/ui/Input";
+import { login } from "@/shared/lib/api";
+import { saveSession } from "@/shared/lib/auth-session";
+import { mainLabel } from "@/shared/lib/i18n";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;

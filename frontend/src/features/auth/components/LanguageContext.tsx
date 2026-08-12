@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState } from "react";
-import { DEFAULT_LANGUAGE, type LanguageCode } from "@/lib/constants";
+import { DEFAULT_LANGUAGE, type LanguageCode } from "@/shared/lib/constants";
 
 interface LanguageContextValue {
   lang: LanguageCode;
