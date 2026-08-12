@@ -1,6 +1,8 @@
 .button {
   display: inline-flex;
-  align-items: baseline;
+  /* Labels can mix the main and translated language at different font sizes.
+     Center their line boxes instead of aligning their baselines. */
+  align-items: center;
   justify-content: center;
   gap: var(--s-3);
   border: 1px solid transparent;
