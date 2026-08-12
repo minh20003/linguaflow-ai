@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Supported languages based on ISO 639-1 codes
 SUPPORTED_LANGUAGES = {
@@ -15,6 +15,7 @@ SUPPORTED_LANGUAGES = {
     "de",  # German
     "es",  # Spanish
     "th",  # Thai
+    "id",  # Indonesian
     "pt",  # Portuguese
     "ru",  # Russian
     "ar",  # Arabic
@@ -27,6 +28,71 @@ class LoginRequest(BaseModel):
 
     email: str = Field(..., min_length=1, max_length=255, description="User email")
     password: str = Field(..., min_length=1, description="User password")
+    remember: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or "." not in value.rsplit("@", 1)[-1]:
+            raise ValueError("Invalid email address")
+        return value
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, max_length=100)
+    preferred_language: str = Field(default="vi", min_length=2, max_length=10)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("Username may only contain letters, numbers, hyphens and underscores")
+        return normalized
+
+    @field_validator("email")
+    @classmethod
+    def normalize_register_email(cls, value: str) -> str:
+        return LoginRequest.normalize_email(value)
+
+    @field_validator("preferred_language")
+    @classmethod
+    def validate_registration_language(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in SUPPORTED_LANGUAGES:
+            raise ValueError("Unsupported language code")
+        return normalized
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=32)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=32)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_forgot_email(cls, value: str) -> str:
+        return LoginRequest.normalize_email(value)
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=32)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -43,9 +109,26 @@ class UserResponse(BaseModel):
 
     id: str
     email: str
+    username: str | None = None
+    display_name: str | None = None
     role: str
     preferred_language: str
     created_at: datetime
+
+    @model_validator(mode="after")
+    def fill_legacy_profile_names(self) -> "UserResponse":
+        """Keep profiles usable for accounts created before name fields existed."""
+        fallback = self.email.split("@", 1)[0]
+        self.username = self.username or fallback
+        self.display_name = self.display_name or self.username
+        return self
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    user: UserResponse
 
 
 class UpdateLanguageRequest(BaseModel):

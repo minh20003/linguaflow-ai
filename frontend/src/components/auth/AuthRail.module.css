@@ -1,20 +1,32 @@
 .rail {
   display: flex;
   flex-direction: column;
-  gap: var(--s-4);
+  gap: var(--s-5);
   padding: var(--s-7) var(--s-5);
   background: #f4f8fc;
-  /* Hairline phân cột, không phải bóng đổ. */
   border-inline-end: 1px solid var(--rule);
 }
 
-.heading {
+.eyebrow {
   font-family: var(--font-mono);
-  font-size: var(--fs-label);
-  font-weight: 500;
+  font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--indigo);
+  color: var(--ink-muted);
+}
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.heading {
+  font-size: var(--fs-title);
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .description {
@@ -23,33 +35,10 @@
   line-height: 1.6;
 }
 
-.spec {
-  margin-block-start: auto;
-  padding-block-start: var(--s-5);
-  border-block-start: 1px solid var(--rule);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-secondary);
-  line-height: 1.6;
-}
-
-/* Dải xuống thành hàng ngang dưới đầu thẻ. */
 @media (max-width: 879px) {
-  .rail {
-    border-inline-end: none;
-    border-block-end: 1px solid var(--rule);
-  }
-
-  .spec {
-    margin-block-start: 0;
-  }
+  .rail { border-inline-end: none; border-block-end: 1px solid var(--rule); }
 }
 
 @media (max-width: 559px) {
-  .rail {
-    padding: var(--s-5) 0;
-    background: transparent;
-  }
+  .rail { padding: var(--s-5) 0; background: transparent; }
 }

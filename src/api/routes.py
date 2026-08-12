@@ -1,24 +1,46 @@
 """API routes for the application."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+import mimetypes
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.graph import agent
+from src.config import get_settings
 from src.core.deps import get_current_user
-from src.core.security import create_access_token, verify_password
+from src.core.security import (
+    create_access_token,
+    create_refresh_token,
+    get_password_hash,
+    hash_refresh_token,
+    verify_password,
+)
 from src.database import get_db
-from src.database.models import Conversation, User
+from src.database.models import Conversation, PasswordResetToken, RefreshSession, User
 from src.models.schemas import ChatRequest, ChatResponse
 from src.schemas.auth import (
+    AuthResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
-    TokenResponse,
+    LogoutRequest,
+    RefreshRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
     UpdateLanguageRequest,
     UserResponse,
 )
 from src.schemas.chat import (
     ConversationCreateRequest,
     ConversationResponse,
+    AttachmentResponse,
     MessageResponse,
 )
 from src.services.chat import (
@@ -31,17 +53,90 @@ from src.services.chat import (
 
 router = APIRouter()
 
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]+")
+_MAX_FILENAME_LENGTH = 120
+
+
+def _safe_filename(filename: str | None) -> str:
+    """Keep a human-readable filename while preventing path traversal."""
+    name = Path(filename or "attachment").name
+    name = _SAFE_FILENAME.sub("_", name).strip(" ._")
+    return (name or "attachment")[:_MAX_FILENAME_LENGTH]
+
+
+def _attachment_path(conversation_id: str, attachment_id: str) -> Path:
+    """Resolve a server generated attachment id to its storage path."""
+    root = Path(get_settings().upload_dir).resolve()
+    candidate = (root / conversation_id / attachment_id).resolve()
+    if root not in candidate.parents:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
+    return candidate
+
 
 # ========================
 # Authentication Endpoints
 # ========================
 
 
-@router.post("/auth/login", response_model=TokenResponse)
+async def _issue_auth_response(
+    user: User,
+    db: AsyncSession,
+    *,
+    remember: bool,
+) -> AuthResponse:
+    """Create an access token and a revocable, rotated refresh session."""
+    settings = get_settings()
+    refresh_token = create_refresh_token()
+    refresh_days = settings.refresh_expire_days if remember else 1
+    db.add(RefreshSession(
+        user_id=user.id,
+        token_hash=hash_refresh_token(refresh_token),
+        expires_at=datetime.now(UTC) + timedelta(days=refresh_days),
+    ))
+    await db.commit()
+    return AuthResponse(
+        access_token=create_access_token(subject=user.id),
+        refresh_token=refresh_token,
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Create a durable account and start its first authenticated session."""
+    duplicate = await db.execute(
+        select(User).where((User.email == request.email) | (User.username == request.username))
+    )
+    existing = duplicate.scalar_one_or_none()
+    if existing is not None:
+        detail = "Email is already registered" if existing.email == request.email else "Username is already registered"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    display_name = (request.display_name or request.username).strip()
+    user = User(
+        email=request.email,
+        username=request.username,
+        display_name=display_name,
+        password_hash=get_password_hash(request.password),
+        preferred_language=request.preferred_language,
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or username is already registered") from exc
+    return await _issue_auth_response(user, db, remember=True)
+
+
+@router.post("/auth/login", response_model=AuthResponse)
 async def login(
     request: LoginRequest,
     db: AsyncSession = Depends(get_db),
-) -> TokenResponse:
+) -> AuthResponse:
     """Authenticate user and return JWT token.
 
     Args:
@@ -71,10 +166,111 @@ async def login(
             detail="Invalid email or password",
         )
 
-    # Create access token with user ID as subject
-    access_token = create_access_token(subject=user.id)
+    return await _issue_auth_response(user, db, remember=request.remember)
 
-    return TokenResponse(access_token=access_token)
+
+@router.post("/auth/refresh", response_model=AuthResponse)
+async def refresh_session(
+    request: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Rotate a valid refresh token and return a fresh authenticated session."""
+    result = await db.execute(
+        select(RefreshSession).where(RefreshSession.token_hash == hash_refresh_token(request.refresh_token))
+    )
+    session = result.scalar_one_or_none()
+    invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+    if session is None or session.revoked_at is not None:
+        raise invalid
+
+    expires_at = session.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at <= datetime.now(UTC):
+        session.revoked_at = datetime.now(UTC)
+        await db.commit()
+        raise invalid
+
+    user = await db.get(User, session.user_id)
+    if user is None:
+        raise invalid
+    session.revoked_at = datetime.now(UTC)
+    return await _issue_auth_response(user, db, remember=(expires_at - datetime.now(UTC)).days > 1)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    request: LogoutRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Revoke a browser session. The operation is idempotent."""
+    result = await db.execute(
+        select(RefreshSession).where(RefreshSession.token_hash == hash_refresh_token(request.refresh_token))
+    )
+    session = result.scalar_one_or_none()
+    if session is not None and session.revoked_at is None:
+        session.revoked_at = datetime.now(UTC)
+        await db.commit()
+
+
+@router.post("/auth/password/forgot", response_model=ForgotPasswordResponse)
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ForgotPasswordResponse:
+    """Create a short-lived reset token without revealing account existence."""
+    result = await db.execute(select(User).where(User.email == request.email))
+    user = result.scalar_one_or_none()
+    generic = "If the account exists, password reset instructions are ready."
+    if user is None:
+        return ForgotPasswordResponse(message=generic)
+
+    raw_token = create_refresh_token()
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_token),
+        expires_at=datetime.now(UTC) + timedelta(minutes=get_settings().password_reset_expire_minutes),
+    ))
+    await db.commit()
+    # Local development has no mail provider. Returning this only in development
+    # keeps the flow testable; production never exposes reset credentials.
+    visible_token = raw_token if get_settings().app_env == "development" else None
+    return ForgotPasswordResponse(message=generic, reset_token=visible_token)
+
+
+@router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Consume a reset token, change the password, and revoke all sessions."""
+    result = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == hash_refresh_token(request.token)
+        )
+    )
+    reset = result.scalar_one_or_none()
+    invalid = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
+    if reset is None or reset.used_at is not None:
+        raise invalid
+    expires_at = reset.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at <= datetime.now(UTC):
+        raise invalid
+    user = await db.get(User, reset.user_id)
+    if user is None:
+        raise invalid
+
+    now = datetime.now(UTC)
+    user.password_hash = get_password_hash(request.new_password)
+    reset.used_at = now
+    await db.execute(
+        update(RefreshSession)
+        .where(RefreshSession.user_id == user.id, RefreshSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await db.commit()
 
 
 @router.get("/auth/me", response_model=UserResponse)
@@ -220,6 +416,92 @@ async def get_conversation_messages(
         ) from exc
 
     return [MessageResponse.model_validate(message) for message in messages]
+
+
+@router.post(
+    "/conversations/{conversation_id}/attachments",
+    response_model=AttachmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_conversation_attachment(
+    conversation_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AttachmentResponse:
+    """Upload one file for a conversation the current user belongs to.
+
+    Files are stored outside public static paths. A download requires the same
+    conversation-membership check, so knowing a URL never grants access.
+    """
+    service = ChatService(db)
+    try:
+        await service.get_message_history(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            limit=1,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation was not found") from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this conversation") from exc
+    except ConversationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    settings = get_settings()
+    attachment_id = f"{uuid.uuid4().hex}_{_safe_filename(file.filename)}"
+    destination = _attachment_path(conversation_id, attachment_id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    try:
+        with destination.open("xb") as output:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > settings.max_upload_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Attachment exceeds the 20 MB limit",
+                    )
+                output.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+    return AttachmentResponse(
+        id=attachment_id,
+        conversation_id=conversation_id,
+        filename=_safe_filename(file.filename),
+        content_type=content_type,
+        size=written,
+        download_url=f"/api/v1/conversations/{conversation_id}/attachments/{attachment_id}",
+    )
+
+
+@router.get("/conversations/{conversation_id}/attachments/{attachment_id}")
+async def download_conversation_attachment(
+    conversation_id: str,
+    attachment_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Download an attachment after verifying conversation membership."""
+    service = ChatService(db)
+    try:
+        await service.get_message_history(user_id=current_user.id, conversation_id=conversation_id, limit=1)
+    except ConversationNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation was not found") from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You are not a member of this conversation") from exc
+    except ConversationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    path = _attachment_path(conversation_id, attachment_id)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
+    return FileResponse(path, filename=path.name.split("_", 1)[-1], media_type=mimetypes.guess_type(path.name)[0])
 
 
 # ========================

@@ -36,7 +36,7 @@ export const LABELS: Record<LanguageCode, Record<LabelKey, string>> = {
     language: "Ngôn ngữ của bạn",
     show: "Hiện",
     hide: "Ẩn",
-    remember: "Ghi nhớ máy này",
+    remember: "Ghi nhớ tài khoản",
     forgot: "Quên mật khẩu?",
     terms: "Điều khoản dịch vụ",
   },
