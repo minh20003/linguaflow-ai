@@ -4,10 +4,11 @@ The agent needs the most recent messages of a conversation to resolve pronouns
 and keep the translation coherent across turns (docs/CONTRACT.md section 2,
 ADR-01).
 
-The `messages` table does not exist yet (see docs/architecture_diagram.md
-section 4), so the context source is abstracted behind the protocol below. Once
-that table lands, add an implementation that reads from the database — no node
-has to change.
+The source is abstracted behind the protocol below so this package never imports
+`src/database/`. The production implementation reading the `messages` table is
+`DatabaseContextProvider` in `src/services/context_provider.py`; it satisfies
+this protocol structurally, which keeps the agent reusable on a different schema
+or transport.
 """
 
 from __future__ import annotations
