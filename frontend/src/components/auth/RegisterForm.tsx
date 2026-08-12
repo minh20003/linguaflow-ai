@@ -5,6 +5,7 @@ import Link from "next/link";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { register } from "@/lib/api";
+import { setSession } from "@/lib/auth";
 import { altLabel, mainLabel } from "@/lib/i18n";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
@@ -102,8 +103,7 @@ export default function RegisterForm() {
         password,
         preferred_language: lang,
       });
-      localStorage.setItem("access_token", result.access_token);
-      localStorage.setItem("user", JSON.stringify(result.user));
+      setSession(result.access_token, result.user);
       window.location.href = "/chat";
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Không tạo được tài khoản.");

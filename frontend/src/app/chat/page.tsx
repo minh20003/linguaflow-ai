@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
+import RequireAuth from "@/components/auth/RequireAuth";
 import MessagingApp from "@/components/chat/MessagingApp";
 
 export const metadata: Metadata = {
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 };
 
 export default function ChatPage() {
-  return <MessagingApp />;
+  return (
+    <RequireAuth>
+      <MessagingApp />
+    </RequireAuth>
+  );
 }

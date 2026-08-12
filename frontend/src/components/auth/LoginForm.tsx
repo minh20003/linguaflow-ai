@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import { login } from "@/lib/api";
+import { setSession } from "@/lib/auth";
 import { mainLabel } from "@/lib/i18n";
 import styles from "./AuthForm.module.css";
 
@@ -36,8 +37,7 @@ export default function LoginForm() {
     setLoading(true);
     try {
       const result = await login(email, password);
-      localStorage.setItem("access_token", result.access_token);
-      localStorage.setItem("user", JSON.stringify(result.user));
+      setSession(result.access_token, result.user);
       router.push("/chat");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Chưa thể đăng nhập. Bạn vui lòng thử lại nhé.");

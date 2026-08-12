@@ -25,7 +25,18 @@ export type LabelKey =
   | "forgot"
   | "terms";
 
-export const LABELS: Record<LanguageCode, Record<LabelKey, string>> = {
+/**
+ * Nhãn theo ngôn ngữ. Không bắt buộc đủ mọi mã backend hỗ trợ: `altLabel` đã
+ * lùi về tiếng Anh khi thiếu (§7.3), nên thêm một ngôn ngữ vào allowlist không
+ * kéo theo nghĩa vụ dịch nhãn ngay. Riêng `vi` và `en` bắt buộc có — một là
+ * ngôn ngữ giao diện, một là ngôn ngữ lùi về.
+ */
+type LabelTable = Partial<Record<LanguageCode, Record<LabelKey, string>>> & {
+  vi: Record<LabelKey, string>;
+  en: Record<LabelKey, string>;
+};
+
+export const LABELS: LabelTable = {
   vi: {
     email: "Email",
     password: "Mật khẩu",
@@ -151,20 +162,6 @@ export const LABELS: Record<LanguageCode, Record<LabelKey, string>> = {
     remember: "จดจำอุปกรณ์นี้",
     forgot: "ลืมรหัสผ่าน?",
     terms: "ข้อกำหนดการให้บริการ",
-  },
-  id: {
-    email: "Email",
-    password: "Kata sandi",
-    passwordConfirm: "Konfirmasi kata sandi",
-    username: "Nama pengguna",
-    signIn: "Masuk",
-    createAccount: "Buat akun",
-    language: "Bahasa Anda",
-    show: "Tampilkan",
-    hide: "Sembunyikan",
-    remember: "Ingat perangkat ini",
-    forgot: "Lupa kata sandi?",
-    terms: "Ketentuan layanan",
   },
 };
 

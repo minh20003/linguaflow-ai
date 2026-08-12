@@ -43,8 +43,42 @@ export async function login(email: string, password: string): Promise<LoginRespo
     throw new Error(token?.detail || "Email hoặc mật khẩu không đúng.");
   }
 
+  return withProfile(token.access_token, token.token_type);
+}
+
+/**
+ * Create an account, then load its profile.
+ *
+ * The chosen language is sent with the registration rather than set
+ * afterwards: it is the language the account reads in, so collecting it later
+ * would leave the first messages untranslated.
+ */
+export async function register(data: RegisterData): Promise<LoginResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: data.email.trim(),
+      password: data.password,
+      preferred_language: data.preferred_language,
+    }),
+  });
+  const token = await responseBody(response);
+
+  if (response.status === 409) {
+    throw new Error("Email này đã có người dùng.");
+  }
+  if (!response.ok || !token?.access_token) {
+    throw new Error(token?.detail || "Không tạo được tài khoản.");
+  }
+
+  return withProfile(token.access_token, token.token_type);
+}
+
+/** Load the account profile for a token and shape it for the UI. */
+async function withProfile(accessToken: string, tokenType?: string): Promise<LoginResponse> {
   const profileResponse = await fetch(`${API_BASE}/api/v1/auth/me`, {
-    headers: { Authorization: `Bearer ${token.access_token}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   const profile = await responseBody(profileResponse);
   if (!profileResponse.ok || !profile?.email || !profile.id) {
@@ -53,9 +87,9 @@ export async function login(email: string, password: string): Promise<LoginRespo
 
   const accountName = profile.email.split("@")[0];
   return {
-    access_token: token.access_token,
+    access_token: accessToken,
     refresh_token: "",
-    token_type: token.token_type || "bearer",
+    token_type: tokenType || "bearer",
     user: {
       id: profile.id,
       username: accountName,
@@ -66,29 +100,26 @@ export async function login(email: string, password: string): Promise<LoginRespo
   };
 }
 
-/**
- * Registration remains local until the backend exposes POST /auth/register.
- * It enforces one account identity: username is always the display name.
- */
-export async function register(data: RegisterData): Promise<LoginResponse> {
-  const username = data.username.trim();
-  const registrationData = { ...data, username, display_name: username };
+/** Language codes the backend accepts. The frontend keeps only the labels. */
+export async function fetchSupportedLanguages(): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/api/v1/languages`);
+  if (!response.ok) return [];
+  return (await response.json()) as string[];
+}
 
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  if (registrationData.email === "taken@test.com") {
-    throw new Error("Email này đã có người dùng.");
+/** Persist the reading language for the signed-in account. */
+export async function updatePreferredLanguage(
+  language: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/me/language`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ preferred_language: language }),
+  });
+  const profile = await responseBody(response);
+  if (!response.ok) {
+    throw new Error(profile?.detail || "Không đổi được ngôn ngữ.");
   }
-
-  return {
-    access_token: `mock-access-token-${Date.now()}`,
-    refresh_token: `mock-refresh-token-${Date.now()}`,
-    token_type: "bearer",
-    user: {
-      id: `user-${Date.now()}`,
-      username: registrationData.username,
-      email: registrationData.email,
-      display_name: registrationData.display_name,
-      preferred_language: registrationData.preferred_language,
-    },
-  };
+  return profile?.preferred_language || language;
 }
