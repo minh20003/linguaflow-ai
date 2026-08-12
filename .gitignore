@@ -60,6 +60,7 @@ out/
 .ai-log/*.jsonl
 .ai-log/archive/
 
-# Team Docs
+# Team Docs (Office format, not renderable on GitHub)
 docs/T217/
+
 CLAUDE.md

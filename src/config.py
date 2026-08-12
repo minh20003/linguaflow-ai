@@ -1,16 +1,19 @@
 """Application configuration, loaded once per process from the environment.
 
-Every field has a default so the test suite and the evaluation harness can run
-without a `.env` file. Fields are grouped into blocks by concern; when adding a
-setting, put it inside the block it belongs to rather than at the end of the
-class — the auth branch appends its own block there and would conflict.
+Fields are grouped into blocks by concern; add a setting inside the block it
+belongs to rather than at the end of the class, so parallel branches editing
+different concerns do not collide.
+
+`jwt_secret` is the one field with no usable default — it must come from the
+environment. Everything else defaults so the test suite and the evaluation
+harness can run without a `.env` file.
 """
 
 import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -62,11 +65,28 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    # Database
-    database_url: str = "sqlite:///./data/app.db"
+    # Database. The driver must be async — `create_async_engine` cannot open a
+    # bare `sqlite://` URL, so the default carries the aiosqlite driver.
+    database_url: str = "sqlite+aiosqlite:///./data/app.db"
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+
+    # JWT Authentication
+    jwt_secret: str = ""  # Required: set in environment
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = Field(default=1440, ge=1, le=10080)  # 24h default, max 7 days
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def jwt_secret_must_be_set(cls, v: str, info) -> str:
+        """Ensure JWT secret is not empty in production."""
+        if not v:
+            raise ValueError(
+                "JWT_SECRET environment variable is required. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            )
+        return v
 
 
 def configure_logging(settings: Settings | None = None) -> None:
