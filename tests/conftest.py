@@ -1,6 +1,10 @@
 """Test fixtures and configuration."""
 
+from __future__ import annotations
+
 import asyncio
+import os
+import tempfile
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
@@ -23,21 +27,81 @@ from src.services.connection_manager import ConnectionManager
 # Test Database Setup
 # ========================
 
-# Use in-memory SQLite for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# These are initialized in test_db fixture, after the temp file is created.
+# Exported for tests that need to verify DB state with a separate session.
+# Use these names consistently throughout.
+test_engine: create_async_engine | None = None
+test_async_session_maker: async_sessionmaker | None = None
 
-test_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    echo=False,
-)
+_ws_engine: create_async_engine | None = None
+_ws_session_maker: async_sessionmaker | None = None
 
-test_async_session_maker = async_sessionmaker(
-    test_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False,
-)
+
+def _init_engines(db_file: str) -> None:
+    """Initialize test setup and WebSocket engines pointing to the same file.
+
+    Using separate engines with separate pools allows concurrent access to the
+    same SQLite file without StaticPool connection contention issues.
+    The SQLite file itself handles locking and consistency.
+    Enabling WAL mode allows concurrent reads during writes.
+    """
+    global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
+
+    url = f"sqlite+aiosqlite:///{db_file}"
+
+    # Enable WAL mode on the database before creating engines.
+    import sqlite3
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.close()
+
+    # Engine for test fixtures (creating users, conversations, etc.)
+    test_engine = create_async_engine(
+        url,
+        echo=False,
+        connect_args={
+            "timeout": 30,
+        },
+    )
+    test_async_session_maker = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+    # Separate engine for WebSocket handler.
+    _ws_engine = create_async_engine(
+        url,
+        echo=False,
+        connect_args={
+            "timeout": 30,
+        },
+    )
+    _ws_session_maker = async_sessionmaker(
+        _ws_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
+
+
+async def _close_engines() -> None:
+    """Dispose all engines after test."""
+    global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
+
+    if test_engine is not None:
+        await test_engine.dispose()
+        test_engine = None
+        test_async_session_maker = None
+
+    if _ws_engine is not None:
+        await _ws_engine.dispose()
+        _ws_engine = None
+        _ws_session_maker = None
 
 
 @pytest.fixture(scope="session")
@@ -52,19 +116,37 @@ def event_loop():
 async def test_db() -> AsyncGenerator[AsyncSession, None]:
     """Create a fresh database for each test function.
 
-    Uses an in-memory SQLite database that is created fresh for each test.
+    Creates all tables at start, then yields a session for test data setup.
+    After the test, drops all tables and removes the temp file.
     """
-    # Create all tables
+    global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
+
+    # Create a temp file for this test function's database.
+    fd, db_file = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    _init_engines(db_file)
+
+    # Create all tables.
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Provide a session
-    async with test_async_session_maker() as session:
+    # Provide a session for test data setup.
+    session = test_async_session_maker()
+    try:
         yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
-    # Drop all tables after test
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    # Drop all tables and clean up.
+    await _close_engines()
+    try:
+        os.unlink(db_file)
+    except OSError:
+        pass
 
 
 @pytest_asyncio.fixture
@@ -183,22 +265,30 @@ def test_admin_headers(test_admin: User) -> dict[str, str]:
 # App Client Setup
 # ========================
 
+
 @pytest_asyncio.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    """Async HTTP client for testing API endpoints."""
-    # Override the database dependency to use test database
+async def client(
+    test_db: AsyncSession,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Async HTTP client for testing API endpoints.
+
+    Depends on test_db to ensure the database is initialized before use.
+    """
     from src.main import app
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-        async with test_async_session_maker() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.close()
+        # Use the same session maker as test_db for consistency
+        if test_async_session_maker is None:
+            raise RuntimeError("test_db fixture must be used before client fixture")
+        session = test_async_session_maker()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
 
@@ -210,23 +300,32 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest_asyncio.fixture
-async def ws_client() -> AsyncGenerator[tuple[TestClient, ConnectionManager], None]:
-    """Provide a no-lifespan WebSocket app backed by the test database."""
+async def ws_client(
+    _db_for_ws_fixture: None,
+) -> AsyncGenerator[tuple[TestClient, ConnectionManager], None]:
+    """Provide a no-lifespan WebSocket app backed by the test database.
+
+    This fixture depends on _db_for_ws_fixture which initializes the DB if test_db
+    hasn't been used.
+    """
+    if _ws_session_maker is None:
+        raise RuntimeError("Database not initialized. Use _db_for_ws or test_db fixture.")
+
     ws_app = FastAPI()
     ws_app.include_router(api_router, prefix="/api/v1")
     ws_app.include_router(websocket_router, prefix="/api/v1")
     manager = ConnectionManager()
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-        async with test_async_session_maker() as session:
-            try:
-                yield session
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.close()
+        session = _ws_session_maker()
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
     ws_app.dependency_overrides[get_db] = override_get_db
     ws_app.dependency_overrides[get_connection_manager] = lambda: manager
@@ -237,15 +336,36 @@ async def ws_client() -> AsyncGenerator[tuple[TestClient, ConnectionManager], No
     ws_app.dependency_overrides.clear()
 
 
+@pytest_asyncio.fixture
+async def _db_for_ws_fixture() -> None:
+    """Initialize database for ws_client when test_db is not used.
+
+    This is a no-op when test_db is already initialized.
+    """
+    global test_engine
+    if test_engine is None:
+        fd, db_file = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        _init_engines(db_file)
+
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        _db_for_ws_fixture._db_file = db_file
+        yield
+        if hasattr(_db_for_ws_fixture, '_db_file'):
+            await _close_engines()
+            try:
+                os.unlink(_db_for_ws_fixture._db_file)
+            except OSError:
+                pass
+    else:
+        yield
+
+
 @pytest.fixture
 def mock_llm() -> AsyncMock:
-    """Mock LLM to avoid calling OpenAI during tests.
-
-    Usage in test:
-        def test_something(mock_llm):
-            # LLM calls will return mock response instead of hitting OpenAI
-            ...
-    """
+    """Mock LLM to avoid calling OpenAI during tests."""
     mock = AsyncMock()
     mock.ainvoke.return_value = AsyncMock(content="Mocked LLM response")
     return mock
