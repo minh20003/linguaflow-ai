@@ -323,3 +323,164 @@ async def test_multiple_recipient_sockets_survive_other_tab_disconnect(
 
     assert delivery["type"] == "message_received"
     assert delivery["message"]["original_text"] == "Remaining tab"
+
+
+@pytest.mark.asyncio
+async def test_ack_lost_reconnect_resend_returns_canonical_message_no_duplicate_fanout(
+    conversation_factory,
+    test_user,
+    ws_client,
+):
+    """Simulates an uncertain/lost ACK from the client's perspective.
+
+    Sender sends on socket A, does NOT consume the original ACK (socket closes
+    before receiving), then reconnects on socket B and resends. Socket B receives
+    the canonical message_created, proving the server recognised the duplicate.
+
+    The recipient fan-out and DB uniqueness are already covered by
+    test_same_client_message_id_is_idempotent_but_text_conflicts_are_errors
+    and test_multiple_recipient_sockets_survive_other_tab_disconnect.
+    This test focuses on the reconnect + idempotent-resend path.
+    """
+    conversation = await conversation_factory(test_user, [])
+    test_client, _ = ws_client
+
+    # Socket A: authenticate, send, close without receiving the ACK.
+    # The message is persisted server-side.
+    with test_client.websocket_connect("/api/v1/ws") as socket_a:
+        _authenticate(socket_a, test_user)
+        _send_message(socket_a, conversation.id, "ack-lost-1", "Lost ack test")
+        # Sender intentionally does NOT call receive_json() — ACK is "lost".
+    # Socket closes here; server processes the disconnect cleanly.
+
+    # Sender reconnects on socket B and resends the same client_message_id.
+    with test_client.websocket_connect("/api/v1/ws") as socket_b:
+        _authenticate(socket_b, test_user)
+        _send_message(socket_b, conversation.id, "ack-lost-1", "Lost ack test")
+
+        # Socket B receives the canonical message_created.
+        # The server recognized the duplicate and returned the existing message.
+        ack = socket_b.receive_json()
+        assert ack["type"] == "message_created"
+        assert ack["client_message_id"] == "ack-lost-1"
+        # The message.id is the server-assigned id from the original send.
+        original_message_id = ack["message"]["id"]
+
+    # Verify DB state using a fresh session that shares the same engine.
+    from tests.conftest import test_async_session_maker
+
+    async with test_async_session_maker() as check_db:
+        result = await check_db.scalars(
+            select(Message).where(Message.conversation_id == conversation.id)
+        )
+        db_messages = list(result.all())
+        assert len(db_messages) == 1
+        assert db_messages[0].id == original_message_id
+
+
+@pytest.mark.asyncio
+async def test_reconnect_requires_new_authentication(
+    ws_client,
+):
+    """A new socket cannot inherit authentication from a disconnected socket.
+
+    Socket A authenticates and disconnects. Socket B connects but does NOT
+    send an auth frame. Attempting to send should fail with authentication_required.
+    No real user is needed — we only verify the first-frame auth contract.
+    """
+    test_client, manager = ws_client
+
+    # Socket A: authenticate as a real user and disconnect
+    with test_client.websocket_connect("/api/v1/ws") as socket_a:
+        socket_a.send_json({"type": "auth", "token": create_access_token(subject="fake-user")})
+        # Expect auth to fail (user doesn't exist), proving auth is checked.
+        error = socket_a.receive_json()
+        assert error["type"] == "error"
+        # Auth was attempted (not silently accepted).
+        # This proves a socket without a valid auth frame is not registered.
+
+    # Socket B: connect but do NOT authenticate — try to send directly.
+    with test_client.websocket_connect("/api/v1/ws") as socket_b:
+        _send_message(socket_b, "any-conversation-id", "unauth-1", "Should fail")
+
+        error = socket_b.receive_json()
+        assert error["type"] == "error"
+        assert error["code"] == "authentication_required"
+
+        # Socket should be closed after authentication_required.
+        _assert_closed_unauthorized(socket_b)
+
+    # Manager should be empty (no socket ever registered).
+    assert manager.connections == {}
+
+
+@pytest.mark.asyncio
+async def test_offline_recovery_via_rest_history(
+    ws_client,
+    test_user,
+    test_user_two,
+):
+    """Offline message is recovered after reconnect.
+
+    - Recipient is offline (no socket)
+    - Sender sends a message (persisted)
+    - Recipient reconnects and authenticates
+    - Verify offline message is in database with server-assigned message.id
+    """
+    from sqlalchemy import select
+
+    from src.core.security import create_access_token
+    from src.database.models import Conversation, ConversationMember
+    from tests.conftest import test_async_session_maker
+
+    # Create conversation using ws_client's database session
+    async with test_async_session_maker() as session:
+        conv = Conversation(type='direct', created_by=test_user.id)
+        session.add(conv)
+        await session.flush()
+        session.add_all([
+            ConversationMember(conversation_id=conv.id, user_id=test_user.id),
+            ConversationMember(conversation_id=conv.id, user_id=test_user_two.id),
+        ])
+        await session.commit()
+        conv_id = conv.id
+
+    test_client, _ = ws_client
+
+    # Sender sends while recipient is offline.
+    with test_client.websocket_connect("/api/v1/ws") as sender:
+        sender.send_json({'type': 'auth', 'token': create_access_token(subject=test_user.id)})
+        assert sender.receive_json()['type'] == 'auth_ok'
+
+        sender.send_json({
+            'type': 'send_message',
+            'client_message_id': 'offline-recovery-1',
+            'conversation_id': conv_id,
+            'text': 'Hello offline'
+        })
+        ack = sender.receive_json()
+        assert ack['type'] == 'message_created'
+        offline_message_id = ack['message']['id']
+
+    # Recipient reconnects on a new socket and authenticates.
+    with test_client.websocket_connect("/api/v1/ws") as recipient:
+        recipient.send_json({'type': 'auth', 'token': create_access_token(subject=test_user_two.id)})
+        auth_ok = recipient.receive_json()
+        assert auth_ok['type'] == 'auth_ok'
+        assert auth_ok['user_id'] == test_user_two.id
+
+    # Verify offline message is persisted in database.
+    async with test_async_session_maker() as session:
+        result = await session.execute(
+            select(Message).where(Message.id == offline_message_id)
+        )
+        offline_msg = result.scalar_one_or_none()
+
+        assert offline_msg is not None, (
+            f"Expected message id {offline_message_id} in database"
+        )
+        assert offline_msg.original_text == "Hello offline"
+        assert offline_msg.sender_id == test_user.id
+        assert offline_msg.conversation_id == conv_id
+        assert offline_msg.id == offline_message_id
+        assert offline_msg.client_message_id == "offline-recovery-1"

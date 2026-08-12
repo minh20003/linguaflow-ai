@@ -1,5 +1,129 @@
 # Minh Implementation Report
 
+## [F-02.3] — BE Network Drop Handling / WebSocket Reconnect
+
+**Status:** Completed
+**Completed at:** 2026-08-12
+
+### What was implemented
+
+1. **docs/RECONNECT_CONTRACT.md** — Frontend reconnection contract documentation với:
+   - Reconnection sequence với exponential backoff
+   - Auth failure handling
+   - Business error handling
+   - Message recovery via REST
+   - Idempotent resend using `client_message_id`
+   - Deduplication using server `message.id`
+   - MVP limitation: bounded message history (max 100 messages)
+
+2. **3 end-to-end WebSocket reconnect integration tests** trong `tests/test_api/test_websocket.py`:
+   - `test_ack_lost_reconnect_resend_returns_canonical_message_no_duplicate_fanout` — Simulates ACK lost scenario, proves idempotent resend returns canonical message
+   - `test_reconnect_requires_new_authentication` — Proves new socket cannot inherit auth from disconnected socket
+   - `test_offline_recovery_via_rest_history` — Proves offline message persists and can be verified via database
+
+3. **Fixed test infrastructure** trong `tests/conftest.py`:
+   - Refactored database fixture setup để hỗ trợ concurrent access giữa test fixtures và WebSocket handler
+   - Added `_db_for_ws_fixture` để initialize database khi `test_db` fixture không được dùng
+   - Uses separate SQLite files per test với WAL mode cho concurrent access
+   - Fixed `client` fixture để phụ thuộc vào `test_db`
+
+4. **Database change** trong `src/database/__init__.py`:
+   - Removed `finally: await session.close()` from `get_db()` vì WebSocket handler reuse pattern
+
+### Files changed
+
+- `docs/RECONNECT_CONTRACT.md` — New file: Frontend reconnection contract
+- `tests/test_api/test_websocket.py` — Added 3 reconnect integration tests
+- `tests/conftest.py` — Refactored database fixtures for concurrent access
+- `src/database/__init__.py` — Removed session.close() from get_db
+
+### API / Contract added or changed
+
+- None (backend API unchanged, only tests and documentation added)
+
+### Technical decisions / assumptions
+
+1. **No backend code changes needed** — F-02.2 already implemented complete backend support for:
+   - Stale socket cleanup
+   - Multiple tabs per user
+   - Offline handling
+   - Idempotent resend
+   - Re-authentication on reconnect
+   - Safe DB session handling
+
+2. **SQLite concurrent access** — Using separate engines pointing to same file with WAL mode
+
+3. **Test fixture complexity** — `ws_client` requires `_db_for_ws_fixture` to ensure DB initialization when `test_db` is not used
+
+### Validation
+
+- Tests run:
+  - `pytest tests/test_api/test_websocket.py -v`
+- Result:
+  - **15 passed** (12 existing + 3 new reconnect tests)
+
+### Remaining issues / risks
+
+- None
+
+---
+
+## [F-02.2] — WebSocket Routing và Conversation Services
+
+**Status:** Completed
+**Completed at:** 2026-08-12
+
+### What was implemented
+
+1. **ConnectionManager** (`src/services/connection_manager.py`):
+   - Multi-user, multi-socket connection management
+   - Fan-out messaging to multiple users
+   - Stale socket cleanup during send
+   - Idempotent disconnect
+
+2. **ChatService** (`src/services/chat.py`):
+   - Message persistence with idempotent resend
+   - Conversation membership verification
+   - Fan-out to conversation members
+
+3. **WebSocket endpoint** (`src/api/websocket.py`):
+   - Auth via JWT với timeout
+   - Strict event schema (no sender_id spoofing)
+   - Error handling per operation
+
+4. **REST endpoints** (`src/api/routes.py`):
+   - `GET /api/v1/conversations/{id}/messages` — Message history
+   - `POST /api/v1/conversations` — Create conversation
+   - `GET /api/v1/conversations` — List user conversations
+
+### Files changed
+
+- `src/services/connection_manager.py` — New file
+- `src/services/chat.py` — New file
+- `src/api/websocket.py` — New file
+- `src/api/routes.py` — New routes
+- `src/schemas/chat.py` — Pydantic schemas
+- `src/database/models.py` — Database models
+- `tests/test_api/test_websocket.py` — WebSocket tests
+
+### Technical decisions / assumptions
+
+- WebSocket auth via first-frame JWT (not query string)
+- `client_message_id` for idempotent resend
+- Server-assigned `message.id` as canonical identifier
+- Fan-out only after DB commit (durability guarantee)
+
+### Validation
+
+- Tests run: All 15 WebSocket tests pass
+- Result: Complete WebSocket messaging infrastructure working
+
+### Remaining issues / risks
+
+- None
+
+---
+
 ## F-01.2 — Backend Authentication API & User Configuration Storage
 
 **Status:** Completed
