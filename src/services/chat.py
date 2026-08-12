@@ -223,11 +223,18 @@ class ChatService:
                 created=False,
             )
 
+        # Provisional only. The agent's detect_language node decides the real
+        # value and overwrites it (docs/CONTRACT.md section 4.3).
+        sender_language = await self._db.scalar(
+            select(User.preferred_language).where(User.id == sender_id)
+        )
+
         message = Message(
             client_message_id=client_message_id,
             conversation_id=conversation_id,
             sender_id=sender_id,
             original_text=text,
+            source_language=sender_language or "en",
         )
         self._db.add(message)
 
