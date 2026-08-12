@@ -190,16 +190,22 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | Bảng | Các trường |
 |---|---|
 | `users` | `id`, `email`, `password_hash`, `role`, `preferred_language`, `created_at` |
-| `conversations` | `id`, `title`, `created_at` |
-| `conversation_members` | `id`, `conversation_id`, `user_id`, `role`, `joined_at` |
-| `messages` | `id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at` |
-| `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `created_at` |
+| `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
+| `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
+| `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at` |
+| `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
 
 **Ghi chú:**
 
-1. Hai cột `role` có ngữ nghĩa khác nhau: `users.role` là quyền ở cấp hệ thống (`member` hoặc `admin`); `conversation_members.role` là vai trò trong một cuộc hội thoại cụ thể.
-2. Tại thời điểm cập nhật tài liệu, chỉ bảng `users` đã được hiện thực hoá. Các bảng còn lại khi tạo phải tuân thủ đúng tên bảng và kiểu dữ liệu quy định tại đây.
+1. `users.role` là quyền ở cấp hệ thống (`member` hoặc `admin`). Bảng `conversation_members` **không có cột `role`**: không tính năng nào trong F-01..F-06 dùng tới vai trò trong hội thoại, nên cột này đã được gỡ khỏi hợp đồng thay vì thêm một cột chết vào mã nguồn.
+2. `conversation_members` dùng **khoá chính tổ hợp** `(conversation_id, user_id)`, không có cột `id` riêng. Một người chỉ thuộc một hội thoại đúng một lần, nên tổ hợp này vừa là định danh vừa là ràng buộc.
+3. `conversations.type` nhận `direct` hoặc `group`, có `CheckConstraint` ở mức cơ sở dữ liệu.
+4. `messages.client_message_id` do client sinh ra, cùng `sender_id` và `conversation_id` tạo thành ràng buộc duy nhất. Đây là cơ chế cho phép gửi lại an toàn khi mất kết nối — xem `docs/RECONNECT_CONTRACT.md`.
+5. `messages.source_language` khi ghi là **giá trị tạm** (`preferred_language` của người gửi); node `detect_language` của Agent ghi đè bằng kết quả nhận diện thật (§4.3).
+6. `translation_results` có ràng buộc duy nhất `(message_id, target_language)`. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại.
+7. `translation_results.is_fallback` đúng khi văn bản **không** đến từ LLM đã cấu hình, bao gồm cả trường hợp provider dự phòng dịch thành công. `model` để rỗng khi không tầng nào dịch được và hệ thống trả nguyên bản (`ARCHITECTURE.md` §5.1).
+8. **Không có công cụ migration trong MVP.** `Base.metadata.create_all` tạo được bảng còn thiếu nhưng không bao giờ ALTER bảng đã có, nên thay đổi schema ở môi trường phát triển được áp dụng bằng `make reset-db` (xoá và tạo lại). Xem ADR-06.
 
 ## 6. Đặc tả lỗi
 
