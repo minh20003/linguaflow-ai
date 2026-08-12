@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   Avatar,
   ChatContainer,
@@ -16,23 +17,46 @@ import {
   MessageSeparator,
   Search,
   Sidebar,
-  TypingIndicator,
 } from "@chatscope/chat-ui-kit-react";
+import { getUser } from "@/lib/auth";
+import {
+  createConversation,
+  getMessages,
+  listConversations,
+  lookupUserByEmail,
+  type Conversation as ApiConversation,
+  type HistoryMessage,
+} from "@/lib/chat-api";
+import { languageLabel } from "@/lib/constants";
+import { useWebSocket, type RealtimeMessage, type TranslationCompleted } from "@/lib/use-websocket";
 import styles from "./MessagingApp.module.css";
 
-type Delivery = "sending" | "delivered" | "read" | "failed";
+/**
+ * Editing, deleting, reactions and attachments are UI-only today — there is no
+ * endpoint behind any of them, so a reload silently reverts whatever the user
+ * did. They stay hidden until F-05 and file upload land, rather than being
+ * demonstrated as if they worked.
+ */
+const SHOW_UNIMPLEMENTED = false;
+
+type Delivery = "sending" | "delivered" | "failed";
+
 type ChatMessage = {
-  id: number;
+  /** Server id once persisted; the client id until message_created arrives. */
+  id: string;
+  clientMessageId?: string;
   author: "me" | "them";
-  text: string;
+  senderId: string;
+  originalText: string;
+  translatedText?: string;
+  translationId?: string;
+  isFallback?: boolean;
+  sourceLanguage?: string;
+  /** F-04: per-message override of the default view. */
+  showOriginal?: boolean;
   time: string;
   sentAt?: string;
   delivery?: Delivery;
-  edited?: boolean;
-  deleted?: boolean;
-  reply?: string;
-  file?: { name: string; meta: string };
-  reaction?: string;
 };
 
 type ConversationItem = {
@@ -42,20 +66,7 @@ type ConversationItem = {
   subtitle: string;
   preview: string;
   time: string;
-  unread?: number;
-  mention?: boolean;
-  muted?: boolean;
-  pinned?: boolean;
-  online?: boolean;
 };
-
-function timestamp(daysAgo: number, time: string) {
-  const [hours, minutes] = time.split(":").map(Number);
-  const date = new Date();
-  date.setDate(date.getDate() - daysAgo);
-  date.setHours(hours, minutes, 0, 0);
-  return date.toISOString();
-}
 
 function dayKey(value?: string) {
   const date = value ? new Date(value) : new Date();
@@ -71,10 +82,15 @@ function dateLabel(value?: string) {
     : { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
+function clockTime(value?: string) {
+  const date = value ? new Date(value) : new Date();
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
 function messageTime(value?: string) {
   const date = value ? new Date(value) : new Date();
   const today = new Date();
-  const clock = new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(date);
+  const clock = clockTime(value);
   if (dayKey(date.toISOString()) === dayKey(today.toISOString())) return clock;
   const dateOptions: Intl.DateTimeFormatOptions = date.getFullYear() === today.getFullYear()
     ? { day: "2-digit", month: "2-digit" }
@@ -85,8 +101,20 @@ function messageTime(value?: string) {
 function deliveryIndicator(delivery?: Delivery) {
   if (delivery === "sending") return { symbol: "◷", label: "Đang gửi", className: "sending" };
   if (delivery === "delivered") return { symbol: "✓", label: "Đã gửi", className: "delivered" };
-  if (delivery === "read") return { symbol: "✓✓", label: "Đã xem", className: "read" };
   return null;
+}
+
+function initialsOf(value: string) {
+  const name = value.split("@")[0];
+  const parts = name.split(/[.\s_-]+/).filter(Boolean);
+  const letters = parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+  return letters.toUpperCase();
+}
+
+/** What the bubble shows: the translation by default, the original on request. */
+function displayText(message: ChatMessage) {
+  if (message.showOriginal || !message.translatedText) return message.originalText;
+  return message.translatedText;
 }
 
 function highlight(text: string, query: string): ReactNode {
@@ -97,51 +125,53 @@ function highlight(text: string, query: string): ReactNode {
   return <>{text.slice(0, index)}<mark className={styles.match}>{text.slice(index, index + cleaned.length)}</mark>{text.slice(index + cleaned.length)}</>;
 }
 
-const initialConversations: ConversationItem[] = [
-  { id: "aiko", name: "Aiko Tanaka", initials: "AT", subtitle: "Product design · đang trực tuyến", preview: "Hẹn gặp bạn lúc 18:30 nhé", time: "09:42", unread: 2, mention: true, online: true, pinned: true },
-  { id: "minh", name: "Minh Anh", initials: "MA", subtitle: "Kỹ sư nền tảng", preview: "Mình đã gửi tài liệu rồi", time: "08:15", unread: 1, online: true },
-  { id: "sofia", name: "Sofía Rodríguez", initials: "SR", subtitle: "Nghiên cứu người dùng", preview: "Cảm ơn bạn rất nhiều!", time: "T.2", muted: true },
-  { id: "chen", name: "Chen Wei", initials: "CW", subtitle: "Đối tác vận hành", preview: "See you at the station", time: "T.7", online: true },
-  { id: "notes", name: "Ghi chú của tôi", initials: "TN", subtitle: "Không gian riêng tư", preview: "Chưa có tin nhắn", time: "" },
-];
+/** Turn an API conversation into what the sidebar renders. */
+function toConversationItem(conversation: ApiConversation, myId: string): ConversationItem {
+  const others = conversation.members.filter((member) => member.id !== myId);
+  const name = conversation.title
+    || others.map((member) => member.email.split("@")[0]).join(", ")
+    || "Ghi chú của tôi";
+  const languages = [...new Set(conversation.members.map((m) => m.preferred_language))];
+  return {
+    id: conversation.id,
+    name,
+    initials: initialsOf(name),
+    subtitle: conversation.type === "group"
+      ? `Nhóm · ${conversation.members.length} thành viên · ${languages.map(languageLabel).join(", ")}`
+      : others.map((member) => languageLabel(member.preferred_language)).join(", "),
+    preview: "",
+    time: "",
+  };
+}
 
-const seedMessages: Record<string, ChatMessage[]> = {
-  aiko: [
-    { id: 1, author: "them", text: "Chào buổi sáng! Cuộc họp hôm nay bắt đầu lúc 15 giờ có ổn không?", time: "08:52" },
-    { id: 2, author: "me", text: "Ổn nhé. Mình sẽ gửi bản nháp trước giờ họp.", time: "08:55", delivery: "read" },
-    { id: 3, author: "them", text: "Cảm ơn bạn. Chúng ta gặp ở quán cà phê gần ga nhé.", time: "09:03", reaction: "👍 1" },
-    { id: 4, author: "them", text: "Mình gửi thêm tài liệu tham khảo.", time: "09:04", file: { name: "meeting-notes.pdf", meta: "PDF · 1,8 MB" } },
-    { id: 5, author: "me", text: "Được, mình biết quán đó. Hẹn gặp bạn lúc 18:30 nhé.", time: "09:10", delivery: "delivered", edited: true, reply: "Chúng ta gặp ở quán cà phê gần ga nhé." },
-    { id: 6, author: "me", text: "Tin nhắn thử khi mạng yếu", time: "09:12", delivery: "failed" },
-    { id: 7, author: "them", text: "Tin nhắn đã được thu hồi", time: "09:31", deleted: true },
-    { id: 8, author: "them", text: "Vậy hẹn gặp lại sau nhé!", time: "09:42" },
-  ],
-  minh: [{ id: 21, author: "them", text: "Mình đã gửi tài liệu rồi, bạn xem giúp nhé.", time: "08:15" }],
-  sofia: [{ id: 31, author: "them", text: "Cảm ơn bạn rất nhiều vì đã giúp đỡ!", time: "10:20" }],
-  chen: [{ id: 41, author: "them", text: "Chúng ta gặp nhau ở nhà ga nhé.", time: "10:20" }],
-  notes: [],
-};
-
-seedMessages.aiko.forEach((message, index) => { message.sentAt = timestamp(index < 3 ? 1 : 0, message.time); });
-Object.entries(seedMessages).forEach(([id, thread]) => {
-  if (id !== "aiko") thread.forEach((message) => { message.sentAt = timestamp(2, message.time); });
-});
+/** Turn a history row into a bubble, picking the translation this account reads. */
+function toChatMessage(row: HistoryMessage, myId: string, myLanguage: string): ChatMessage {
+  const mine = row.translations.find((t) => t.target_language === myLanguage);
+  return {
+    id: row.id,
+    clientMessageId: row.client_message_id,
+    author: row.sender_id === myId ? "me" : "them",
+    senderId: row.sender_id,
+    originalText: row.original_text,
+    translatedText: mine?.translated_text,
+    translationId: mine?.translation_id,
+    isFallback: mine?.is_fallback,
+    sourceLanguage: row.source_language,
+    time: clockTime(row.created_at),
+    sentAt: row.created_at,
+    delivery: "delivered",
+  };
+}
 
 type MessageClusterProps = {
   messages: ChatMessage[];
   name: string;
   initials: string;
   searchQuery: string;
-  onReply: (message: ChatMessage) => void;
-  onRetry: (id: number) => void;
-  onEdit: (message: ChatMessage) => void;
-  onDelete: (id: number) => void;
-  onReact: (id: number, emoji?: string) => void;
-  openMenuId: number | null;
-  onToggleMenu: (id: number) => void;
+  onToggleOriginal: (id: string) => void;
 };
 
-const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onReply, onRetry, onEdit, onDelete, onReact, openMenuId, onToggleMenu }: MessageClusterProps) {
+const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onToggleOriginal }: MessageClusterProps) {
   const outgoing = messages[0].author === "me";
   return (
     <MessageGroup direction={outgoing ? "outgoing" : "incoming"} sender={outgoing ? "Bạn" : name} avatarPosition={outgoing ? "cr" : "cl"}>
@@ -150,32 +180,30 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
         {messages.map((message, index) => {
           const indicator = deliveryIndicator(message.delivery);
           const position = messages.length === 1 ? "single" : index === 0 ? "first" : index === messages.length - 1 ? "last" : "normal";
+          const shown = displayText(message);
+          const hasTranslation = Boolean(message.translatedText);
+          const awaiting = !outgoing && !hasTranslation && message.delivery === "delivered";
           return (
-            <Message key={message.id} model={{ message: message.text, sender: outgoing ? "Bạn" : name, sentTime: message.time, direction: outgoing ? "outgoing" : "incoming", position }}>
-              <Message.Header><time className={styles.messageTimestamp}>{messageTime(message.sentAt)}{message.edited && !message.deleted && <span className={styles.editedMark}>đã sửa</span>}</time></Message.Header>
+            <Message key={message.id} model={{ message: shown, sender: outgoing ? "Bạn" : name, sentTime: message.time, direction: outgoing ? "outgoing" : "incoming", position }}>
+              <Message.Header><time className={styles.messageTimestamp}>{messageTime(message.sentAt)}</time></Message.Header>
               <Message.CustomContent>
                 <div className={styles.messageBubble}>
                   <div className={styles.messageContent}>
-                  {message.reply && <blockquote className={styles.replyPreview}>{message.reply}</blockquote>}
-                  <p className={message.deleted ? styles.deletedMessage : undefined}>{message.deleted ? "Tin nhắn đã được thu hồi" : highlight(message.text, searchQuery)}</p>
-                  {message.file && <button className={styles.fileCard} type="button" aria-label={`Tải ${message.file.name}`}><span>PDF</span><strong>{message.file.name}<small>{message.file.meta}</small></strong><b aria-hidden="true">↓</b></button>}
+                    <p>{highlight(shown, searchQuery)}</p>
                   </div>
-                  {!message.deleted && <>
-                    <div className={styles.messageQuickActions} aria-label="Thao tác nhanh">
-                      {outgoing && <button type="button" aria-label="Sửa tin nhắn" onClick={() => onEdit(message)}>✎</button>}
-                      <button type="button" aria-label="Mở thêm thao tác" aria-expanded={openMenuId === message.id} onClick={() => onToggleMenu(message.id)}>•••</button>
-                    </div>
-                    <div className={styles.reactionTray} aria-label="Thả cảm xúc">
-                      {["👍", "❤️", "😂", "🎉", "👀"].map((emoji) => <button key={emoji} type="button" aria-label={`Thả ${emoji}`} onClick={() => onReact(message.id, emoji)}>{emoji}</button>)}
-                    </div>
-                    {openMenuId === message.id && <div className={styles.messageMenu} role="menu"><button type="button" role="menuitem" onClick={() => { onReply(message); onToggleMenu(message.id); }}>Trả lời</button>{outgoing && <button type="button" role="menuitem" onClick={() => { onEdit(message); onToggleMenu(message.id); }}>Sửa</button>}{outgoing && <button type="button" role="menuitem" onClick={() => { onDelete(message.id); onToggleMenu(message.id); }}>Xóa</button>}</div>}
-                  </>}
                 </div>
               </Message.CustomContent>
               <Message.Footer>
-                {message.delivery === "failed" && <button className={styles.retryButton} type="button" onClick={() => onRetry(message.id)}>Không gửi được · Gửi lại</button>}
+                {hasTranslation && (
+                  <button className={styles.retryButton} type="button" onClick={() => onToggleOriginal(message.id)}>
+                    {message.showOriginal ? "Xem bản dịch" : "Xem bản gốc"}
+                  </button>
+                )}
+                {message.isFallback && (
+                  <span className={styles.deliveryIcon} role="img" aria-label="Bản dịch dự phòng, chất lượng có thể thấp hơn" title="Bản dịch dự phòng, chất lượng có thể thấp hơn">⚠</span>
+                )}
+                {awaiting && <span className={styles.messageTimestamp}>đang dịch…</span>}
                 {indicator && <span className={`${styles.deliveryIcon} ${styles[indicator.className]}`} role="img" aria-label={indicator.label} title={indicator.label}>{indicator.symbol}</span>}
-                {message.reaction && <button className={styles.reaction} type="button" aria-label="Bỏ cảm xúc" onClick={() => onReact(message.id)}>{message.reaction}</button>}
               </Message.Footer>
             </Message>
           );
@@ -186,31 +214,133 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
 });
 
 export default function MessagingApp() {
-  const [activeId, setActiveId] = useState("aiko");
+  const router = useRouter();
+  const me = useMemo(() => getUser(), []);
+  const myId = me?.id ?? "";
+  const myLanguage = me?.preferred_language ?? "en";
+
+  const [activeId, setActiveId] = useState("");
   const [mobileView, setMobileView] = useState<"list" | "chat">("chat");
   const [query, setQuery] = useState("");
   const [showGroupCreator, setShowGroupCreator] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [groupMembers, setGroupMembers] = useState("");
-  const [filter, setFilter] = useState<"all" | "unread">("all");
-  const [conversationItems, setConversationItems] = useState(initialConversations);
-  const [messages, setMessages] = useState(seedMessages);
-  const [offline, setOffline] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
-  const [replying, setReplying] = useState<ChatMessage | null>(null);
-  const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [groupError, setGroupError] = useState("");
+  const [conversationItems, setConversationItems] = useState<ConversationItem[]>([]);
+  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [loadedThreads, setLoadedThreads] = useState<Record<string, boolean>>({});
+  const [notice, setNotice] = useState("");
   const [showMessageSearch, setShowMessageSearch] = useState(false);
   const [messageQuery, setMessageQuery] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [openMessageMenuId, setOpenMessageMenuId] = useState<number | null>(null);
 
-  const active = conversationItems.find((item) => item.id === activeId) ?? conversationItems[0];
+  const applyIncoming = useCallback((message: RealtimeMessage, author: "me" | "them") => {
+    setMessages((current) => {
+      const thread = current[message.conversation_id] ?? [];
+      if (thread.some((existing) => existing.id === message.id)) return current;
+      const next: ChatMessage = {
+        id: message.id,
+        author,
+        senderId: message.sender_id,
+        originalText: message.original_text,
+        time: clockTime(message.created_at),
+        sentAt: message.created_at,
+        delivery: "delivered",
+      };
+      return { ...current, [message.conversation_id]: [...thread, next] };
+    });
+  }, []);
+
+  const socket = useWebSocket({
+    onMessageCreated: useCallback((clientMessageId: string, message: RealtimeMessage) => {
+      // Replace the optimistic bubble with the server's row, keyed by the id
+      // the client minted for exactly this purpose.
+      setMessages((current) => {
+        const thread = current[message.conversation_id] ?? [];
+        const known = thread.some((existing) => existing.clientMessageId === clientMessageId);
+        if (!known) return current;
+        return {
+          ...current,
+          [message.conversation_id]: thread.map((existing) =>
+            existing.clientMessageId === clientMessageId
+              ? { ...existing, id: message.id, delivery: "delivered", sentAt: message.created_at }
+              : existing,
+          ),
+        };
+      });
+    }, []),
+
+    onMessageReceived: useCallback((message: RealtimeMessage) => {
+      applyIncoming(message, message.sender_id === myId ? "me" : "them");
+    }, [applyIncoming, myId]),
+
+    onTranslationCompleted: useCallback((event: TranslationCompleted) => {
+      // The server only sends this to readers of that language, so anything
+      // arriving here is meant for this account.
+      setMessages((current) => {
+        const thread = current[event.conversation_id];
+        if (!thread) return current;
+        return {
+          ...current,
+          [event.conversation_id]: thread.map((existing) =>
+            existing.id === event.message_id
+              ? {
+                  ...existing,
+                  translatedText: event.translated_text,
+                  translationId: event.translation_id,
+                  isFallback: event.is_fallback,
+                  sourceLanguage: event.source_language,
+                }
+              : existing,
+          ),
+        };
+      });
+    }, []),
+
+    onError: useCallback((_code: string, message: string) => setNotice(message), []),
+
+    onAuthFailure: useCallback(() => {
+      router.replace("/login");
+    }, [router]),
+  });
+
+  // Load the conversation list once.
+  useEffect(() => {
+    let cancelled = false;
+    listConversations()
+      .then((conversations) => {
+        if (cancelled) return;
+        const items = conversations.map((conversation) => toConversationItem(conversation, myId));
+        setConversationItems(items);
+        setActiveId((current) => current || items[0]?.id || "");
+      })
+      .catch((error: Error) => !cancelled && setNotice(error.message));
+    return () => { cancelled = true; };
+  }, [myId]);
+
+  // Load a thread's history the first time it is opened.
+  useEffect(() => {
+    if (!activeId || loadedThreads[activeId]) return;
+    let cancelled = false;
+    getMessages(activeId)
+      .then((rows) => {
+        if (cancelled) return;
+        setMessages((current) => ({
+          ...current,
+          [activeId]: rows.map((row) => toChatMessage(row, myId, myLanguage)),
+        }));
+        setLoadedThreads((current) => ({ ...current, [activeId]: true }));
+      })
+      .catch((error: Error) => !cancelled && setNotice(error.message));
+    return () => { cancelled = true; };
+  }, [activeId, loadedThreads, myId, myLanguage]);
+
+  const active = conversationItems.find((item) => item.id === activeId);
   const activeMessages = useMemo(() => messages[activeId] ?? [], [activeId, messages]);
 
-  const visibleConversations = useMemo(() => conversationItems
-    .filter((item) => filter === "all" || Boolean(item.unread))
-    .filter((item) => `${item.name} ${item.preview}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
-    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))), [conversationItems, filter, query]);
+  const visibleConversations = useMemo(
+    () => conversationItems.filter((item) => item.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())),
+    [conversationItems, query],
+  );
 
   const grouped = useMemo(() => activeMessages.reduce<ChatMessage[][]>((groups, message) => {
     const previous = groups.at(-1)?.[0];
@@ -220,141 +350,156 @@ export default function MessagingApp() {
   }, []), [activeMessages]);
 
   const searchMatches = useMemo(() => messageQuery.trim()
-    ? activeMessages.filter((message) => !message.deleted && message.text.toLocaleLowerCase().includes(messageQuery.trim().toLocaleLowerCase())).length
+    ? activeMessages.filter((message) => displayText(message).toLocaleLowerCase().includes(messageQuery.trim().toLocaleLowerCase())).length
     : 0, [activeMessages, messageQuery]);
 
-  useEffect(() => {
-    document.querySelector(".cs-button--attachment")?.setAttribute("aria-label", "Đính kèm tệp");
-    document.querySelector(".cs-button--send")?.setAttribute("aria-label", "Gửi tin nhắn");
-  }, [activeId, offline]);
-
-  useEffect(() => {
-    const goOffline = () => setOffline(true);
-    const goOnline = () => {
-      setOffline(false);
-      setReconnecting(true);
-      window.setTimeout(() => setReconnecting(false), 900);
-    };
-    window.addEventListener("offline", goOffline);
-    window.addEventListener("online", goOnline);
-    return () => { window.removeEventListener("offline", goOffline); window.removeEventListener("online", goOnline); };
-  }, []);
-
-  const updateActiveThread = useCallback((updater: (thread: ChatMessage[]) => ChatMessage[]) => {
-    setMessages((current) => ({ ...current, [activeId]: updater(current[activeId] ?? []) }));
+  const toggleOriginal = useCallback((id: string) => {
+    setMessages((current) => ({
+      ...current,
+      [activeId]: (current[activeId] ?? []).map((message) =>
+        message.id === id ? { ...message, showOriginal: !message.showOriginal } : message,
+      ),
+    }));
   }, [activeId]);
-
-  const retry = useCallback((id: number) => {
-    updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, delivery: "sending" } : message));
-    window.setTimeout(() => updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, delivery: "delivered" } : message)), 650);
-  }, [updateActiveThread]);
-
-  const removeMessage = useCallback((id: number) => {
-    updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, deleted: true, text: "", reply: undefined, file: undefined, reaction: undefined } : message));
-  }, [updateActiveThread]);
-
-  const reactToMessage = useCallback((id: number, emoji?: string) => {
-    updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, reaction: emoji ? `${emoji} 1` : undefined } : message));
-  }, [updateActiveThread]);
-
-  const beginReply = useCallback((message: ChatMessage) => { setEditing(null); setReplying(message); }, []);
-  const beginEdit = useCallback((message: ChatMessage) => { setReplying(null); setEditing(message); }, []);
 
   const send = useCallback((text: string) => {
     const cleanText = text.trim();
-    if (!cleanText || offline) return;
-    if (editing) {
-      updateActiveThread((thread) => thread.map((message) => message.id === editing.id ? { ...message, text: cleanText, edited: true } : message));
-      setEditing(null);
-      return;
-    }
-    const id = Date.now();
-    const now = new Date();
-    const next: ChatMessage = { id, author: "me", text: cleanText, time: new Intl.DateTimeFormat("vi", { hour: "2-digit", minute: "2-digit" }).format(now), sentAt: now.toISOString(), delivery: "sending", reply: replying?.text };
-    updateActiveThread((thread) => [...thread, next]);
-    setReplying(null);
-    window.setTimeout(() => updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, delivery: "delivered" } : message)), 650);
-  }, [editing, offline, replying, updateActiveThread]);
+    if (!cleanText || !activeId) return;
 
-  const attachFile = useCallback(() => {
-    if (offline || uploading) return;
-    setUploading(true);
-    window.setTimeout(() => {
-      const now = new Date();
-      updateActiveThread((thread) => [...thread, { id: Date.now(), author: "me", text: "Đã gửi một tệp", time: new Intl.DateTimeFormat("vi", { hour: "2-digit", minute: "2-digit" }).format(now), sentAt: now.toISOString(), delivery: "delivered", file: { name: "tai-lieu-du-an.pdf", meta: "PDF · 2,4 MB" } }]);
-      setUploading(false);
-    }, 900);
-  }, [offline, updateActiveThread, uploading]);
+    const clientMessageId = crypto.randomUUID();
+    const now = new Date();
+    const optimistic: ChatMessage = {
+      id: clientMessageId,
+      clientMessageId,
+      author: "me",
+      senderId: myId,
+      originalText: cleanText,
+      time: clockTime(now.toISOString()),
+      sentAt: now.toISOString(),
+      delivery: "sending",
+    };
+    setMessages((current) => ({ ...current, [activeId]: [...(current[activeId] ?? []), optimistic] }));
+
+    const accepted = socket.sendMessage({ clientMessageId, conversationId: activeId, text: cleanText });
+    if (!accepted) {
+      setMessages((current) => ({
+        ...current,
+        [activeId]: (current[activeId] ?? []).map((message) =>
+          message.clientMessageId === clientMessageId ? { ...message, delivery: "failed" } : message,
+        ),
+      }));
+    }
+  }, [activeId, myId, socket]);
 
   const selectConversation = useCallback((id: string) => {
     setActiveId(id);
-    setReplying(null);
-    setEditing(null);
-    setOpenMessageMenuId(null);
     setMessageQuery("");
     setMobileView("chat");
-    setConversationItems((items) => items.map((item) => item.id === id ? { ...item, unread: undefined, mention: false } : item));
   }, []);
 
-  const createGroup = useCallback(() => {
+  const createGroup = useCallback(async () => {
     const name = groupName.trim();
-    if (!name) return;
-    const id = `group-${Date.now()}`;
-    const memberCount = groupMembers.split(",").filter(Boolean).length + 1;
-    setConversationItems((items) => [...items, { id, name, initials: "#", subtitle: `Nhóm · ${memberCount} thành viên`, preview: "Nhóm mới đã được tạo", time: "", online: true }]);
-    setMessages((current) => ({ ...current, [id]: [] }));
-    setGroupName("");
-    setGroupMembers("");
-    setShowGroupCreator(false);
-    selectConversation(id);
-  }, [groupMembers, groupName, selectConversation]);
+    const emails = groupMembers.split(",").map((value) => value.trim()).filter(Boolean);
+    if (!name || !emails.length) {
+      setGroupError("Cần tên nhóm và ít nhất một email.");
+      return;
+    }
+
+    setGroupError("");
+    try {
+      // The form collects emails while the endpoint wants ids, so every address
+      // is resolved first — which also catches a typo while it is still on screen.
+      const resolved = await Promise.all(emails.map((email) => lookupUserByEmail(email)));
+      const missing = emails.filter((_, index) => resolved[index] === null);
+      if (missing.length) {
+        setGroupError(`Không tìm thấy tài khoản: ${missing.join(", ")}`);
+        return;
+      }
+
+      const conversation = await createConversation({
+        type: "group",
+        title: name,
+        member_ids: resolved.map((member) => member!.id),
+      });
+
+      setConversationItems((items) => [toConversationItem(conversation, myId), ...items]);
+      setMessages((current) => ({ ...current, [conversation.id]: [] }));
+      setLoadedThreads((current) => ({ ...current, [conversation.id]: true }));
+      setGroupName("");
+      setGroupMembers("");
+      setShowGroupCreator(false);
+      selectConversation(conversation.id);
+    } catch (error) {
+      setGroupError((error as Error).message);
+    }
+  }, [groupMembers, groupName, myId, selectConversation]);
 
   return (
     <main className={`${styles.appShell} ${mobileView === "chat" ? styles.mobileChat : styles.mobileList}`}>
       <MainContainer>
         <Sidebar position="left" scrollable={false} className={styles.chatSidebar}>
           <div className={styles.workspaceTop}><div><span className={styles.productMark}>LC</span><span><strong>LinguaChat</strong><small>Web nhắn tin trực tuyến</small></span></div></div>
-          <div className={styles.sidebarTools}><div className={styles.sidebarSearchInline}><Search placeholder="Tìm hội thoại" value={query} onChange={setQuery} onClearClick={() => setQuery("")} /></div><button type="button" title="Tạo nhóm trò chuyện" aria-label="Tạo nhóm trò chuyện" aria-expanded={showGroupCreator} onClick={() => setShowGroupCreator((value) => !value)}>♧</button></div>
-          {showGroupCreator && <form className={styles.groupCreator} onSubmit={(event) => { event.preventDefault(); createGroup(); }}><label htmlFor="group-name">Tên nhóm</label><input id="group-name" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Ví dụ: Dự án tháng 8" autoFocus /><label htmlFor="group-members">Thành viên</label><input id="group-members" value={groupMembers} onChange={(event) => setGroupMembers(event.target.value)} placeholder="Tên, email (ngăn cách dấu phẩy)" /><button type="submit">Tạo nhóm</button></form>}
-          <div className={styles.conversationFilters} aria-label="Lọc hội thoại">
-            <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>Tất cả</button>
-            <button type="button" aria-pressed={filter === "unread"} onClick={() => setFilter("unread")}>Chưa đọc</button>
+          <div className={styles.sidebarTools}>
+            <div className={styles.sidebarSearchInline}><Search placeholder="Tìm hội thoại" value={query} onChange={setQuery} onClearClick={() => setQuery("")} /></div>
+            <button type="button" title="Tạo nhóm trò chuyện" aria-label="Tạo nhóm trò chuyện" aria-expanded={showGroupCreator} onClick={() => setShowGroupCreator((value) => !value)}>♧</button>
           </div>
+          {showGroupCreator && (
+            <form className={styles.groupCreator} onSubmit={(event) => { event.preventDefault(); void createGroup(); }}>
+              <label htmlFor="group-name">Tên nhóm</label>
+              <input id="group-name" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Ví dụ: Dự án tháng 8" autoFocus />
+              <label htmlFor="group-members">Thành viên</label>
+              <input id="group-members" value={groupMembers} onChange={(event) => setGroupMembers(event.target.value)} placeholder="Email, ngăn cách bằng dấu phẩy" />
+              {groupError && <small role="alert">{groupError}</small>}
+              <button type="submit">Tạo nhóm</button>
+            </form>
+          )}
           <div className={styles.listTitle}><span>Hội thoại</span><span>{visibleConversations.length}</span></div>
           <ConversationList className={styles.conversationIndex}>
             {visibleConversations.map((conversation) => (
-              <Conversation key={conversation.id} name={conversation.name} info={conversation.preview} lastActivityTime={conversation.time} unreadCnt={conversation.unread} unreadDot={conversation.mention} active={conversation.id === activeId} role="button" tabIndex={0}
+              <Conversation key={conversation.id} name={conversation.name} info={conversation.subtitle} active={conversation.id === activeId} role="button" tabIndex={0}
                 onClick={() => selectConversation(conversation.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectConversation(conversation.id); } }}>
-                <Avatar name={conversation.name} status={conversation.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{conversation.initials}</span></Avatar>
-                <Conversation.Content name={conversation.name} info={conversation.preview} />
+                <Avatar name={conversation.name}><span className={styles.initialsAvatar}>{conversation.initials}</span></Avatar>
+                <Conversation.Content name={conversation.name} info={conversation.subtitle} />
               </Conversation>
             ))}
           </ConversationList>
-          {!visibleConversations.length && <div className={styles.noResults}><strong>Không tìm thấy hội thoại</strong><button type="button" onClick={() => { setQuery(""); setFilter("all"); }}>Xóa bộ lọc</button></div>}
-          <div className={styles.accountArea}><Avatar name="Phạm Đức Thiện" status="available" size="sm"><span className={styles.initialsAvatar}>PT</span></Avatar><span><strong>Phạm Đức Thiện</strong><small>Đang kết nối</small></span></div>
+          {!visibleConversations.length && <div className={styles.noResults}><strong>Chưa có hội thoại</strong><button type="button" onClick={() => setShowGroupCreator(true)}>Tạo nhóm</button></div>}
+          <div className={styles.accountArea}>
+            <Avatar name={me?.email ?? ""} status={socket.connected ? "available" : "unavailable"} size="sm"><span className={styles.initialsAvatar}>{initialsOf(me?.email ?? "?")}</span></Avatar>
+            <span><strong>{me?.display_name ?? "Tài khoản"}</strong><small>{socket.connected ? `Đang đọc ${languageLabel(myLanguage)}` : "Mất kết nối"}</small></span>
+          </div>
         </Sidebar>
 
         <ChatContainer className={styles.chatWorkspace}>
           <ConversationHeader className={styles.chatHeader}>
             <ConversationHeader.Back><button type="button" aria-label="Quay lại danh sách hội thoại" onClick={() => setMobileView("list")}>←</button></ConversationHeader.Back>
-            <Avatar name={active.name} status={active.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{active.initials}</span></Avatar>
-            <ConversationHeader.Content userName={active.name} info={active.subtitle} />
-            <ConversationHeader.Actions><button type="button" aria-label="Tìm trong hội thoại" aria-pressed={showMessageSearch} onClick={() => { setShowMessageSearch((value) => !value); setMessageQuery(""); }}>⌕</button><button type="button" aria-label="Thêm tùy chọn">•••</button></ConversationHeader.Actions>
+            <Avatar name={active?.name ?? ""}><span className={styles.initialsAvatar}>{active?.initials ?? "–"}</span></Avatar>
+            <ConversationHeader.Content userName={active?.name ?? "Chưa chọn hội thoại"} info={active?.subtitle ?? ""} />
+            <ConversationHeader.Actions>
+              <button type="button" aria-label="Tìm trong hội thoại" aria-pressed={showMessageSearch} onClick={() => { setShowMessageSearch((value) => !value); setMessageQuery(""); }}>⌕</button>
+            </ConversationHeader.Actions>
           </ConversationHeader>
 
-          <MessageList className={styles.messageTimeline} typingIndicator={activeId === "aiko" ? <TypingIndicator content="Aiko đang nhập" /> : undefined} autoScrollToBottom autoScrollToBottomOnMount scrollBehavior="smooth">
-            {(offline || reconnecting) && <div className={styles.statusBanner} role="status"><strong>{offline ? "Ngoại tuyến" : "Đang kết nối lại…"}</strong><span>{offline ? "Bạn vẫn có thể đọc các tin nhắn đã tải." : "Đồng bộ tin nhắn mới."}</span></div>}
+          <MessageList className={styles.messageTimeline} autoScrollToBottom autoScrollToBottomOnMount scrollBehavior="smooth">
+            {!socket.connected && <div className={styles.statusBanner} role="status"><strong>Đang kết nối lại…</strong><span>Bạn vẫn có thể đọc các tin nhắn đã tải.</span></div>}
+            {notice && <div className={styles.statusBanner} role="status"><strong>{notice}</strong><span><button type="button" onClick={() => setNotice("")}>Đóng</button></span></div>}
             {showMessageSearch && <div className={styles.messageSearch}><label htmlFor="message-search">Tìm trong cuộc trò chuyện</label><input id="message-search" autoFocus value={messageQuery} onChange={(event) => setMessageQuery(event.target.value)} placeholder="Nhập nội dung tin nhắn" /><span aria-live="polite">{messageQuery.trim() ? `${searchMatches} kết quả` : ""}</span><button type="button" onClick={() => { setShowMessageSearch(false); setMessageQuery(""); }} aria-label="Đóng tìm kiếm">×</button></div>}
-            {activeMessages.length ? <>
-              {grouped.map((cluster, index) => <div key={cluster[0].id}>{(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}<MessageCluster messages={cluster} name={active.name} initials={active.initials} searchQuery={messageQuery} onReply={beginReply} onRetry={retry} onEdit={beginEdit} onDelete={removeMessage} onReact={reactToMessage} openMenuId={openMessageMenuId} onToggleMenu={(id) => setOpenMessageMenuId((current) => current === id ? null : id)} /></div>)}
-            </> : <div className={styles.emptyState}><span>✦</span><h2>Bắt đầu cuộc trò chuyện</h2><p>Gửi tin nhắn đầu tiên trong không gian riêng của bạn.</p></div>}
+            {activeMessages.length ? grouped.map((cluster, index) => (
+              <div key={cluster[0].id}>
+                {(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}
+                <MessageCluster messages={cluster} name={active?.name ?? ""} initials={active?.initials ?? ""} searchQuery={messageQuery} onToggleOriginal={toggleOriginal} />
+              </div>
+            )) : <div className={styles.emptyState}><span>✦</span><h2>Bắt đầu cuộc trò chuyện</h2><p>Gửi tin nhắn đầu tiên — bản dịch sẽ tới ngay sau đó.</p></div>}
           </MessageList>
 
-          <InputToolbox className={`${styles.composerToolbox} ${replying || editing || uploading ? styles.composerToolboxActive : ""}`}>
-            <button className={styles.attachAction} type="button" disabled={offline || uploading} onClick={attachFile} aria-label="Đính kèm tệp">📎 <span>Đính kèm</span></button>
-            {(replying || editing || uploading) && <><span className={styles.composerContext}><strong>{uploading ? "Đang tải tệp…" : editing ? "Sửa tin nhắn" : `Trả lời ${active.name}`}</strong><small>{uploading ? "tai-lieu-du-an.pdf" : editing?.text ?? replying?.text}</small></span>{!uploading && <button className={styles.cancelAction} type="button" aria-label="Hủy thao tác" onClick={() => { setReplying(null); setEditing(null); }}>×</button>}</>}
-          </InputToolbox>
-          <MessageInput onSend={(_, text) => send(text)} placeholder={offline ? "Đang ngoại tuyến" : editing ? "Nhập nội dung đã sửa" : replying ? `Trả lời ${active.name}` : `Nhắn cho ${active.name}`} disabled={offline || uploading} sendButton attachButton={false} />
+          {SHOW_UNIMPLEMENTED && <InputToolbox className={styles.composerToolbox} />}
+          <MessageInput
+            onSend={(_, text) => send(text)}
+            placeholder={active ? `Nhắn cho ${active.name}` : "Chọn một hội thoại"}
+            disabled={!activeId || !socket.connected}
+            sendButton
+            attachButton={false}
+          />
         </ChatContainer>
       </MainContainer>
     </main>

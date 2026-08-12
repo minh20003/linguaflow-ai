@@ -19,9 +19,14 @@ function subscribe(onChange: () => void): () => void {
  * though no real data has loaded yet.
  *
  * The token is read through `useSyncExternalStore` because localStorage is
- * exactly that: state owned outside React. The server snapshot is null, so the
- * markup rendered on the server matches the signed-out client and hydration
- * cannot mismatch.
+ * exactly that: state owned outside React.
+ *
+ * The server snapshot is `undefined`, not `null`, and the two mean different
+ * things: `undefined` is "not known yet", `null` is "definitely signed out".
+ * The distinction is load-bearing. React renders the server snapshot once
+ * during hydration and runs that render's effects before re-rendering with the
+ * client value, so an effect that treated the server snapshot as "signed out"
+ * would redirect every signed-in visitor straight back to the login page.
  *
  * Presence is all that is checked here. An expired or forged token is rejected
  * by the backend, and the socket's authentication_failed path sends the user
@@ -29,12 +34,16 @@ function subscribe(onChange: () => void): () => void {
  */
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const token = useSyncExternalStore(subscribe, getToken, () => null);
+  const token = useSyncExternalStore<string | null | undefined>(
+    subscribe,
+    getToken,
+    () => undefined,
+  );
 
   useEffect(() => {
     if (token === null) router.replace("/login");
   }, [token, router]);
 
-  if (token === null) return null;
+  if (!token) return null;
   return <>{children}</>;
 }
