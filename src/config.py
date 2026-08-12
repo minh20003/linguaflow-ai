@@ -54,6 +54,10 @@ class Settings(BaseSettings):
 
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
+    # Deadline for one whole translation run, covering detection, the LLM call
+    # and the secondary provider. The per-call timeouts below do not bound the
+    # total, so this is what stops a background task running forever (ADR-14).
+    translation_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
     # Secondary translation provider tried when the LLM path fails (ADR-07).
     # Disable to go straight back to returning the untranslated message.

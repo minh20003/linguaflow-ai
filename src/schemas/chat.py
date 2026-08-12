@@ -37,6 +37,19 @@ class ConversationResponse(BaseModel):
     member_ids: list[str]
 
 
+class TranslationSummary(BaseModel):
+    """One rendered translation attached to a message in REST history."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    translation_id: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
+
+
 class MessageResponse(BaseModel):
     """Persisted message representation used by REST history."""
 
@@ -47,6 +60,11 @@ class MessageResponse(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
+    source_language: str
+    # Carrying translations here is what makes a socket that dropped mid
+    # translation a non-event: the client recovers them on reconnect rather
+    # than waiting for a `translation_completed` that was already sent.
+    translations: list[TranslationSummary] = []
     created_at: datetime
 
 
@@ -118,6 +136,29 @@ class MessageReceivedEvent(BaseModel):
 
     type: Literal["message_received"] = "message_received"
     message: RealtimeMessage
+
+
+class TranslationCompletedEvent(BaseModel):
+    """WebSocket delivery event for a finished translation.
+
+    Sent only to members whose `preferred_language` equals `target_language`;
+    the socket is per-user, so the filtering happens at fan-out rather than at
+    the client (docs/CONTRACT.md section 4.4).
+
+    `conversation_id` is carried explicitly because a per-user socket gives the
+    client no other way to route this event to the right thread.
+    """
+
+    type: Literal["translation_completed"] = "translation_completed"
+    message_id: str
+    conversation_id: str
+    translation_id: str
+    source_language: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
 
 
 class ErrorEvent(BaseModel):

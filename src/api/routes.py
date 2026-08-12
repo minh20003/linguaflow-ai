@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.deps import get_current_user
 from src.core.security import create_access_token, verify_password
 from src.database import get_db
-from src.database.models import Conversation, User
+from src.database.models import Conversation, TranslationResult, User
 from src.schemas.auth import (
     LoginRequest,
     TokenResponse,
@@ -18,6 +18,7 @@ from src.schemas.chat import (
     ConversationCreateRequest,
     ConversationResponse,
     MessageResponse,
+    TranslationSummary,
 )
 from src.services.chat import (
     ChatService,
@@ -217,6 +218,50 @@ async def get_conversation_messages(
             detail=str(exc),
         ) from exc
 
-    return [MessageResponse.model_validate(message) for message in messages]
+    translations = await _translations_by_message(db, [message.id for message in messages])
+    return [
+        MessageResponse(
+            id=message.id,
+            client_message_id=message.client_message_id,
+            conversation_id=message.conversation_id,
+            sender_id=message.sender_id,
+            original_text=message.original_text,
+            source_language=message.source_language,
+            translations=translations.get(message.id, []),
+            created_at=message.created_at,
+        )
+        for message in messages
+    ]
+
+
+async def _translations_by_message(
+    db: AsyncSession,
+    message_ids: list[str],
+) -> dict[str, list[TranslationSummary]]:
+    """Load every translation for a page of messages in one query.
+
+    History is how a client recovers translations it missed while disconnected,
+    so this is what keeps a socket dropping mid-translation from losing data.
+    """
+    if not message_ids:
+        return {}
+
+    rows = await db.scalars(
+        select(TranslationResult).where(TranslationResult.message_id.in_(message_ids))
+    )
+
+    grouped: dict[str, list[TranslationSummary]] = {}
+    for row in rows:
+        grouped.setdefault(row.message_id, []).append(
+            TranslationSummary(
+                translation_id=row.id,
+                target_language=row.target_language,
+                translated_text=row.translated_text,
+                model=row.model,
+                latency_ms=row.latency_ms,
+                is_fallback=row.is_fallback,
+            )
+        )
+    return grouped
 
 
