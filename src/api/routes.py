@@ -2,20 +2,25 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.deps import get_current_user
-from src.core.security import create_access_token, verify_password
+from src.core.security import create_access_token, get_password_hash, verify_password
 from src.database import get_db
 from src.database.models import Conversation, TranslationResult, User
 from src.schemas.auth import (
+    SUPPORTED_LANGUAGES,
     LoginRequest,
+    RegisterRequest,
     TokenResponse,
     UpdateLanguageRequest,
     UserResponse,
+    normalize_email,
 )
 from src.schemas.chat import (
     ConversationCreateRequest,
+    ConversationMemberSummary,
     ConversationResponse,
     MessageResponse,
     TranslationSummary,
@@ -34,6 +39,63 @@ router = APIRouter()
 # ========================
 # Authentication Endpoints
 # ========================
+
+
+@router.post(
+    "/auth/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    request: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Create an account and return a token for it.
+
+    Returns the same shape as login rather than the user, because the client
+    lands straight in the chat after registering and needs a usable session.
+
+    `preferred_language` is set here, not afterwards: it is the language the
+    account will read messages in, and asking for it later would leave the
+    first messages untranslated.
+
+    Args:
+        request: Email, password and the language to read in
+        db: Database session
+
+    Returns:
+        JWT access token for the new account
+
+    Raises:
+        HTTPException: 409 if the email is already registered
+    """
+    existing = await db.scalar(select(User).where(User.email == request.email))
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email is already registered",
+        )
+
+    user = User(
+        email=request.email,
+        password_hash=get_password_hash(request.password),
+        # Never read from the request body — a client must not grant itself a role.
+        role="member",
+        preferred_language=request.preferred_language,
+    )
+    db.add(user)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # The check above is a TOCTOU race; the unique index is the real guard.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email is already registered",
+        ) from exc
+
+    await db.refresh(user)
+    return TokenResponse(access_token=create_access_token(subject=user.id))
 
 
 @router.post("/auth/login", response_model=TokenResponse)
@@ -114,6 +176,35 @@ async def update_preferred_language(
     return UserResponse.model_validate(current_user)
 
 
+@router.get("/languages", response_model=list[str])
+async def list_supported_languages() -> list[str]:
+    """Return the language codes the system accepts.
+
+    Serving the allowlist is what lets the frontend stop keeping its own copy;
+    `SUPPORTED_LANGUAGES` stays the single source of truth (CONTRACT section 1).
+    """
+    return sorted(SUPPORTED_LANGUAGES)
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def find_users(
+    email: str = Query(..., min_length=3, max_length=255),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UserResponse]:
+    """Look up an account by exact email, for adding members to a conversation.
+
+    A list rather than a single object: an empty list is an unambiguous "no such
+    account", where a 404 would be confused with a broken route. Exact match
+    only — this is a resolver for a known address, not a directory search.
+
+    Authentication is required so it is not an anonymous enumeration oracle. It
+    remains one for signed-in users, which is accepted at this stage.
+    """
+    user = await db.scalar(select(User).where(User.email == normalize_email(email)))
+    return [UserResponse.model_validate(user)] if user is not None else []
+
+
 # ========================
 # Conversation Endpoints
 # ========================
@@ -124,16 +215,15 @@ async def _conversation_response(
     conversation: Conversation,
 ) -> ConversationResponse:
     """Build the minimal conversation representation for an authorized user."""
-    member_ids = await service.get_conversation_member_ids(
-        conversation_id=conversation.id,
-    )
+    members = await service.get_conversation_members(conversation_id=conversation.id)
     return ConversationResponse(
         id=conversation.id,
         type=conversation.type,
         title=conversation.title,
         created_by=conversation.created_by,
         created_at=conversation.created_at,
-        member_ids=list(member_ids),
+        member_ids=[member.id for member in members],
+        members=[ConversationMemberSummary.model_validate(member) for member in members],
     )
 
 

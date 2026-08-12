@@ -156,6 +156,20 @@ class ChatService:
         )
         return tuple(result.all())
 
+    async def get_conversation_members(
+        self,
+        *,
+        conversation_id: str,
+    ) -> Sequence[User]:
+        """Return the member rows themselves, for rendering and for language fan-out."""
+        result = await self._db.scalars(
+            select(User)
+            .join(ConversationMember, ConversationMember.user_id == User.id)
+            .where(ConversationMember.conversation_id == conversation_id)
+            .order_by(User.id)
+        )
+        return result.all()
+
     async def get_message_history(
         self,
         *,

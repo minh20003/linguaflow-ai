@@ -26,6 +26,16 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class ConversationMemberSummary(BaseModel):
+    """Enough about a member to render them and to know what they read."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    preferred_language: str
+
+
 class ConversationResponse(BaseModel):
     """Conversation metadata returned to an authenticated member."""
 
@@ -35,6 +45,10 @@ class ConversationResponse(BaseModel):
     created_by: str
     created_at: datetime
     member_ids: list[str]
+    # `member_ids` alone leaves a direct conversation with no name to show and
+    # every incoming message unattributed. Both are kept: the id list is what
+    # existing clients read.
+    members: list[ConversationMemberSummary] = []
 
 
 class TranslationSummary(BaseModel):
