@@ -38,7 +38,7 @@ class LLMConfigError(RuntimeError):
 # Chat models already built, keyed on the configuration that shapes them. The API
 # key is deliberately not part of the key: it would put the secret in a
 # module-level structure that any traceback dumping locals would render.
-_CLIENTS: dict[tuple[str, str, float, int], BaseChatModel] = {}
+_CLIENTS: dict[tuple[str, str, float, int, int], BaseChatModel] = {}
 
 
 def extract_text(response: object) -> str:
@@ -77,6 +77,7 @@ def _build_llm(
     model: str,
     temperature: float,
     timeout: int,
+    max_tokens: int,
     api_key: str,
 ) -> BaseChatModel:
     """Construct a chat model, reusing the one already built for this config.
@@ -88,8 +89,20 @@ def _build_llm(
 
     Note that the cached client outlives the event loop it was created on, so a
     process that runs several ``asyncio.run()`` calls must not share it.
+
+    Args:
+        provider: One of the keys in DEFAULT_MODELS.
+        model: Model identifier to request from that provider.
+        temperature: Sampling temperature.
+        timeout: Per-request timeout in seconds.
+        max_tokens: Upper bound on generated tokens.
+        api_key: Credential for the provider. Deliberately excluded from the
+            cache key so the secret never lands in a module-level structure.
+
+    Returns:
+        A chat model, reused across calls with the same configuration.
     """
-    cache_key = (provider, model, temperature, timeout)
+    cache_key = (provider, model, temperature, timeout, max_tokens)
     cached = _CLIENTS.get(cache_key)
     if cached is not None:
         return cached
@@ -99,19 +112,25 @@ def _build_llm(
     if provider == "groq":
         from langchain_groq import ChatGroq
 
-        client: BaseChatModel = ChatGroq(api_key=api_key, **common)
+        client: BaseChatModel = ChatGroq(api_key=api_key, max_tokens=max_tokens, **common)
     elif provider == "deepseek":
         from langchain_openai import ChatOpenAI
 
-        client = ChatOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL, **common)
+        client = ChatOpenAI(
+            api_key=api_key, base_url=DEEPSEEK_BASE_URL, max_tokens=max_tokens, **common
+        )
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        client = ChatGoogleGenerativeAI(google_api_key=api_key, **common)
+        # ChatGoogleGenerativeAI names this max_output_tokens, not max_tokens —
+        # it cannot go in `common` with the others.
+        client = ChatGoogleGenerativeAI(
+            google_api_key=api_key, max_output_tokens=max_tokens, **common
+        )
     else:  # provider == "openai"
         from langchain_openai import ChatOpenAI
 
-        client = ChatOpenAI(api_key=api_key, **common)
+        client = ChatOpenAI(api_key=api_key, max_tokens=max_tokens, **common)
 
     _CLIENTS[cache_key] = client
     return client
@@ -161,5 +180,6 @@ def get_llm(
         model,
         settings.llm_temperature,
         settings.llm_timeout_seconds,
+        settings.llm_max_tokens,
         api_key,
     )

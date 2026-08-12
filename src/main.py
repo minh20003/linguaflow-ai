@@ -1,19 +1,30 @@
+"""FastAPI application entry point.
+
+Wires the CORS middleware and the `/api/v1` router, and exposes `/health` for
+deployment probes. The translation agent itself is reached through the router,
+not from here — see `src/agents/graph.py`.
+"""
+
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import router
-from src.config import get_settings
+from src.config import configure_logging, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown lifecycle events."""
     settings = get_settings()
-    print(f"Starting {settings.app_name} in {settings.app_env} mode")
+    configure_logging(settings)
+    logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
     yield
-    print("Shutting down...")
+    logger.info("Shutting down")
 
 
 app = FastAPI(

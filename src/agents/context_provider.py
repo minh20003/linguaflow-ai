@@ -29,8 +29,13 @@ class ContextProvider(Protocol):
     ) -> list[str]:
         """Return up to `limit` recent messages, oldest first.
 
-        Each item is a line already formatted for inclusion in the prompt.
-        Returns an empty list when the conversation has no history.
+        Args:
+            conversation_id: Conversation whose history to read.
+            limit: Maximum number of messages to return.
+
+        Returns:
+            Lines already formatted for inclusion in the prompt, oldest first.
+            Empty when the conversation has no history.
         """
         ...
 
@@ -46,6 +51,11 @@ class NullContextProvider:
         conversation_id: str,
         limit: int = DEFAULT_CONTEXT_SIZE,
     ) -> list[str]:
+        """Return an empty history.
+
+        Both arguments are accepted to satisfy `ContextProvider` (which documents
+        them) and then ignored — this implementation has nothing to look up.
+        """
         return []
 
 
@@ -56,10 +66,16 @@ class InMemoryContextProvider:
     """
 
     def __init__(self, messages: dict[str, list[str]] | None = None) -> None:
+        """Seed the store, optionally with pre-existing history per conversation."""
         self._store: dict[str, list[str]] = messages or {}
 
     def add_message(self, conversation_id: str, message: str) -> None:
-        """Append a message to a conversation's history."""
+        """Append a message to a conversation's history.
+
+        Args:
+            conversation_id: Conversation to append to; created if unseen.
+            message: Line to store, already formatted for the prompt.
+        """
         self._store.setdefault(conversation_id, []).append(message)
 
     async def get_recent_messages(
@@ -67,6 +83,15 @@ class InMemoryContextProvider:
         conversation_id: str,
         limit: int = DEFAULT_CONTEXT_SIZE,
     ) -> list[str]:
+        """Return the last `limit` messages stored for `conversation_id`.
+
+        Args:
+            conversation_id: Conversation whose history to read.
+            limit: Maximum number of messages; zero or less returns nothing.
+
+        Returns:
+            Stored lines, oldest first. Empty when the conversation is unknown.
+        """
         history = self._store.get(conversation_id, [])
         if limit <= 0:
             return []

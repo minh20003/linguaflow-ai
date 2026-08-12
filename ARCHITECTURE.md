@@ -152,6 +152,23 @@ Ba ràng buộc bắt buộc giữ khi sửa `src/services/fallback_translator.p
 2. **Không chặn event loop.** `deep-translator` là thư viện đồng bộ nên phải chạy trong worker thread kèm timeout (`FALLBACK_TRANSLATOR_TIMEOUT_SECONDS`). Timeout giải phóng coroutine nhưng không huỷ được thread — chấp nhận được vì thread chỉ giữ một request HTTP.
 3. **`is_fallback` vẫn là `true` khi tầng 2 thành công.** Kết quả không đến từ LLM đã cấu hình, nên Frontend phải tiếp tục hiển thị chỉ báo chất lượng suy giảm. Trường `model` cho biết bản dịch do tầng nào tạo ra.
 
+**Điều kiện chuyển sang tầng 2.** Ngoài lỗi và timeout của LLM, `validate_output` còn đẩy sang tầng dự phòng khi bản dịch rỗng, dài bất thường so với bản gốc, hoặc **không đúng ngôn ngữ đích** (ADR-13). Trường hợp cuối bắt được câu từ chối của model — vốn quá ngắn để lọt quy tắc độ dài. Đầu ra của tầng 2 cũng chịu đúng kiểm tra ngôn ngữ đó trước khi được chấp nhận, vì nó không quay lại `validate_output`.
+
+**Timeout ở mức toàn bộ lượt chạy không thuộc Agent.** Hệ thống chỉ có timeout theo từng lần gọi (`LLM_TIMEOUT_SECONDS`, `FALLBACK_TRANSLATOR_TIMEOUT_SECONDS`). Hạn thời gian cho cả lượt dịch thuộc về bên gọi — Chat Service bọc `graph.ainvoke` trong `asyncio.wait_for` — vì chỉ bên gọi mới biết người dùng còn chờ được bao lâu. Xem ADR-14.
+
+### 5.2. Guardrail đầu vào và đầu ra
+
+Ba lớp kiểm tra, cài đặt trong `src/agents/guardrails.py` (ADR-12, ADR-13). Tổng chi phí trên đường thành công khoảng 2ms, tức 0,2% ngân sách của NFR-01.
+
+| Lớp | Kiểm tra | Khi vi phạm |
+|---|---|---|
+| Đầu vào | `original_text` tối đa 2000 ký tự | Ghi `error`, trả nguyên bản. Không cắt bớt — nửa bản dịch tệ hơn không dịch |
+| Đầu vào | `target_language` phải đúng dạng ISO 639-1 hai chữ cái thường | Ghi `error`, trả nguyên bản. Giá trị này đi thẳng vào system prompt và đến từ trường hồ sơ người dùng tự sửa được |
+| Prompt | Mỗi dòng ngữ cảnh bị gộp xuống dòng, escape dấu ngoặc nhọn, cắt còn 500 ký tự | Áp dụng im lặng tại `build_context_block` |
+| Đầu ra | Ngôn ngữ bản dịch phải khớp `target_language`, kiểm khi bản dịch dài từ 20 ký tự | Chuyển sang tầng dự phòng |
+
+Hàm phụ thuộc thư viện ngoài thì **fail open** (langdetect lỗi → chấp nhận bản dịch), hàm thuần số học và regex thì **fail closed**. Nguyên tắc này giữ cho một lỗi phụ thuộc không đẩy toàn bộ lưu lượng sang provider dự phòng.
+
 ## 6. Bảo mật và chính sách lưu trữ dữ liệu
 
 > **Ghi chú về bảo mật:** Hệ thống áp dụng chính sách lưu trữ an toàn và kiểm soát truy cập. Agent yêu cầu đọc nội dung tin nhắn dạng plaintext để thực hiện dịch thuật và cung cấp ngữ cảnh cho mô hình ngôn ngữ.
@@ -171,6 +188,22 @@ Ba ràng buộc bắt buộc giữ khi sửa `src/services/fallback_translator.p
 
 Tính năng xoá hội thoại theo yêu cầu người dùng (right-to-be-forgotten) không thuộc phạm vi MVP. Schema hiện tại với khoá ngoại xác định rõ ràng cho phép hiện thực hoá tính năng này theo `conversation_id` khi cần.
 
+### 6.4. Chuyển dữ liệu ra dịch vụ bên thứ ba
+
+Nội dung tin nhắn của người dùng rời khỏi hệ thống qua ba kênh. Cả ba đều tắt được bằng cấu hình, nhưng chỉ kênh đầu tiên là bắt buộc để tính năng dịch hoạt động.
+
+| Kênh | Dữ liệu gửi đi | Ràng buộc pháp lý | Cơ chế tắt |
+|---|---|---|---|
+| LLM provider theo `LLM_PROVIDER` (Groq, DeepSeek, Gemini, OpenAI) | `original_text` và tối đa 5 tin nhắn ngữ cảnh gần nhất | Theo điều khoản dịch vụ của từng nhà cung cấp; truy cập bằng API key của tài khoản | Không tắt được — đây là kênh thực hiện việc dịch |
+| `deep-translator` → endpoint web của Google Translate (ADR-07) | Toàn văn `original_text` | **Endpoint không chính thức, không dùng API key, do đó không có hợp đồng và không có thoả thuận xử lý dữ liệu (DPA)** | `FALLBACK_TRANSLATOR_ENABLED=false` |
+| Langfuse (F-03.4) | Toàn bộ prompt và completion, tức bao gồm cả tin nhắn lẫn ngữ cảnh | Theo điều khoản của Langfuse Cloud | Để trống `LANGFUSE_PUBLIC_KEY` và `LANGFUSE_SECRET_KEY` |
+
+**Hệ quả cần lưu ý khi vận hành:**
+
+1. Kênh dự phòng kích hoạt trên *mọi* đường fallback — thiếu API key, bị giới hạn tần suất, lỗi mạng, timeout, hoặc bản dịch không hợp lệ. Một sự cố tạm thời ở LLM provider vì vậy làm toàn bộ tin nhắn đang xử lý được gửi sang Google.
+2. Người nhận chỉ thấy `is_fallback = true`, và theo `docs/CONTRACT.md` §4 Frontend hiển thị cờ này như chỉ báo chất lượng, không phải chỉ báo về quyền riêng tư. Hệ thống hiện không thông báo cho người dùng về việc chuyển dữ liệu này.
+3. **Không được xử lý dữ liệu người dùng thật khi `FALLBACK_TRANSLATOR_ENABLED=true` ở bất kỳ môi trường nào chịu yêu cầu về thoả thuận xử lý dữ liệu.** Với môi trường phát triển, ràng buộc tại §6.2 về việc không đưa dữ liệu thật vào vẫn áp dụng đầy đủ.
+
 ## 7. Quyết định kiến trúc (ADR)
 
 | Mã | Nội dung quyết định | Lựa chọn | Căn cứ |
@@ -186,6 +219,10 @@ Tính năng xoá hội thoại theo yêu cầu người dùng (right-to-be-forgo
 | ADR-09 | Ngôn ngữ Backend | Python/FastAPI thống nhất toàn hệ thống | LangGraph và các SDK của LLM đều là Python. Sử dụng thống nhất một ngôn ngữ với Agent giúp giảm số runtime phải vận hành, phù hợp với quy mô nhóm hiện tại |
 | ADR-10 | Provider LLM | Factory đa provider điều khiển qua `LLM_PROVIDER`; **mặc định và khuyến nghị dùng Groq** | Số liệu đo trên cùng 3 mẫu: Groq 2610ms so với Gemini 8441ms cho một tin nhắn, tức nhanh hơn 3.2 lần. Ngoài ra gói miễn phí của Gemini chỉ cho **20 request mỗi ngày** cho `gemini-2.5-flash`, không đủ cho một buổi demo, nên Gemini chỉ giữ vai trò dự phòng khi thử nghiệm. OpenAI yêu cầu tài khoản còn credit. Cơ chế factory cho phép chuyển provider mà không sửa mã nguồn. DeepSeek tuân thủ chuẩn OpenAI-compatible nên tái sử dụng `langchain-openai` qua tham số `base_url` |
 | ADR-11 | Xác định ngôn ngữ nguồn | Hai tầng: `langdetect` cục bộ trước, chỉ gọi LLM khi kết quả mâu thuẫn với `preferred_language` của người gửi | LLM detect tốn 1285ms mỗi tin nhắn, chiếm 49% tổng thời gian xử lý. `langdetect` chạy cục bộ hết khoảng 2ms. Trường hợp phổ biến nhất là người dùng viết đúng ngôn ngữ đã cài đặt, khi đó hai nguồn trùng nhau và không cần gọi LLM. Không dùng `langdetect` một mình vì độ chính xác kém với câu ngắn (chuỗi "Ok anh" bị nhận nhầm thành tiếng Tagalog), nên khi có mâu thuẫn phải để LLM phân xử. Kết quả đo: tổng thời gian giảm từ 2610ms xuống 1501ms |
+| ADR-12 | Xử lý nội dung không tin cậy trong prompt | Cô lập bằng thẻ phân định `<conversation_history>` và `<message>`, kèm làm sạch từng dòng ngữ cảnh (gộp xuống dòng và ký tự điều khiển thành khoảng trắng, **escape dấu ngoặc nhọn thành `&amp;lt;`/`&amp;gt;`**, giới hạn 500 ký tự mỗi dòng) và giới hạn 2000 ký tự cho tin nhắn. **Không** cố phát hiện ý đồ tấn công | `build_context_block` trước đây nối các dòng ngữ cảnh bằng ký tự xuống dòng, nên một tin nhắn chứa xuống dòng có thể giả mạo tiêu đề phần thứ hai và chiếm quyền điều khiển bản dịch. Nguy hiểm hơn dạng tự tấn công thông thường ở chỗ ngữ cảnh do **người khác** trong hội thoại viết ra, tức A có thể chiếm quyền bản dịch của B. Gộp xuống dòng một mình là chưa đủ — thẻ giả mạo vẫn nằm inline và vẫn đọc được như cấu trúc, nên phải escape dấu ngoặc nhọn; việc escape không tốn gì vì dòng ngữ cảnh chỉ được model *đọc*, không bao giờ xuất hiện trong bản dịch trả cho người nhận. Riêng phần thân tin nhắn không escape (sẽ làm hỏng bản dịch đầu ra) — rủi ro ở đây thấp hơn hẳn vì đó là tự tấn công: người gửi chỉ thao túng được bản dịch tin nhắn của chính mình, và phần này nằm cuối prompt nên không có chỉ dẫn tin cậy nào phía sau để ghi đè. Việc làm sạch loại bỏ chính khả năng giả mạo cấu trúc, nên nó là biện pháp giảm thiểu thực sự; còn một bộ phát hiện ý đồ sẽ thêm độ trễ và dương tính giả vào một pipeline mà trường hợp xấu nhất vốn đã là trả nguyên bản an toàn. `target_language` cũng được kiểm tra hình dạng ISO 639-1 trước khi nội suy vào system prompt, do giá trị này đến từ trường hồ sơ người dùng tự sửa được |
+| ADR-13 | Kiểm tra tính hợp lệ của bản dịch đầu ra | Bản dịch bị từ chối khi `langdetect` nhận ra nó **vẫn đúng ngôn ngữ nguồn** trong khi đích khác nguồn. **Không** kiểm theo kiểu "có đúng ngôn ngữ đích không", **không** gọi LLM lần hai, **không** dùng danh sách cụm từ từ chối. Áp dụng cho cả `validate_output` lẫn `fallback_translate` | Bắt được ba dạng hỏng mà quy tắc tỷ lệ độ dài bỏ sót khi phản hồi ngắn: model từ chối (`"I can't help with that."` chỉ 24 ký tự, dưới ngưỡng 200 nên trước đây được giao cho người nhận với `is_valid = true`), trả lại nguyên văn chưa dịch, và trả lời tin nhắn thay vì dịch. **Phương án đầu tiên — so bản dịch với `target_language` — đã bị bác bỏ sau khi đo thực tế.** `langdetect` sai một cách tự tin trên đúng loại văn bản sản phẩm này nhắm tới: chuỗi `"Hotfix merged, CI green now"` bị nhận là tiếng Hà Lan ở mức 0.86, `"Docker Kubernetes Jenkins CI/CD pipeline"` bị nhận là tiếng Đức ở mức 0.9999. Cách đó loại bỏ chính những bản dịch đúng của tin nhắn kỹ thuật rồi trả về nguyên bản chưa dịch — ngược hẳn mục đích. Nâng ngưỡng độ dài không cứu được (ca tiếng Đức dài 40 ký tự) và đòi thêm biên tin cậy cũng không. Cách hiện tại chỉ yêu cầu bộ nhận diện **đồng ý với một giá trị đã biết** là ngôn ngữ nguồn do `detect_language` xác định; một lần nhận nhầm sang ngôn ngữ thứ ba bất kỳ không còn chứng minh điều gì và không gây hậu quả gì. Chấp nhận bỏ sót hơn là báo nhầm: bỏ sót một câu từ chối chỉ hỏng một tin nhắn, còn báo nhầm làm giảm chất lượng mọi tin nhắn kỹ thuật trong hội thoại. Chỉ chạy khi bản dịch dài từ 20 ký tự; khi thư viện lỗi hoặc không nhận diện được thì bản dịch được chấp nhận, tránh việc một lỗi phụ thuộc đẩy toàn bộ lưu lượng sang provider dự phòng |
+| ADR-14 | Ranh giới an toàn AI trong phạm vi MVP | Guardrail giới hạn ở ba lớp: chặn kích thước đầu vào, cô lập văn bản không tin cậy trong prompt, và kiểm tra tính hợp lệ của đầu ra. **Không** có bộ phân loại kiểm duyệt nội dung, phát hiện độc hại hay PII; **không** giới hạn tần suất theo người dùng; **không** ngân sách token; **không** timeout ở mức agent | Hệ thống *dịch* nội dung người dùng chứ không *sinh* nội dung mới, nên bề mặt rủi ro hẹp hơn một trợ lý hội thoại: mô hình không được yêu cầu đưa ra quan điểm hay lời khuyên. Mọi đường lỗi đều đã suy giảm về việc trả nguyên bản (NFR-02), tức trường hợp xấu nhất là người nhận đọc tin chưa dịch chứ không phải nhận nội dung sai lệch. Ba hạng mục bị loại đều thuộc tầng API (`src/api/routes.py`, do nhánh khác sở hữu) hoặc thuộc Post-MVP theo phạm vi F-01..F-06. Timeout ở mức agent thuộc về bên gọi (`asyncio.wait_for` quanh `graph.ainvoke`), mà Chat Service chưa tồn tại. Sẽ xem xét lại khi hệ thống phục vụ người dùng ngoài nhóm |
+| ADR-15 | Công bố luồng dữ liệu ra dịch vụ bên thứ ba | Ghi đầy đủ ba kênh chuyển dữ liệu tại §6.4, mỗi kênh kèm cơ chế tắt bằng cấu hình | Trước thay đổi này, `deep-translator` chỉ được mô tả như kỹ thuật bảo đảm sẵn sàng tại ADR-07 và §5.1; không tài liệu nào nêu rằng nó gửi toàn văn tin nhắn tới một endpoint không có hợp đồng xử lý dữ liệu. Langfuse cũng gửi toàn bộ prompt nhưng không xuất hiện ở mục bảo mật. Một luồng dữ liệu không được ghi nhận thì không thể được đánh giá rủi ro, nên việc công bố là điều kiện cần trước khi hệ thống nhận dữ liệu thật |
 
 
 ## 8. Triển khai

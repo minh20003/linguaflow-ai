@@ -1,3 +1,12 @@
+"""Application configuration, loaded once per process from the environment.
+
+Every field has a default so the test suite and the evaluation harness can run
+without a `.env` file. Fields are grouped into blocks by concern; when adding a
+setting, put it inside the block it belongs to rather than at the end of the
+class — the auth branch appends its own block there and would conflict.
+"""
+
+import logging
 from functools import lru_cache
 from typing import Literal
 
@@ -26,8 +35,13 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: Literal["groq", "deepseek", "gemini", "openai"] = "groq"
     llm_model: str = ""  # Empty = use the provider default (see services/llm.py)
-    llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    # Translation is not a creative task — a low temperature keeps the model on
+    # the format rules in TRANSLATE_SYSTEM_PROMPT instead of paraphrasing.
+    llm_temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     llm_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    # Caps generation cost. A chat message never needs more; anything longer is
+    # the model explaining itself, which validate_output rejects anyway.
+    llm_max_tokens: int = Field(default=1024, ge=64, le=8192)
 
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
@@ -53,6 +67,39 @@ class Settings(BaseSettings):
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+
+
+def configure_logging(settings: Settings | None = None) -> None:
+    """Apply LOG_LEVEL to the root logger.
+
+    Without this the root logger stays at its WARNING default and every
+    ``logger.info`` in the agent is discarded — including the record of when a
+    translation fell back, which is the main operational signal the agent emits.
+
+    LOG_LEVEL is applied to the ``src`` logger only, not the root. Setting the
+    root level would switch on INFO for every installed library — ``httpx`` alone
+    emits one request line per LLM call, which would bury the evaluation
+    harness's own progress output.
+
+    Safe to call more than once: the handler is replaced rather than stacked, so
+    repeated calls cannot duplicate every line.
+
+    Args:
+        settings: Configuration to read. Defaults to the process settings.
+    """
+    settings = settings or get_settings()
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+
+    app_logger = logging.getLogger("src")
+    app_logger.handlers.clear()
+    app_logger.addHandler(handler)
+    app_logger.setLevel(settings.log_level)
+    # Handled here, so don't also hand records to whatever the root has attached.
+    app_logger.propagate = False
 
 
 @lru_cache

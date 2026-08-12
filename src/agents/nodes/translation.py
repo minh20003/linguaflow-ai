@@ -2,6 +2,11 @@
 
 Node chain per docs/architecture_diagram.md section 2:
     detect_language -> build_context -> translate -> validate_output
+                                                  -> fallback_translate
+
+Every node takes the full ``AgentState`` and returns a dict holding only the
+fields it changed; LangGraph merges those partial updates. That convention is
+stated here once rather than repeated in each node's docstring.
 
 Hard rule: no node raises. Failures are recorded in ``state["error"]`` and the
 graph continues down the fallback path that returns the original text, so an LLM
@@ -19,6 +24,13 @@ from src.agents.context_provider import (
     ContextProvider,
     NullContextProvider,
 )
+from src.agents.guardrails import (
+    MAX_INPUT_CHARS,
+    detect_language_code,
+    is_input_too_long,
+    is_supported_language_code,
+    is_untranslated_output,
+)
 from src.agents.prompts import (
     DETECT_LANGUAGE_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
@@ -26,13 +38,10 @@ from src.agents.prompts import (
     build_context_block,
 )
 from src.agents.state import AgentState
-from src.services.fallback_translator import FALLBACK_MODEL_NAME, translate_fallback
+from src.services.fallback_translator import FALLBACK_MODEL_NAME, translate_with_secondary_provider
 from src.services.llm import extract_text, get_llm
 
 logger = logging.getLogger(__name__)
-
-# ISO 639-1: exactly two letters
-_ISO_639_1 = re.compile(r"^[a-z]{2}$")
 
 # Text with no letters at all (emoji, digits, punctuation, URLs) needs no translation
 _HAS_LETTER = re.compile(r"[^\W\d_]", re.UNICODE)
@@ -52,22 +61,15 @@ _DETECT_SAMPLE_CHARS = 500
 
 
 def _detect_local(text: str) -> str | None:
-    """Detect the language locally with langdetect (~2ms, no API call).
+    """Detect the language of an incoming message (~2ms, no API call).
 
-    Returns None when detection is unavailable or the result is not a usable
-    ISO 639-1 code. langdetect emits region-qualified codes such as ``zh-cn``;
-    the contract only uses the base code.
+    A thin wrapper over :func:`guardrails.detect_language_code`, kept as a
+    separate name on purpose: detecting the *input* language and verifying the
+    *output* language are different decisions, and tests must be able to stub one
+    without silently capturing the other. They share one implementation so the
+    two can never disagree about what a language code looks like.
     """
-    try:
-        from langdetect import DetectorFactory, detect
-
-        # langdetect samples randomly; a fixed seed keeps results reproducible
-        DetectorFactory.seed = 0
-        code = detect(text).lower().split("-")[0]
-    except Exception:
-        return None
-
-    return code if _ISO_639_1.match(code) else None
+    return detect_language_code(text)
 
 
 async def _detect_with_llm(text: str) -> tuple[str | None, int]:
@@ -89,7 +91,7 @@ async def _detect_with_llm(text: str) -> tuple[str | None, int]:
 
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-    if not _ISO_639_1.match(detected):
+    if not is_supported_language_code(detected):
         logger.warning("LLM language detection returned an invalid code: %r", detected)
         return None, elapsed_ms
 
@@ -152,10 +154,18 @@ def make_build_context(
 
     Uses a closure rather than a module global so several graphs can run side by
     side with different sources (a real one in production, a fake one in tests).
+
+    Args:
+        context_provider: Source of recent messages. Defaults to no context.
+        limit: How many recent messages to request from the provider.
+
+    Returns:
+        The build_context node function, ready to add to a graph.
     """
     provider = context_provider or NullContextProvider()
 
     async def build_context(state: AgentState) -> dict:
+        """Load recent conversation history, degrading to none on failure."""
         conversation_id = state.get("conversation_id", "")
         if not conversation_id:
             return {"context_messages": []}
@@ -182,6 +192,23 @@ async def translate(state: AgentState) -> dict:
     if not target_language:
         return {"error": "target_language was not provided"}
 
+    # target_language is interpolated into the *system* prompt below, and it
+    # originates from a user-editable profile field. Anything that is not a bare
+    # ISO code could append arbitrary instructions there (ADR-12).
+    if not is_supported_language_code(target_language):
+        logger.warning("Rejected malformed target_language: %r", target_language)
+        return {"error": "target_language is not a valid ISO 639-1 code"}
+
+    if is_input_too_long(original_text):
+        # Not truncated on purpose: half a translated message is worse than none,
+        # and NFR-02 means the recipient still reads the original either way.
+        logger.warning(
+            "Rejected oversized message: %d chars, limit %d",
+            len(original_text),
+            MAX_INPUT_CHARS,
+        )
+        return {"error": "original_text exceeds the guardrail length limit"}
+
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(target_language=target_language)
     user_prompt = TRANSLATE_USER_PROMPT.format(
         context_block=build_context_block(state.get("context_messages", [])),
@@ -194,6 +221,7 @@ async def translate(state: AgentState) -> dict:
     started = time.perf_counter()
 
     def total_latency_ms() -> int:
+        """Elapsed time for this call plus whatever detection already spent."""
         return detect_ms + int((time.perf_counter() - started) * 1000)
 
     try:
@@ -230,16 +258,19 @@ async def validate_output(state: AgentState) -> dict:
     translated_text = (state.get("translated_text") or "").strip()
 
     def fallback(reason: str) -> dict:
+        """Build the state update that returns the original text unchanged."""
         logger.info("Falling back to the original text: %s", reason)
         update = {
             "translated_text": original_text,
             "is_valid": False,
             "is_fallback": True,
         }
-        # ``error`` stays reserved for genuine failures: a healthy LLM response
-        # that merely tripped a validation rule must not look like an outage to
-        # callers that alert on the field. is_fallback already flags the branch,
-        # and the reason above is logged.
+        # ``error`` carries only reasons the request could not be processed —
+        # an LLM outage, or input the guardrails rejected outright. A healthy
+        # response that merely failed validation (too long, still in the source
+        # language) is deliberately left out, so callers alerting on the field
+        # don't page someone over a verbose translation. is_fallback already
+        # flags the branch either way, and the reason above is logged.
         if state.get("error"):
             update["error"] = state["error"]
         return update
@@ -258,6 +289,18 @@ async def validate_output(state: AgentState) -> dict:
             f"{max_length} limit — the model likely explained instead of translating"
         )
 
+    # A refusal, an untranslated echo, and the model answering instead of
+    # translating all leave source-language text in the output. The length rule
+    # above misses all three when the response is short — "I can't help with
+    # that." is 24 characters, far under the 200-char floor (ADR-13).
+    source_language = state.get("source_language", "")
+    target_language = state.get("target_language", "")
+    if is_untranslated_output(translated_text, source_language, target_language):
+        return fallback(
+            f"translation still reads as {source_language}, not {target_language} — "
+            "the model likely refused, echoed the source, or answered instead"
+        )
+
     return {"is_valid": True, "is_fallback": False}
 
 
@@ -273,18 +316,44 @@ async def fallback_translate(state: AgentState) -> dict:
     degraded-quality indicator. ``model`` records which provider produced it.
     """
     original_text = (state.get("original_text") or "").strip()
+    source_language = state.get("source_language", "")
+    target_language = state.get("target_language", "")
 
-    translated = await translate_fallback(
-        original_text,
-        target_language=state.get("target_language", ""),
-        # Empty when detection itself failed; the provider then detects its own
-        source_language=state.get("source_language", ""),
-    )
-    if not translated:
+    # The same guardrails the LLM path enforces. Without them an oversized or
+    # malformed request would still reach Google's endpoint (ADR-15).
+    if not is_supported_language_code(target_language):
+        return {}
+    if is_input_too_long(original_text):
         return {}
 
+    # This branch is the slowest path in the graph, so leaving it out of
+    # latency_ms would under-report exactly the case NFR-01 needs to see.
+    elapsed_ms = state.get("latency_ms", 0)
+    started = time.perf_counter()
+
+    translated = await translate_with_secondary_provider(
+        original_text,
+        target_language=target_language,
+        # Empty when detection itself failed; the provider then detects its own
+        source_language=source_language,
+    )
+    elapsed_ms += int((time.perf_counter() - started) * 1000)
+
+    if not translated:
+        return {"latency_ms": elapsed_ms}
+
+    # This output reaches the recipient without passing back through
+    # validate_output, so it is verified here or not at all.
+    if is_untranslated_output(translated, source_language, target_language):
+        logger.warning("Discarded secondary translation: still reads as the source")
+        return {"latency_ms": elapsed_ms}
+
     logger.info("Secondary provider translated the message after the LLM path failed")
-    return {"translated_text": translated, "model": FALLBACK_MODEL_NAME}
+    return {
+        "translated_text": translated,
+        "model": FALLBACK_MODEL_NAME,
+        "latency_ms": elapsed_ms,
+    }
 
 
 async def passthrough(state: AgentState) -> dict:

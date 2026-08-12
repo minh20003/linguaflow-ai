@@ -37,7 +37,16 @@ AUTO_SOURCE = "auto"
 
 
 def _translate_sync(text: str, source_language: str, target_language: str) -> str | None:
-    """Blocking call into deep-translator. Runs in a worker thread."""
+    """Blocking call into deep-translator. Runs in a worker thread.
+
+    Args:
+        text: Message to translate.
+        source_language: ISO 639-1 code, or empty to let the provider detect it.
+        target_language: ISO 639-1 code of the recipient's language.
+
+    Returns:
+        The provider's translation, or None when it produced no result.
+    """
     from deep_translator import GoogleTranslator
 
     translator = GoogleTranslator(
@@ -47,7 +56,7 @@ def _translate_sync(text: str, source_language: str, target_language: str) -> st
     return translator.translate(text)
 
 
-async def translate_fallback(
+async def translate_with_secondary_provider(
     text: str,
     target_language: str,
     source_language: str = "",

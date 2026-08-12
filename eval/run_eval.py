@@ -53,7 +53,7 @@ from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E4
 from src.agents.context_provider import InMemoryContextProvider  # noqa: E402
 from src.agents.graph import build_translation_graph  # noqa: E402
 from src.agents.observability import build_runnable_config  # noqa: E402
-from src.config import get_settings  # noqa: E402
+from src.config import configure_logging, get_settings  # noqa: E402
 from src.services.llm import extract_text, get_llm  # noqa: E402
 
 GOLDEN_SET = Path(__file__).parent / "golden_set.jsonl"
@@ -473,6 +473,10 @@ async def main() -> int:
         ),
     )
     args = parser.parse_args()
+
+    # This harness drives the graph without going through src/main.py, so it has
+    # to configure logging itself or the agent's fallback records are discarded.
+    configure_logging()
 
     samples = load_golden_set(args.limit)
     translate_provider = get_settings().llm_provider

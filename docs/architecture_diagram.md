@@ -80,6 +80,7 @@ graph TD
 1. Hệ thống không sử dụng Vector Store riêng; bước "Đọc 3-5 tin gần nhất" truy vấn trực tiếp bảng `messages`, do ngữ cảnh là cửa sổ trượt theo thời gian (ADR-01).
 2. Bước xác định ngôn ngữ nguồn sử dụng chiến lược hai tầng: `langdetect` cục bộ trước, chỉ gọi LLM phân xử khi có mâu thuẫn (ADR-11).
 3. Nhánh fallback xử lý theo cơ chế hai tầng: khi LLM lỗi hoặc bản dịch không hợp lệ, Agent gọi provider dự phòng `deep-translator` (ADR-07); nếu provider dự phòng cũng thất bại thì trả về nguyên bản kèm `is_fallback = true`.
+4. Bước "Bản dịch hợp lệ?" bao gồm cả kiểm tra ngôn ngữ đầu ra bằng `langdetect` cục bộ, không chỉ kiểm tra độ dài (ADR-13). Ngoài ra hai bước không vẽ trong sơ đồ vì không rẽ nhánh: giới hạn kích thước `original_text` và kiểm tra dạng `target_language` chạy trước khi tạo prompt, còn từng dòng ngữ cảnh được làm sạch bên trong bước "Tạo prompt" (ADR-12). Chi tiết: `ARCHITECTURE.md` §5.2.
 
 **Chi phí mỗi tin nhắn theo nhánh:**
 
