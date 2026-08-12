@@ -78,7 +78,12 @@ function socketUrl(): string {
   return `${API_BASE.replace(/^http/, "ws")}/api/v1/ws`;
 }
 
-export function useWebSocket(handlers: ChatSocketHandlers): ChatSocket {
+/**
+ * @param handlers Callbacks for each server event.
+ * @param authToken Token to authenticate with. Defaults to the stored session;
+ *   passing one explicitly is what lets two accounts share a tab in the demo.
+ */
+export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): ChatSocket {
   const [connected, setConnected] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -99,7 +104,7 @@ export function useWebSocket(handlers: ChatSocketHandlers): ChatSocket {
   const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
-    const token = getToken();
+    const token = authToken ?? getToken();
     if (!token) {
       handlersRef.current.onAuthFailure?.();
       return;
@@ -171,7 +176,7 @@ export function useWebSocket(handlers: ChatSocketHandlers): ChatSocket {
       attemptRef.current += 1;
       reconnectRef.current = setTimeout(() => connectRef.current(), delay);
     };
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     connectRef.current = connect;

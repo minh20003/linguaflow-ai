@@ -18,7 +18,7 @@ import {
   Search,
   Sidebar,
 } from "@chatscope/chat-ui-kit-react";
-import { getUser } from "@/lib/auth";
+import { getUser, type AuthUser } from "@/lib/auth";
 import {
   createConversation,
   getMessages,
@@ -39,6 +39,15 @@ import styles from "./MessagingApp.module.css";
  */
 const SHOW_UNIMPLEMENTED = false;
 
+/**
+ * How long to keep showing "đang dịch…" for a message that just arrived.
+ *
+ * The server sends nothing at all when a message is already in the reader's
+ * language, so the client cannot distinguish "translating" from "no translation
+ * is coming" — it can only stop waiting (ADR-16).
+ */
+const TRANSLATION_WAIT_MS = 8000;
+
 type Delivery = "sending" | "delivered" | "failed";
 
 type ChatMessage = {
@@ -54,6 +63,8 @@ type ChatMessage = {
   sourceLanguage?: string;
   /** F-04: per-message override of the default view. */
   showOriginal?: boolean;
+  /** Set once no translation can still be expected for this reader. */
+  translationSettled?: boolean;
   time: string;
   sentAt?: string;
   delivery?: Delivery;
@@ -160,6 +171,8 @@ function toChatMessage(row: HistoryMessage, myId: string, myLanguage: string): C
     time: clockTime(row.created_at),
     sentAt: row.created_at,
     delivery: "delivered",
+    // History is complete: whatever translations exist are already attached.
+    translationSettled: true,
   };
 }
 
@@ -168,10 +181,11 @@ type MessageClusterProps = {
   name: string;
   initials: string;
   searchQuery: string;
+  myLanguage: string;
   onToggleOriginal: (id: string) => void;
 };
 
-const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onToggleOriginal }: MessageClusterProps) {
+const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, myLanguage, onToggleOriginal }: MessageClusterProps) {
   const outgoing = messages[0].author === "me";
   return (
     <MessageGroup direction={outgoing ? "outgoing" : "incoming"} sender={outgoing ? "Bạn" : name} avatarPosition={outgoing ? "cr" : "cl"}>
@@ -182,7 +196,13 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
           const position = messages.length === 1 ? "single" : index === 0 ? "first" : index === messages.length - 1 ? "last" : "normal";
           const shown = displayText(message);
           const hasTranslation = Boolean(message.translatedText);
-          const awaiting = !outgoing && !hasTranslation && message.delivery === "delivered";
+          // Nothing is coming when the message is already in this reader's
+          // language: the server sends no event for that case at all.
+          const awaiting =
+            !hasTranslation
+            && !message.translationSettled
+            && message.sourceLanguage !== myLanguage
+            && message.delivery === "delivered";
           return (
             <Message key={message.id} model={{ message: shown, sender: outgoing ? "Bạn" : name, sentTime: message.time, direction: outgoing ? "outgoing" : "incoming", position }}>
               <Message.Header><time className={styles.messageTimestamp}>{messageTime(message.sentAt)}</time></Message.Header>
@@ -213,9 +233,20 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
   );
 });
 
-export default function MessagingApp() {
+/**
+ * @param session Account to run as. Omitted, it uses the stored session, which
+ *   is what the real app does. The side-by-side demo passes one explicitly so a
+ *   single tab can hold two accounts — localStorage has room for exactly one.
+ * @param compact Hides the sidebar for the demo's two-pane layout.
+ */
+export default function MessagingApp({
+  session,
+  compact = false,
+}: { session?: { token: string; user: AuthUser }; compact?: boolean } = {}) {
   const router = useRouter();
-  const me = useMemo(() => getUser(), []);
+  const stored = useMemo(() => getUser(), []);
+  const me = session?.user ?? stored;
+  const token = session?.token;
   const myId = me?.id ?? "";
   const myLanguage = me?.preferred_language ?? "en";
 
@@ -233,7 +264,24 @@ export default function MessagingApp() {
   const [showMessageSearch, setShowMessageSearch] = useState(false);
   const [messageQuery, setMessageQuery] = useState("");
 
+  const settleTranslation = useCallback((conversationId: string, messageId: string) => {
+    setMessages((current) => {
+      const thread = current[conversationId];
+      if (!thread) return current;
+      return {
+        ...current,
+        [conversationId]: thread.map((existing) =>
+          existing.id === messageId ? { ...existing, translationSettled: true } : existing,
+        ),
+      };
+    });
+  }, []);
+
   const applyIncoming = useCallback((message: RealtimeMessage, author: "me" | "them") => {
+    window.setTimeout(
+      () => settleTranslation(message.conversation_id, message.id),
+      TRANSLATION_WAIT_MS,
+    );
     setMessages((current) => {
       const thread = current[message.conversation_id] ?? [];
       if (thread.some((existing) => existing.id === message.id)) return current;
@@ -248,10 +296,17 @@ export default function MessagingApp() {
       };
       return { ...current, [message.conversation_id]: [...thread, next] };
     });
-  }, []);
+  }, [settleTranslation]);
 
   const socket = useWebSocket({
     onMessageCreated: useCallback((clientMessageId: string, message: RealtimeMessage) => {
+      // The sender waits for a translation too — they may read a different
+      // language than the one they typed in. Same deadline as an incoming
+      // message, after which nothing more is expected.
+      window.setTimeout(
+        () => settleTranslation(message.conversation_id, message.id),
+        TRANSLATION_WAIT_MS,
+      );
       // Replace the optimistic bubble with the server's row, keyed by the id
       // the client minted for exactly this purpose.
       setMessages((current) => {
@@ -267,7 +322,7 @@ export default function MessagingApp() {
           ),
         };
       });
-    }, []),
+    }, [settleTranslation]),
 
     onMessageReceived: useCallback((message: RealtimeMessage) => {
       applyIncoming(message, message.sender_id === myId ? "me" : "them");
@@ -299,14 +354,14 @@ export default function MessagingApp() {
     onError: useCallback((_code: string, message: string) => setNotice(message), []),
 
     onAuthFailure: useCallback(() => {
-      router.replace("/login");
-    }, [router]),
-  });
+      if (!session) router.replace("/login");
+    }, [router, session]),
+  }, token);
 
   // Load the conversation list once.
   useEffect(() => {
     let cancelled = false;
-    listConversations()
+    listConversations(token)
       .then((conversations) => {
         if (cancelled) return;
         const items = conversations.map((conversation) => toConversationItem(conversation, myId));
@@ -315,13 +370,13 @@ export default function MessagingApp() {
       })
       .catch((error: Error) => !cancelled && setNotice(error.message));
     return () => { cancelled = true; };
-  }, [myId]);
+  }, [myId, token]);
 
   // Load a thread's history the first time it is opened.
   useEffect(() => {
     if (!activeId || loadedThreads[activeId]) return;
     let cancelled = false;
-    getMessages(activeId)
+    getMessages(activeId, 50, token)
       .then((rows) => {
         if (cancelled) return;
         setMessages((current) => ({
@@ -332,7 +387,7 @@ export default function MessagingApp() {
       })
       .catch((error: Error) => !cancelled && setNotice(error.message));
     return () => { cancelled = true; };
-  }, [activeId, loadedThreads, myId, myLanguage]);
+  }, [activeId, loadedThreads, myId, myLanguage, token]);
 
   const active = conversationItems.find((item) => item.id === activeId);
   const activeMessages = useMemo(() => messages[activeId] ?? [], [activeId, messages]);
@@ -409,7 +464,7 @@ export default function MessagingApp() {
     try {
       // The form collects emails while the endpoint wants ids, so every address
       // is resolved first — which also catches a typo while it is still on screen.
-      const resolved = await Promise.all(emails.map((email) => lookupUserByEmail(email)));
+      const resolved = await Promise.all(emails.map((email) => lookupUserByEmail(email, token)));
       const missing = emails.filter((_, index) => resolved[index] === null);
       if (missing.length) {
         setGroupError(`Không tìm thấy tài khoản: ${missing.join(", ")}`);
@@ -420,7 +475,7 @@ export default function MessagingApp() {
         type: "group",
         title: name,
         member_ids: resolved.map((member) => member!.id),
-      });
+      }, token);
 
       setConversationItems((items) => [toConversationItem(conversation, myId), ...items]);
       setMessages((current) => ({ ...current, [conversation.id]: [] }));
@@ -432,12 +487,12 @@ export default function MessagingApp() {
     } catch (error) {
       setGroupError((error as Error).message);
     }
-  }, [groupMembers, groupName, myId, selectConversation]);
+  }, [groupMembers, groupName, myId, selectConversation, token]);
 
   return (
-    <main className={`${styles.appShell} ${mobileView === "chat" ? styles.mobileChat : styles.mobileList}`}>
+    <main className={`${styles.appShell} ${compact ? styles.embedded : ""} ${mobileView === "chat" ? styles.mobileChat : styles.mobileList}`}>
       <MainContainer>
-        <Sidebar position="left" scrollable={false} className={styles.chatSidebar}>
+        {!compact && <Sidebar position="left" scrollable={false} className={styles.chatSidebar}>
           <div className={styles.workspaceTop}><div><span className={styles.productMark}>LC</span><span><strong>LinguaChat</strong><small>Web nhắn tin trực tuyến</small></span></div></div>
           <div className={styles.sidebarTools}>
             <div className={styles.sidebarSearchInline}><Search placeholder="Tìm hội thoại" value={query} onChange={setQuery} onClearClick={() => setQuery("")} /></div>
@@ -468,13 +523,16 @@ export default function MessagingApp() {
             <Avatar name={me?.email ?? ""} status={socket.connected ? "available" : "unavailable"} size="sm"><span className={styles.initialsAvatar}>{initialsOf(me?.email ?? "?")}</span></Avatar>
             <span><strong>{me?.display_name ?? "Tài khoản"}</strong><small>{socket.connected ? `Đang đọc ${languageLabel(myLanguage)}` : "Mất kết nối"}</small></span>
           </div>
-        </Sidebar>
+        </Sidebar>}
 
         <ChatContainer className={styles.chatWorkspace}>
           <ConversationHeader className={styles.chatHeader}>
             <ConversationHeader.Back><button type="button" aria-label="Quay lại danh sách hội thoại" onClick={() => setMobileView("list")}>←</button></ConversationHeader.Back>
             <Avatar name={active?.name ?? ""}><span className={styles.initialsAvatar}>{active?.initials ?? "–"}</span></Avatar>
-            <ConversationHeader.Content userName={active?.name ?? "Chưa chọn hội thoại"} info={active?.subtitle ?? ""} />
+            <ConversationHeader.Content
+              userName={`${me?.display_name ?? "Tài khoản"} · đọc ${languageLabel(myLanguage)}`}
+              info={active ? `${active.name} — ${active.subtitle}` : "Chưa chọn hội thoại"}
+            />
             <ConversationHeader.Actions>
               <button type="button" aria-label="Tìm trong hội thoại" aria-pressed={showMessageSearch} onClick={() => { setShowMessageSearch((value) => !value); setMessageQuery(""); }}>⌕</button>
             </ConversationHeader.Actions>
@@ -487,7 +545,7 @@ export default function MessagingApp() {
             {activeMessages.length ? grouped.map((cluster, index) => (
               <div key={cluster[0].id}>
                 {(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}
-                <MessageCluster messages={cluster} name={active?.name ?? ""} initials={active?.initials ?? ""} searchQuery={messageQuery} onToggleOriginal={toggleOriginal} />
+                <MessageCluster messages={cluster} name={active?.name ?? ""} initials={active?.initials ?? ""} searchQuery={messageQuery} myLanguage={myLanguage} onToggleOriginal={toggleOriginal} />
               </div>
             )) : <div className={styles.emptyState}><span>✦</span><h2>Bắt đầu cuộc trò chuyện</h2><p>Gửi tin nhắn đầu tiên — bản dịch sẽ tới ngay sau đó.</p></div>}
           </MessageList>
