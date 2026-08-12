@@ -20,8 +20,8 @@ import {
   TypingIndicator,
 } from "@chatscope/chat-ui-kit-react";
 import { UserRoundPlus, X } from "lucide-react";
-import { logoutSession } from "@/lib/api";
-import { clearSession, getStoredRefreshToken, getStoredUser } from "@/lib/auth-session";
+import { logoutSession } from "@/shared/lib/api";
+import { clearSession, getStoredRefreshToken, getStoredUser } from "@/shared/lib/auth-session";
 import styles from "./MessagingApp.module.css";
 
 type Delivery = "sending" | "delivered" | "read" | "failed";

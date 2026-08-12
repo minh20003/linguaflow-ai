@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
-import MessagingApp from "@/components/chat/MessagingApp";
-import RequireAuth from "@/components/auth/RequireAuth";
+import MessagingApp from "@/features/chat/components/MessagingApp";
+import RequireAuth from "@/features/auth/components/RequireAuth";
 
 export const metadata: Metadata = {
   title: "Tin nhắn — LinguaChat",

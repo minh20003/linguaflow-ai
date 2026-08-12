@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import PasswordRecoveryForm from "@/components/auth/PasswordRecoveryForm";
+import PasswordRecoveryForm from "@/features/auth/components/PasswordRecoveryForm";
 
 export const metadata: Metadata = {
   title: "Khôi phục tài khoản — LinguaChat",

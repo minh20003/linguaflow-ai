@@ -1,29 +1,40 @@
-# Design Decision Record — LinguaChat messaging
+# Design Decision Record: LinguaChat Frontend
+
+Status: accepted · Version: 2.0
 
 ```yaml
-design_decision:
-  assumption: LinguaChat is a focused multilingual DM product with real-time translation.
-  archetype: focused_dm
-  shell: adaptive_workspace
-  primary_navigation: conversation_index
-  conversation_index: grouped_sections
-  message_presentation: speaker_blocks
-  message_grouping: consecutive_sender
-  metadata_visibility: contextual
-  composer: expandable
-  secondary_context: on_demand
-  density: balanced
-  geometry: sharp
-  surface_model: tonal_layers
-  hierarchy_method: mixed_restrained
-  visual_character: editorial
-  accent_strategy: unread_and_status
-  intentionally_avoided:
-    - icon rail
-    - permanent right panel
-    - card-based conversation rows
-    - bubbles for every message
-    - floating pill composer
+product: multilingual real-time focused messaging
+archetype: focused_dm
+shell: adaptive_workspace
+navigation: conversation_index
+messages: speaker_blocks / consecutive_sender
+composer: compact_docked
+context: on_demand
+density: balanced
+geometry: soft
+surface: tonal_layers
+hierarchy: mixed_restrained
+character: calm_social_editorial
 ```
 
-The primary product-specific behavior is inline source/translation pairing. Desktop uses a conversation ledger beside an edge-to-edge reading canvas; mobile becomes a list-to-conversation navigation stack.
+Decisions:
+
+- Use a two-surface desktop workspace: ledger + reading canvas.
+- Keep secondary actions contextual and avoid a permanent right rail.
+- Use ChatScope for message anatomy, but own the product tokens and hierarchy.
+- Keep auth/chat code under feature folders and primitives/API/session code under
+  `shared`.
+- Use semantic tokens, restrained borders and tonal surfaces; avoid gradients,
+  glassmorphism and generic dashboard cards.
+- Treat Vietnamese-first labels, readable metadata and keyboard access as product
+  requirements, not polish.
+
+Rejected defaults:
+
+- Slack/Discord/WhatsApp/Telegram/Mattermost visual cloning;
+- icon-rail + rounded-sidebar + right-details dashboard shell;
+- reaction trays, permanent action chrome and oversized floating composers;
+- color-only unread, delivery or error states.
+
+Change rule: update this record when shell topology, message model, density,
+composer behavior or navigation changes materially.

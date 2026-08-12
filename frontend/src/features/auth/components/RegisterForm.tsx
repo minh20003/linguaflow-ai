@@ -2,12 +2,12 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import { register } from "@/lib/api";
-import { saveSession } from "@/lib/auth-session";
-import { mainLabel } from "@/lib/i18n";
-import { SUPPORTED_LANGUAGES } from "@/lib/constants";
+import Button from "@/shared/ui/Button";
+import Input from "@/shared/ui/Input";
+import { register } from "@/shared/lib/api";
+import { saveSession } from "@/shared/lib/auth-session";
+import { mainLabel } from "@/shared/lib/i18n";
+import { SUPPORTED_LANGUAGES } from "@/shared/lib/constants";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 

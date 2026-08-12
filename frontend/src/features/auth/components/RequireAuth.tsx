@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { restoreSession } from "@/lib/auth-session";
+import { restoreSession } from "@/shared/lib/auth-session";
 
 export default function RequireAuth({ children }: { children: ReactNode }) {
   const router = useRouter();
