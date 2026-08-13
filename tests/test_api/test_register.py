@@ -6,22 +6,47 @@ across all feature areas.
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
+
+_next_username = itertools.count()
+
+
+def register_body(**overrides) -> dict:
+    """A valid registration payload, with a unique username unless overridden.
+
+    Every field is supplied even when a test only cares about one of them: a
+    request rejected for a missing username would return 422 just like a
+    request rejected for a short password, and the test would pass while
+    measuring nothing.
+    """
+    body = {
+        "username": f"user{next(_next_username)}",
+        "email": "new@example.com",
+        "password": "a-good-password",
+    }
+    body.update(overrides)
+    return body
 
 
 @pytest.mark.asyncio
-async def test_registration_returns_a_token_that_authenticates(client):
+async def test_registration_returns_a_session_that_authenticates(client):
     """The client lands in the chat straight after registering, so it needs a session."""
     response = await client.post(
         "/api/v1/auth/register",
-        json={"email": "new@example.com", "password": "a-good-password", "preferred_language": "vi"},
+        json=register_body(email="new@example.com", preferred_language="vi"),
     )
 
     assert response.status_code == 201
-    token = response.json()["access_token"]
+    body = response.json()
+    # A refresh token is what makes the session survive the access token
+    # expiring, and revocable at logout.
+    assert body["refresh_token"]
+    assert body["user"]["email"] == "new@example.com"
 
     profile = await client.get(
-        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"}
     )
     assert profile.status_code == 200
     assert profile.json()["email"] == "new@example.com"
@@ -30,17 +55,17 @@ async def test_registration_returns_a_token_that_authenticates(client):
 
 
 @pytest.mark.asyncio
-async def test_registration_defaults_to_english(client):
+async def test_registration_defaults_to_vietnamese(client):
+    """The product is Vietnamese-first; an omitted preference means Vietnamese."""
     response = await client.post(
-        "/api/v1/auth/register",
-        json={"email": "default@example.com", "password": "a-good-password"},
+        "/api/v1/auth/register", json=register_body(email="default@example.com")
     )
     token = response.json()["access_token"]
 
     profile = await client.get(
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
     )
-    assert profile.json()["preferred_language"] == "en"
+    assert profile.json()["preferred_language"] == "vi"
 
 
 @pytest.mark.asyncio
@@ -48,11 +73,7 @@ async def test_registration_never_grants_a_role_from_the_request(client):
     """A client must not be able to make itself an admin."""
     response = await client.post(
         "/api/v1/auth/register",
-        json={
-            "email": "sneaky@example.com",
-            "password": "a-good-password",
-            "role": "admin",
-        },
+        json=register_body(email="sneaky@example.com", role="admin"),
     )
     token = response.json()["access_token"]
 
@@ -65,8 +86,7 @@ async def test_registration_never_grants_a_role_from_the_request(client):
 @pytest.mark.asyncio
 async def test_duplicate_email_is_rejected(client, test_user):
     response = await client.post(
-        "/api/v1/auth/register",
-        json={"email": test_user.email, "password": "a-good-password"},
+        "/api/v1/auth/register", json=register_body(email=test_user.email)
     )
 
     assert response.status_code == 409
@@ -76,14 +96,14 @@ async def test_duplicate_email_is_rejected(client, test_user):
 async def test_email_case_resolves_to_one_account(client):
     """Registering as Mixed@Case must not create an account login cannot reach."""
     created = await client.post(
-        "/api/v1/auth/register",
-        json={"email": "Mixed@Example.com", "password": "a-good-password"},
+        "/api/v1/auth/register", json=register_body(email="Mixed@Example.com")
     )
     assert created.status_code == 201
 
+    # A different username, so a 409 can only be about the email.
     duplicate = await client.post(
         "/api/v1/auth/register",
-        json={"email": "mixed@example.com", "password": "another-password"},
+        json=register_body(email="mixed@example.com", password="another-password"),
     )
     assert duplicate.status_code == 409
 
@@ -96,10 +116,16 @@ async def test_email_case_resolves_to_one_account(client):
 
 @pytest.mark.asyncio
 async def test_unsupported_language_is_rejected(client):
-    """`id` is offered by the frontend today and is not in the allowlist."""
+    """`preferred_language` is an allowlist, not a free-text field.
+
+    The value reaches the translation prompt, so anything outside the list is
+    refused at the edge rather than interpolated and hoped for (ADR-12). `tl`
+    is a real ISO 639-1 code the product does not offer, which is a sharper
+    test than a made-up one.
+    """
     response = await client.post(
         "/api/v1/auth/register",
-        json={"email": "x@example.com", "password": "a-good-password", "preferred_language": "id"},
+        json=register_body(email="x@example.com", preferred_language="tl"),
     )
 
     assert response.status_code == 422
@@ -108,8 +134,18 @@ async def test_unsupported_language_is_rejected(client):
 @pytest.mark.asyncio
 async def test_short_password_is_rejected(client):
     response = await client.post(
+        "/api/v1/auth/register", json=register_body(email="x@example.com", password="short")
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_username_is_rejected(client):
+    """Usernames are restricted to letters, numbers, hyphens and underscores."""
+    response = await client.post(
         "/api/v1/auth/register",
-        json={"email": "x@example.com", "password": "short"},
+        json=register_body(username="not a username!", email="y@example.com"),
     )
 
     assert response.status_code == 422

@@ -5,7 +5,7 @@ import {
   SUPPORTED_LANGUAGES,
   getLanguage,
   type LanguageCode,
-} from "@/lib/constants";
+} from "@/shared/lib/constants";
 import styles from "./LanguageSelector.module.css";
 
 interface LanguageSelectorProps {

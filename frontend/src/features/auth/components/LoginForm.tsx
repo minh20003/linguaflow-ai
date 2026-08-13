@@ -3,11 +3,11 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import { login } from "@/lib/api";
-import { setSession } from "@/lib/auth";
-import { mainLabel } from "@/lib/i18n";
+import Button from "@/shared/ui/Button";
+import Input from "@/shared/ui/Input";
+import { login } from "@/shared/lib/api";
+import { saveSession } from "@/shared/lib/auth-session";
+import { mainLabel } from "@/shared/lib/i18n";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;
@@ -36,9 +36,9 @@ export default function LoginForm() {
     if (!validate()) return;
     setLoading(true);
     try {
-      const result = await login(email, password);
-      setSession(result.access_token, result.user);
-      router.push("/chat");
+      const result = await login(email, password, remember);
+      saveSession(result, remember);
+      router.replace("/chat");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Chưa thể đăng nhập. Bạn vui lòng thử lại nhé.");
     } finally {
@@ -49,8 +49,6 @@ export default function LoginForm() {
   return (
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <div className={styles.welcome}>
-        <span className={styles.welcomeMark} aria-hidden="true">◌</span>
-        <p className={styles.eyebrow}>Rất vui được gặp lại bạn</p>
         <h1 className={styles.loginTitle}>Chào mừng trở lại</h1>
         <p className={styles.loginDescription}>Đăng nhập để tiếp tục những cuộc trò chuyện của bạn.</p>
       </div>
@@ -58,7 +56,7 @@ export default function LoginForm() {
       {error && <div className={styles.formError} role="alert"><span className={styles.errorMark} aria-hidden="true">!</span>{error}</div>}
 
       <div className={styles.fields}>
-        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder="ban@vidu.com" label={mainLabel("email")} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => ({ ...previous, email: undefined })); }} error={errors.email} />
+        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder="linguachat@vidu.com" label={mainLabel("email")} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => ({ ...previous, email: undefined })); }} error={errors.email} />
         <Input id="login-password" type="password" autoComplete="current-password" placeholder="Nhập mật khẩu của bạn" label={mainLabel("password")} showText={mainLabel("show")} hideText={mainLabel("hide")} value={password} onChange={(event) => { setPassword(event.target.value); setErrors((previous) => ({ ...previous, password: undefined })); }} error={errors.password} />
       </div>
 
@@ -67,7 +65,7 @@ export default function LoginForm() {
           <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
           <span>{mainLabel("remember")}</span>
         </label>
-        <a href="#" className={styles.quiet}>{mainLabel("forgot")}</a>
+        <Link href="/forgot-password" className={styles.quiet}>{mainLabel("forgot")}</Link>
       </div>
 
       <Button type="submit" size="lg" fullWidth loading={loading} className={styles.loginButton}>

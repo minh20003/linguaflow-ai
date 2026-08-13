@@ -1,5 +1,7 @@
 """Security utilities: password hashing and JWT handling."""
 
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 
 import bcrypt
@@ -19,6 +21,16 @@ def get_password_hash(password: str) -> str:
     salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
     return hashed.decode("utf-8")
+
+
+def create_refresh_token() -> str:
+    """Create a high-entropy opaque token for a revocable session."""
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(token: str) -> str:
+    """Hash a refresh token before database storage."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_access_token(

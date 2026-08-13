@@ -1,7 +1,7 @@
 import React from "react";
-import AuthCardHead from "@/components/auth/AuthCardHead";
-import AuthRail from "@/components/auth/AuthRail";
-import { LanguageProvider } from "@/components/auth/LanguageContext";
+import AuthCardHead from "@/features/auth/components/AuthCardHead";
+import AuthRail from "@/features/auth/components/AuthRail";
+import { LanguageProvider } from "@/features/auth/components/LanguageContext";
 import styles from "./auth.module.css";
 
 /**

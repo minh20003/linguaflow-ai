@@ -2,11 +2,12 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import { register } from "@/lib/api";
-import { setSession } from "@/lib/auth";
-import { altLabel, mainLabel } from "@/lib/i18n";
+import Button from "@/shared/ui/Button";
+import Input from "@/shared/ui/Input";
+import { register } from "@/shared/lib/api";
+import { saveSession } from "@/shared/lib/auth-session";
+import { mainLabel } from "@/shared/lib/i18n";
+import { SUPPORTED_LANGUAGES } from "@/shared/lib/constants";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
@@ -38,9 +39,7 @@ function getPasswordStrength(pw: string): Strength | null {
 export default function RegisterForm() {
   /* Ngôn ngữ lấy từ dải bên trái — nó chính là preferred_language, nên form
      không dựng thêm bảng chọn thứ hai. */
-  const { lang } = useLanguage();
-  const createAlt = altLabel(lang, "createAccount");
-  const termsAlt = altLabel(lang, "terms");
+  const { lang, setLang } = useLanguage();
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -103,7 +102,7 @@ export default function RegisterForm() {
         password,
         preferred_language: lang,
       });
-      setSession(result.access_token, result.user);
+      saveSession(result, true);
       window.location.href = "/chat";
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Không tạo được tài khoản.");
@@ -139,8 +138,6 @@ export default function RegisterForm() {
           autoComplete="username"
           placeholder="thuan"
           label={mainLabel("username")}
-          altLabel={altLabel(lang, "username")}
-          altLang={lang}
           value={username}
           required
           minLength={MIN_USERNAME}
@@ -158,8 +155,6 @@ export default function RegisterForm() {
           autoComplete="email"
           placeholder="ban@vidu.com"
           label={mainLabel("email")}
-          altLabel={altLabel(lang, "email")}
-          altLang={lang}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
@@ -174,8 +169,6 @@ export default function RegisterForm() {
           autoComplete="new-password"
           placeholder="••••••••••"
           label={mainLabel("password")}
-          altLabel={altLabel(lang, "password")}
-          altLang={lang}
           showText={mainLabel("show")}
           hideText={mainLabel("hide")}
           value={password}
@@ -203,8 +196,6 @@ export default function RegisterForm() {
           autoComplete="new-password"
           placeholder="••••••••••"
           label={mainLabel("passwordConfirm")}
-          altLabel={altLabel(lang, "passwordConfirm")}
-          altLang={lang}
           showText={mainLabel("show")}
           hideText={mainLabel("hide")}
           value={confirmPassword}
@@ -214,6 +205,13 @@ export default function RegisterForm() {
           }}
           error={errors.confirmPassword}
         />
+      </div>
+
+      <div className={styles.languageField}>
+        <label htmlFor="register-language">Ngôn ngữ</label>
+        <select id="register-language" value={lang} onChange={(event) => setLang(event.target.value as typeof lang)}>
+          {SUPPORTED_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.name}</option>)}
+        </select>
       </div>
 
       <div className={styles.termsBlock}>
@@ -231,13 +229,6 @@ export default function RegisterForm() {
           <span>
             Tôi đồng ý với <a href="#">{mainLabel("terms")}</a> và{" "}
             <a href="#">Chính sách riêng tư</a>
-            {termsAlt && (
-              <span
-                className={styles.checkAlt}
-                lang={lang}
-                aria-hidden="true"
-              >{` · ${termsAlt}`}</span>
-            )}
           </span>
         </label>
         {errors.agree && (
@@ -255,17 +246,7 @@ export default function RegisterForm() {
       </div>
 
       <Button type="submit" size="lg" fullWidth loading={loading}>
-        <span className={styles.actionMain}>{mainLabel("createAccount")}</span>
-        {createAlt && (
-          <>
-            <span className={styles.actionSep} aria-hidden="true">
-              ·
-            </span>
-            <span className={styles.actionAlt} lang={lang} aria-hidden="true">
-              {createAlt}
-            </span>
-          </>
-        )}
+        <span className={styles.actionMain}>Tạo tài khoản</span>
       </Button>
 
       <p className={styles.footer}>

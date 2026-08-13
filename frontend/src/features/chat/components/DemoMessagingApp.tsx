@@ -18,7 +18,7 @@ import {
   Search,
   Sidebar,
 } from "@chatscope/chat-ui-kit-react";
-import { getUser, type AuthUser } from "@/lib/auth";
+import { getUser, type AuthUser } from "@/shared/lib/auth";
 import {
   createConversation,
   getMessages,
@@ -26,10 +26,10 @@ import {
   lookupUserByEmail,
   type Conversation as ApiConversation,
   type HistoryMessage,
-} from "@/lib/chat-api";
-import { languageLabel } from "@/lib/constants";
-import { useWebSocket, type RealtimeMessage, type TranslationCompleted } from "@/lib/use-websocket";
-import styles from "./MessagingApp.module.css";
+} from "@/shared/lib/chat-api";
+import { languageLabel } from "@/shared/lib/constants";
+import { useWebSocket, type RealtimeMessage, type TranslationCompleted } from "@/shared/lib/use-websocket";
+import styles from "./DemoMessagingApp.module.css";
 
 /**
  * Editing, deleting, reactions and attachments are UI-only today — there is no

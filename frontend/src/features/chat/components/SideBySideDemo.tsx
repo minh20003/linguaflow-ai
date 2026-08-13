@@ -2,11 +2,11 @@
 
 import { useCallback, useState } from "react";
 
-import { login } from "@/lib/api";
-import type { AuthUser } from "@/lib/auth";
-import { createConversation, listConversations, lookupUserByEmail } from "@/lib/chat-api";
-import { languageLabel } from "@/lib/constants";
-import MessagingApp from "./MessagingApp";
+import { login } from "@/shared/lib/api";
+import type { AuthUser } from "@/shared/lib/auth";
+import { createConversation, listConversations, lookupUserByEmail } from "@/shared/lib/chat-api";
+import { languageLabel } from "@/shared/lib/constants";
+import DemoMessagingApp from "./DemoMessagingApp";
 import styles from "./SideBySideDemo.module.css";
 
 /**
@@ -114,7 +114,7 @@ export default function SideBySideDemo() {
               <span>đọc {languageLabel(session.user.preferred_language)}</span>
             </div>
             <div className={styles.paneBody}>
-              <MessagingApp session={session} compact />
+              <DemoMessagingApp session={session} compact />
             </div>
           </section>
         ))}

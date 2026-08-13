@@ -82,11 +82,15 @@ class Settings(BaseSettings):
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
+    upload_dir: str = "./data/uploads"
+    max_upload_size_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
 
     # JWT Authentication
     jwt_secret: str = ""  # Required: set in environment
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = Field(default=1440, ge=1, le=10080)  # 24h default, max 7 days
+    refresh_expire_days: int = Field(default=30, ge=1, le=90)
+    password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
 
     @field_validator("jwt_secret")
     @classmethod

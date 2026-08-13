@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
-import SideBySideDemo from "@/components/chat/SideBySideDemo";
+import SideBySideDemo from "@/features/chat/components/SideBySideDemo";
 
 export const metadata: Metadata = {
   title: "Demo song song — LinguaChat",

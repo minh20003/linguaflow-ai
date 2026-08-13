@@ -82,6 +82,17 @@ class MessageResponse(BaseModel):
     created_at: datetime
 
 
+class AttachmentResponse(BaseModel):
+    """Metadata returned after an authorized conversation file upload."""
+
+    id: str
+    conversation_id: str
+    filename: str
+    content_type: str
+    size: int
+    download_url: str
+
+
 class RealtimeMessage(BaseModel):
     """Canonical message data included in WebSocket delivery events."""
 

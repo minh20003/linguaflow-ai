@@ -5,32 +5,9 @@
 }
 
 .welcome {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  padding-inline-start: 68px;
-  min-height: 54px;
-}
-
-.welcomeMark {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-block-start: 1px;
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  border: 1px solid var(--rule-strong);
-  border-radius: 14px;
-  background: #e8f0ff;
-  color: var(--indigo);
-}
-
-.welcomeMark {
-  font-family: var(--font-mono);
-  font-size: 24px;
-  line-height: 1;
 }
 
 .eyebrow {
@@ -46,7 +23,7 @@
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.02em;
-  color: var(--ink);
+  color: var(--indigo);
 }
 
 .loginDescription {
@@ -176,10 +153,9 @@
 /* ─── Nhãn nút song ngữ (§7.1) ───────────────────────────── */
 
 .actionMain {
-  font-family: var(--font-mono);
   font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
 }
 
 .actionSep {
@@ -208,15 +184,6 @@
 }
 
 @media (max-width: 559px) {
-  .welcome {
-    padding-inline-start: 60px;
-  }
-
-  .welcomeMark {
-    width: 46px;
-    height: 46px;
-  }
-
 }
 
 /* ─── Độ mạnh mật khẩu ───────────────────────────────────── */
@@ -289,3 +256,9 @@
   cursor: pointer;
   flex-shrink: 0;
 }
+
+.languageField { display: grid; gap: var(--s-2); }
+.languageField label { color: var(--ink-secondary); font-size: var(--fs-label); font-weight: 500; }
+.languageField select { width: 100%; min-height: 42px; padding: 0 var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-1); color: var(--ink); background: var(--surface-insert); font: inherit; }
+.languageField select:focus-visible { border-color: var(--indigo); outline: 2px solid var(--indigo-weak); outline-offset: 1px; }
+.languageField span { color: var(--ink-muted); font-size: var(--fs-micro); }
