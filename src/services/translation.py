@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol
 
@@ -32,7 +34,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.graph import build_translation_graph
 from src.agents.observability import build_runnable_config
 from src.database import get_async_session_maker
-from src.database.models import ConversationMember, Message, TranslationResult, User
+from src.database.models import (
+    ConversationMember,
+    Message,
+    TranslationAttempt,
+    TranslationResult,
+    User,
+)
 from src.schemas.chat import TranslationCompletedEvent
 from src.services.context_provider import DatabaseContextProvider
 
@@ -184,9 +192,32 @@ async def _translate_into(
 
     settings = get_settings()
 
+    # Minted before the run so the same value identifies this attempt in the
+    # database and in the Langfuse trace. A trace found in the UI leads to a row,
+    # and a row leads back to its trace, without depending on SDK internals.
+    attempt_id = str(uuid.uuid4())
+    started = time.perf_counter()
+
     # Each language gets its own session: AsyncSession is not safe for
     # concurrent use, and these run under asyncio.gather.
     async with session_factory() as session:
+
+        async def record(outcome: str, *, result: Mapping[str, Any] | None = None,
+                         translation_id: str | None = None) -> None:
+            """Log this attempt, whatever became of it."""
+            await record_attempt(
+                session,
+                attempt_id=attempt_id,
+                snapshot=snapshot,
+                target_language=target_language,
+                outcome=outcome,
+                telemetry=(result or {}).get("telemetry") or {},
+                source_language=(result or {}).get("source_language") or "",
+                total_ms=int((time.perf_counter() - started) * 1000),
+                translation_id=translation_id,
+                settings=settings,
+            )
+
         graph = graph_factory(session, snapshot["message_id"])
         state = {
             "conversation_id": snapshot["conversation_id"],
@@ -205,6 +236,11 @@ async def _translate_into(
                         conversation_id=snapshot["conversation_id"],
                         message_id=snapshot["message_id"],
                         target_language=target_language,
+                        attempt_id=attempt_id,
+                        # One of the three keys Langfuse promotes to a
+                        # first-class attribute; as ordinary metadata the
+                        # conversation id cannot group traces in the UI.
+                        langfuse_session_id=snapshot["conversation_id"],
                     ),
                 ),
                 timeout=settings.translation_timeout_seconds,
@@ -215,9 +251,11 @@ async def _translate_into(
                 target_language,
                 settings.translation_timeout_seconds,
             )
+            await record("timeout")
             return
         except Exception as exc:
             logger.warning("Translation into %s failed: %s", target_language, exc)
+            await record("error")
             return
 
         detected_source = result.get("source_language") or snapshot["source_language"]
@@ -227,10 +265,15 @@ async def _translate_into(
         # they have the original (docs/CONTRACT.md section 4.3).
         if detected_source == target_language:
             await _store_detected_source(session, snapshot["message_id"], detected_source)
+            await record("passthrough", result=result)
             return
 
         translated_text = (result.get("translated_text") or "").strip()
         if not translated_text:
+            # Reached only if the graph returned nothing at all, which its own
+            # fallback path is supposed to prevent. Silent until now.
+            logger.warning("Translation into %s produced no text", target_language)
+            await record("empty", result=result)
             return
 
         await _store_detected_source(session, snapshot["message_id"], detected_source)
@@ -246,6 +289,11 @@ async def _translate_into(
         if translation is None:
             return
 
+        # Built before the attempt is recorded, and deliberately so. Recording
+        # rolls back on failure, and a rollback expires every instance in the
+        # session — reading `translation.translated_text` afterwards would go
+        # back to the database from a context that cannot await, and cost the
+        # recipient a translation that had already been committed.
         event = TranslationCompletedEvent(
             message_id=snapshot["message_id"],
             conversation_id=snapshot["conversation_id"],
@@ -258,12 +306,81 @@ async def _translate_into(
             is_fallback=translation.is_fallback,
         )
 
+        await record(
+            str(result.get("telemetry", {}).get("outcome") or "llm"),
+            result=result,
+            translation_id=event.translation_id,
+        )
+
     try:
         await publisher.send_to_users(user_ids, event.model_dump(mode="json"))
     except Exception as exc:
         # The translation is persisted; an undelivered event is recovered from
         # message history on reconnect.
         logger.warning("Publishing translation into %s failed: %s", target_language, exc)
+
+
+async def record_attempt(
+    session: AsyncSession,
+    *,
+    attempt_id: str,
+    snapshot: Mapping[str, Any],
+    target_language: str,
+    outcome: str,
+    telemetry: Mapping[str, Any],
+    source_language: str,
+    total_ms: int,
+    translation_id: str | None,
+    settings: Any,
+) -> None:
+    """Write one row describing how this translation attempt ended.
+
+    Called at every exit of `_translate_into`, including the four that produce
+    no translation at all. Those four are the reason the table exists: a
+    fallback rate computed only over attempts that succeeded is not a rate.
+
+    Failures here are logged and swallowed. Measurement must never be able to
+    fail a translation, and a message already delivered must not be held up by
+    a bookkeeping error (NFR-02).
+    """
+    try:
+        # `source_language` on the result is the declared value passed straight
+        # through when detection was skipped or failed. Recording that as
+        # "detected" would make the two columns agree by construction and hide
+        # exactly the disagreements ADR-11's second tier exists to catch.
+        detect_method = str(telemetry.get("detect_method") or "")
+        detected = source_language if detect_method in {"langdetect", "llm"} else None
+
+        session.add(
+            TranslationAttempt(
+                id=attempt_id,
+                message_id=snapshot["message_id"],
+                target_language=target_language,
+                source_language_declared=snapshot["source_language"],
+                source_language_detected=detected,
+                outcome=outcome,
+                provider=settings.llm_provider,
+                model_configured=settings.llm_model,
+                model_served=str(telemetry.get("model_served") or ""),
+                detect_method=detect_method,
+                llm_calls=int(telemetry.get("llm_calls") or 0),
+                input_tokens=int(telemetry.get("input_tokens") or 0),
+                output_tokens=int(telemetry.get("output_tokens") or 0),
+                finish_reason=str(telemetry.get("finish_reason") or ""),
+                detect_ms=int(telemetry.get("detect_ms") or 0),
+                context_ms=int(telemetry.get("context_ms") or 0),
+                translate_ms=int(telemetry.get("translate_ms") or 0),
+                fallback_ms=int(telemetry.get("fallback_ms") or 0),
+                total_ms=total_ms,
+                context_lines=int(telemetry.get("context_lines") or 0),
+                fallback_reason=str(telemetry.get("fallback_reason") or ""),
+                translation_id=translation_id,
+            )
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        logger.warning("Recording the %s attempt failed: %s", outcome, exc)
 
 
 async def _store_detected_source(
