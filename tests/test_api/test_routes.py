@@ -1,11 +1,8 @@
-"""Tests for application-level routes that belong to no feature."""
-
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_health_endpoint_reports_ok(client):
-    """Verify that the health check endpoint returns 200 and ok status."""
+async def test_health(client):
     response = await client.get("/health")
     assert response.status_code == 200
     data = response.json()
@@ -13,8 +10,12 @@ async def test_health_endpoint_reports_ok(client):
 
 
 @pytest.mark.asyncio
-async def test_legacy_chat_endpoint_is_gone(client):
-    """The template `/chat` and `/status` endpoints were removed with the
-    template agent they served (docs/CONTRACT.md section 3.3)."""
-    assert (await client.post("/api/v1/chat", json={"message": "hi"})).status_code == 404
-    assert (await client.get("/api/v1/status")).status_code == 404
+async def test_chat_empty_message(client):
+    response = await client.post("/api/v1/chat", json={"message": ""})
+    assert response.status_code == 422  # Validation error
+
+
+@pytest.mark.asyncio
+async def test_agent_status(client):
+    response = await client.get("/api/v1/status")
+    assert response.status_code == 200

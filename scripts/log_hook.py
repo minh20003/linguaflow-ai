@@ -180,10 +180,8 @@ def main():
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
-    # Codex treats exit code 0 with no output as hook success. Other supported
-    # tools expect a JSON acknowledgement.
-    if tool != "codex":
-        print(json.dumps({"status": "logged"}))
+    # Output valid JSON (required by some tools like Gemini)
+    print(json.dumps({"status": "logged"}))
 
 
 if __name__ == "__main__":
