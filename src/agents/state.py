@@ -40,3 +40,10 @@ class AgentState(TypedDict, total=False):
     latency_ms: int
 
     error: str
+
+    # Measurement only. The keys inside are NOT part of the contract: they are
+    # written by the nodes, read by `record_attempt`, and free to change with
+    # what the team wants to measure. One field rather than eight keeps a new
+    # metric from being a contract change every time (docs/CONTRACT.md
+    # section 2). No client may depend on anything in here.
+    telemetry: dict

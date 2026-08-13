@@ -5,6 +5,8 @@ matters because free tiers differ sharply in rate limits, so a provider that
 throttles mid-demo has to be swapped quickly.
 """
 
+from dataclasses import dataclass
+
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.config import Settings, get_settings
@@ -70,6 +72,58 @@ def extract_text(response: object) -> str:
             return "".join(parts).strip()
 
     return str(content).strip()
+
+
+@dataclass(frozen=True, slots=True)
+class LlmCallInfo:
+    """What the provider reported about a call it just served.
+
+    Every field defaults to empty. Callers get a fully-formed object whether the
+    provider reported anything or not, so no reader has to test for None.
+    """
+
+    model_served: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    finish_reason: str = ""
+    request_id: str = ""
+
+
+def extract_call_info(response: object) -> LlmCallInfo:
+    """Read the accounting metadata off a chat-model response.
+
+    Separate from :func:`extract_text` rather than folded into it. That function
+    is called by the nodes and by the evaluation judge, and returns a plain
+    string on which both already depend; measurement must not change its shape.
+
+    ``model_served`` is the model the provider says it used, which is not always
+    the model that was requested — aliases resolve to a dated version, and
+    providers reroute under load. Reading it from the client instead, as the
+    translate node used to, records an intention rather than a fact.
+
+    ``finish_reason`` earns its place: a value of ``"length"`` explains a whole
+    class of fallback that currently looks like a model producing rambling
+    output, when the output was really cut off mid-sentence by ``LLM_MAX_TOKENS``.
+
+    Returns:
+        The metadata found. An empty ``LlmCallInfo`` when the response carries
+        none — including for the lightweight doubles used across the test suite,
+        which define only ``content``. Never raises: telemetry must not be able
+        to break a translation (NFR-02).
+    """
+    try:
+        usage = getattr(response, "usage_metadata", None) or {}
+        metadata = getattr(response, "response_metadata", None) or {}
+
+        return LlmCallInfo(
+            model_served=str(metadata.get("model_name") or metadata.get("model") or ""),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            finish_reason=str(metadata.get("finish_reason") or ""),
+            request_id=str(getattr(response, "id", "") or ""),
+        )
+    except Exception:  # noqa: BLE001 - measurement must never break a translation
+        return LlmCallInfo()
 
 
 def _build_llm(

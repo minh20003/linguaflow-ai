@@ -39,7 +39,7 @@ from src.agents.prompts import (
 )
 from src.agents.state import AgentState
 from src.services.fallback_translator import FALLBACK_MODEL_NAME, translate_with_secondary_provider
-from src.services.llm import extract_text, get_llm
+from src.services.llm import LlmCallInfo, extract_call_info, extract_text, get_llm
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,31 @@ _MAX_TRANSLATION_FLOOR = 200
 _DETECT_SAMPLE_CHARS = 500
 
 
+def _telemetry(state: AgentState, **measurements: object) -> dict:
+    """Build a state update that adds measurements to the telemetry dict.
+
+    ``telemetry`` has no LangGraph reducer, so a node returning it replaces the
+    whole dict. Merging the previous contents here keeps each node free to
+    report only what it measured, matching how every other field in the state
+    already behaves.
+    """
+    return {"telemetry": {**state.get("telemetry", {}), **measurements}}
+
+
+def _running_total(state: AgentState, key: str, amount: int) -> int:
+    """Add to a telemetry counter that spans several nodes in one run.
+
+    Detection and translation are two separate LLM calls, and the cost of the
+    first is invisible unless its tokens are added to the second's.
+    """
+    return state.get("telemetry", {}).get(key, 0) + amount
+
+
+def _elapsed_ms(started: float) -> int:
+    """Milliseconds since a ``time.perf_counter()`` reading."""
+    return int((time.perf_counter() - started) * 1000)
+
+
 def _detect_local(text: str) -> str | None:
     """Detect the language of an incoming message (~2ms, no API call).
 
@@ -72,11 +97,12 @@ def _detect_local(text: str) -> str | None:
     return detect_language_code(text)
 
 
-async def _detect_with_llm(text: str) -> tuple[str | None, int]:
+async def _detect_with_llm(text: str) -> tuple[str | None, int, LlmCallInfo]:
     """Detect the language with the LLM. Slower but reliable on short text.
 
-    Returns the language code (None on failure) and the elapsed milliseconds, so
-    the caller can account for this call in the reported latency.
+    Returns the language code (None on failure), the elapsed milliseconds and
+    what the provider reported about the call, so the caller can account for
+    both the latency and the tokens this second round trip costs.
     """
     started = time.perf_counter()
     try:
@@ -87,15 +113,16 @@ async def _detect_with_llm(text: str) -> tuple[str | None, int]:
         detected = extract_text(response).lower()
     except Exception as exc:
         logger.warning("LLM language detection failed: %s", exc)
-        return None, int((time.perf_counter() - started) * 1000)
+        return None, _elapsed_ms(started), LlmCallInfo()
 
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    elapsed_ms = _elapsed_ms(started)
+    call_info = extract_call_info(response)
 
     if not is_supported_language_code(detected):
         logger.warning("LLM language detection returned an invalid code: %r", detected)
-        return None, elapsed_ms
+        return None, elapsed_ms, call_info
 
-    return detected, elapsed_ms
+    return detected, elapsed_ms, call_info
 
 
 async def detect_language(state: AgentState) -> dict:
@@ -116,18 +143,33 @@ async def detect_language(state: AgentState) -> dict:
     """
     original_text = (state.get("original_text") or "").strip()
     provisional = state.get("source_language", "")
+    started = time.perf_counter()
 
     if not original_text:
-        return {"error": "original_text is empty, cannot detect language"}
+        return {
+            "error": "original_text is empty, cannot detect language",
+            **_telemetry(state, fallback_reason="empty_input"),
+        }
 
     if not _HAS_LETTER.search(original_text) or len(original_text) < _MIN_DETECT_CHARS:
-        return {"source_language": provisional}
+        return {
+            "source_language": provisional,
+            **_telemetry(state, detect_method="skipped", detect_ms=_elapsed_ms(started)),
+        }
 
     local = _detect_local(original_text)
 
     # Fast path: langdetect agrees with the language the sender configured
     if local and local == provisional:
-        return {"source_language": local}
+        return {
+            "source_language": local,
+            **_telemetry(
+                state,
+                detect_method="langdetect",
+                langdetect_agreed=True,
+                detect_ms=_elapsed_ms(started),
+            ),
+        }
 
     if local:
         logger.info(
@@ -136,14 +178,27 @@ async def detect_language(state: AgentState) -> dict:
             provisional,
         )
 
-    detected, elapsed_ms = await _detect_with_llm(original_text)
+    detected, elapsed_ms, call_info = await _detect_with_llm(original_text)
+    measurements = _telemetry(
+        state,
+        detect_method="llm" if detected else "llm_failed",
+        # False on disagreement, None when langdetect itself returned nothing —
+        # the two are different failures and the ADR-11 hit rate needs to tell
+        # them apart.
+        langdetect_agreed=False if local else None,
+        detect_ms=_elapsed_ms(started),
+        llm_calls=_running_total(state, "llm_calls", 1),
+        input_tokens=_running_total(state, "input_tokens", call_info.input_tokens),
+        output_tokens=_running_total(state, "output_tokens", call_info.output_tokens),
+    )
+
     if detected:
-        return {"source_language": detected, "latency_ms": elapsed_ms}
+        return {"source_language": detected, "latency_ms": elapsed_ms, **measurements}
 
     # The LLM failed too. Keep the provisional value rather than langdetect's
     # answer: reaching this point means the two disagreed, and CONTRACT section
     # 4.3 forbids using langdetect's result in that case.
-    return {"source_language": provisional, "latency_ms": elapsed_ms}
+    return {"source_language": provisional, "latency_ms": elapsed_ms, **measurements}
 
 
 def make_build_context(
@@ -167,17 +222,34 @@ def make_build_context(
     async def build_context(state: AgentState) -> dict:
         """Load recent conversation history, degrading to none on failure."""
         conversation_id = state.get("conversation_id", "")
+        started = time.perf_counter()
+
+        def no_context() -> dict:
+            """Continue with no history — quality drops, the message still goes."""
+            return {
+                "context_messages": [],
+                **_telemetry(state, context_ms=_elapsed_ms(started), context_lines=0),
+            }
+
         if not conversation_id:
-            return {"context_messages": []}
+            return no_context()
 
         try:
             messages = await provider.get_recent_messages(conversation_id, limit)
         except Exception as exc:
             # Missing context degrades translation quality but must not block it
             logger.warning("build_context failed: %s", exc)
-            return {"context_messages": []}
+            return no_context()
 
-        return {"context_messages": list(messages)}
+        context_messages = list(messages)
+        return {
+            "context_messages": context_messages,
+            **_telemetry(
+                state,
+                context_ms=_elapsed_ms(started),
+                context_lines=len(context_messages),
+            ),
+        }
 
     return build_context
 
@@ -188,16 +260,25 @@ async def translate(state: AgentState) -> dict:
     target_language = state.get("target_language", "")
 
     if not original_text:
-        return {"error": "original_text is empty, nothing to translate"}
+        return {
+            "error": "original_text is empty, nothing to translate",
+            **_telemetry(state, fallback_reason="empty_input"),
+        }
     if not target_language:
-        return {"error": "target_language was not provided"}
+        return {
+            "error": "target_language was not provided",
+            **_telemetry(state, fallback_reason="bad_target_language"),
+        }
 
     # target_language is interpolated into the *system* prompt below, and it
     # originates from a user-editable profile field. Anything that is not a bare
     # ISO code could append arbitrary instructions there (ADR-12).
     if not is_supported_language_code(target_language):
         logger.warning("Rejected malformed target_language: %r", target_language)
-        return {"error": "target_language is not a valid ISO 639-1 code"}
+        return {
+            "error": "target_language is not a valid ISO 639-1 code",
+            **_telemetry(state, fallback_reason="bad_target_language"),
+        }
 
     if is_input_too_long(original_text):
         # Not truncated on purpose: half a translated message is worse than none,
@@ -207,7 +288,10 @@ async def translate(state: AgentState) -> dict:
             len(original_text),
             MAX_INPUT_CHARS,
         )
-        return {"error": "original_text exceeds the guardrail length limit"}
+        return {
+            "error": "original_text exceeds the guardrail length limit",
+            **_telemetry(state, fallback_reason="oversized_input"),
+        }
 
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(target_language=target_language)
     user_prompt = TRANSLATE_USER_PROMPT.format(
@@ -222,7 +306,7 @@ async def translate(state: AgentState) -> dict:
 
     def total_latency_ms() -> int:
         """Elapsed time for this call plus whatever detection already spent."""
-        return detect_ms + int((time.perf_counter() - started) * 1000)
+        return detect_ms + _elapsed_ms(started)
 
     try:
         llm = get_llm()
@@ -237,14 +321,33 @@ async def translate(state: AgentState) -> dict:
         return {
             "error": f"LLM call failed: {type(exc).__name__}",
             "latency_ms": total_latency_ms(),
+            **_telemetry(
+                state,
+                translate_ms=_elapsed_ms(started),
+                llm_calls=_running_total(state, "llm_calls", 1),
+                fallback_reason="llm_error",
+            ),
         }
 
+    call_info = extract_call_info(response)
+    # What the client was configured to ask for. `model_served` in the telemetry
+    # is what the provider says it actually ran, and the two can differ.
     model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "")
 
     return {
         "translated_text": extract_text(response),
         "model": str(model_name),
         "latency_ms": total_latency_ms(),
+        **_telemetry(
+            state,
+            translate_ms=_elapsed_ms(started),
+            llm_calls=_running_total(state, "llm_calls", 1),
+            model_served=call_info.model_served,
+            finish_reason=call_info.finish_reason,
+            request_id=call_info.request_id,
+            input_tokens=_running_total(state, "input_tokens", call_info.input_tokens),
+            output_tokens=_running_total(state, "output_tokens", call_info.output_tokens),
+        ),
     }
 
 
@@ -257,13 +360,28 @@ async def validate_output(state: AgentState) -> dict:
     original_text = (state.get("original_text") or "").strip()
     translated_text = (state.get("translated_text") or "").strip()
 
-    def fallback(reason: str) -> dict:
-        """Build the state update that returns the original text unchanged."""
+    def fallback(reason: str, code: str = "") -> dict:
+        """Build the state update that returns the original text unchanged.
+
+        Args:
+            reason: Prose for the log, written for whoever reads it.
+            code: Machine-readable cause for the telemetry. Empty means the
+                cause was already recorded by the node that failed, which knows
+                more about it than this one does.
+        """
         logger.info("Falling back to the original text: %s", reason)
+        recorded = state.get("telemetry", {}).get("fallback_reason", "")
         update = {
             "translated_text": original_text,
             "is_valid": False,
             "is_fallback": True,
+            # Provisional: fallback_translate raises this to "secondary" if the
+            # secondary provider succeeds, and leaves it here if it does not.
+            **_telemetry(
+                state,
+                outcome="original",
+                fallback_reason=code or recorded or "llm_error",
+            ),
         }
         # ``error`` carries only reasons the request could not be processed —
         # an LLM outage, or input the guardrails rejected outright. A healthy
@@ -278,7 +396,7 @@ async def validate_output(state: AgentState) -> dict:
     if state.get("error"):
         return fallback(state["error"])
     if not translated_text:
-        return fallback("the LLM returned empty content")
+        return fallback("the LLM returned empty content", "empty_output")
 
     max_length = max(
         len(original_text) * _MAX_TRANSLATION_RATIO, _MAX_TRANSLATION_FLOOR
@@ -286,7 +404,8 @@ async def validate_output(state: AgentState) -> dict:
     if len(translated_text) > max_length:
         return fallback(
             f"translation is {len(translated_text)} chars, over the "
-            f"{max_length} limit — the model likely explained instead of translating"
+            f"{max_length} limit — the model likely explained instead of translating",
+            "too_long",
         )
 
     # A refusal, an untranslated echo, and the model answering instead of
@@ -298,10 +417,15 @@ async def validate_output(state: AgentState) -> dict:
     if is_untranslated_output(translated_text, source_language, target_language):
         return fallback(
             f"translation still reads as {source_language}, not {target_language} — "
-            "the model likely refused, echoed the source, or answered instead"
+            "the model likely refused, echoed the source, or answered instead",
+            "wrong_language",
         )
 
-    return {"is_valid": True, "is_fallback": False}
+    return {
+        "is_valid": True,
+        "is_fallback": False,
+        **_telemetry(state, outcome="llm"),
+    }
 
 
 async def fallback_translate(state: AgentState) -> dict:
@@ -337,22 +461,34 @@ async def fallback_translate(state: AgentState) -> dict:
         # Empty when detection itself failed; the provider then detects its own
         source_language=source_language,
     )
-    elapsed_ms += int((time.perf_counter() - started) * 1000)
+    elapsed_ms += _elapsed_ms(started)
 
     if not translated:
-        return {"latency_ms": elapsed_ms}
+        return {
+            "latency_ms": elapsed_ms,
+            **_telemetry(state, fallback_ms=_elapsed_ms(started)),
+        }
 
     # This output reaches the recipient without passing back through
     # validate_output, so it is verified here or not at all.
     if is_untranslated_output(translated, source_language, target_language):
         logger.warning("Discarded secondary translation: still reads as the source")
-        return {"latency_ms": elapsed_ms}
+        return {
+            "latency_ms": elapsed_ms,
+            # Distinct from the provider simply returning nothing: this one
+            # answered, and its answer was rejected. Worth telling apart before
+            # concluding the secondary provider is not pulling its weight.
+            **_telemetry(
+                state, fallback_ms=_elapsed_ms(started), secondary_discarded=True
+            ),
+        }
 
     logger.info("Secondary provider translated the message after the LLM path failed")
     return {
         "translated_text": translated,
         "model": FALLBACK_MODEL_NAME,
         "latency_ms": elapsed_ms,
+        **_telemetry(state, fallback_ms=_elapsed_ms(started), outcome="secondary"),
     }
 
 
@@ -366,4 +502,5 @@ async def passthrough(state: AgentState) -> dict:
         "is_valid": True,
         "is_fallback": False,
         "latency_ms": state.get("latency_ms", 0),
+        **_telemetry(state, outcome="passthrough"),
     }
