@@ -14,15 +14,7 @@ bash scripts/_pyrun.sh scripts/submit_log.py || true
 exit 0
 '@
 
-# Must be written as UTF-8 *without* BOM and with LF endings: Set-Content
-# -Encoding UTF8 on PowerShell 5.1 prepends a BOM, which lands in front of the
-# `#!` and breaks the shebang, and CRLF endings can confuse the hook runner.
-$HookBody = $HookBody -replace "`r`n", "`n"
-[System.IO.File]::WriteAllText(
-  (Join-Path (Get-Location) $HookFile),
-  $HookBody,
-  (New-Object System.Text.UTF8Encoding $false)
-)
+Set-Content -Path $HookFile -Value $HookBody -Encoding UTF8 -NoNewline
 Write-Host "[ai-log] Git pre-push hook installed."
 
 if (-not (Test-Path .ai-log)) { New-Item -ItemType Directory -Path .ai-log | Out-Null }
