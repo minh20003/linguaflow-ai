@@ -127,7 +127,9 @@ erDiagram
     conversations ||--o{ conversation_members : has
     conversations ||--o{ messages : contains
     messages ||--o{ translation_results : translated
+    messages ||--o{ translation_attempts : attempted
     translation_results ||--o{ feedbacks : receives
+    translation_results |o--o{ translation_attempts : "produced (nullable)"
 
     users {
         string id PK
@@ -176,14 +178,40 @@ erDiagram
         text correction
         datetime created_at
     }
+    translation_attempts {
+        string id PK "= attempt_id, sinh trước khi chạy graph"
+        string message_id FK
+        string target_language
+        string source_language_declared "preferred_language người gửi"
+        string source_language_detected "NULL khi detect bị bỏ qua hoặc lỗi"
+        string outcome "llm|secondary|original|passthrough|timeout|error|empty"
+        string provider
+        string model_configured
+        string model_served "provider báo về, có thể khác model_configured"
+        string detect_method "skipped|langdetect|llm|llm_failed"
+        int llm_calls
+        int input_tokens
+        int output_tokens
+        string finish_reason
+        int detect_ms
+        int context_ms
+        int translate_ms
+        int fallback_ms
+        int total_ms "wall clock cả lượt, rộng hơn latency_ms"
+        int context_lines
+        string fallback_reason "mã máy đọc, rỗng khi không fallback"
+        string translation_id FK "NULL, ON DELETE SET NULL"
+        datetime created_at
+    }
 ```
 
 **Ghi chú triển khai:**
 
-1. Toàn bộ sáu bảng đã được hiện thực hoá tại `src/database/models.py`. Không có công cụ migration: thay đổi schema ở môi trường phát triển áp dụng bằng `make reset-db` (xem ADR-06).
+1. Toàn bộ bảy bảng đã được hiện thực hoá tại `src/database/models.py`. Không có công cụ migration: thay đổi schema ở môi trường phát triển áp dụng bằng `make reset-db` (xem ADR-06). Riêng `translation_attempts` là bảng **mới**, nên `create_all` tạo được nó mà không cần xoá dữ liệu sẵn có — chỉ cần khởi động lại server một lần.
 2. Hệ thống không có bảng riêng lưu ngữ cảnh. Ngữ cảnh được truy vấn trực tiếp từ bảng `messages` (xem §2).
 3. Cột `confidence` đã được loại khỏi `translation_results` do không có bước nào trong Agent Flow sinh ra giá trị này. Cột sẽ được bổ sung khi hệ thống có node đánh giá độ tin cậy.
 4. `conversation_members` dùng khoá chính tổ hợp `(conversation_id, user_id)` và **không có cột `role`** — không tính năng nào trong F-01..F-06 dùng tới vai trò trong hội thoại. `users.role` (quyền hệ thống) vẫn giữ nguyên.
+5. `translation_attempts` **không** có ràng buộc duy nhất `(message_id, target_language)`, khác `translation_results`. Đây là nhật ký chỉ ghi thêm: một lần chạy lại là một lượt thử mới và đáng được đếm riêng. Quan hệ với `translation_results` là `ON DELETE SET NULL` — ngược chiều với `feedbacks` (CASCADE) và có chủ đích, vì xoá một bản dịch không được xoá bằng chứng rằng nó đã từng được dịch. Xem ADR-16 và [`CONTRACT.md`](CONTRACT.md) §5.
 
 ## 5. Sequence Diagram
 

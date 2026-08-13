@@ -69,6 +69,17 @@ class AgentState(TypedDict, total=False):
                                   # "deep-translator:google" khi do provider dự phòng dịch
     latency_ms: int
     error: str
+    telemetry: dict               # Chỉ phục vụ đo lường — xem cảnh báo bên dưới
+```
+
+**`telemetry` nằm ngoài hợp đồng.** Trường này *thuộc* hợp đồng, nhưng **các khoá bên trong thì không**. Node ghi vào đó những gì đo được (tầng nhận diện đã dùng, số lượt gọi LLM, token, thời gian từng bước, mã lý do fallback), `record_attempt` đọc ra và ghi xuống bảng `translation_attempts`. Không thành phần nào khác được phụ thuộc vào khoá cụ thể trong đây, và không sự kiện WebSocket hay REST response nào được trả nó ra.
+
+Lý do gộp thành một trường thay vì tám trường rời: chỉ số đo lường thay đổi nhanh hơn hợp đồng sản phẩm. Nếu mỗi chỉ số mới là một trường mới thì mỗi lần muốn đo thêm một thứ đều phải sửa tài liệu, báo nhóm và chờ merge — chi phí đó khiến việc đo bị bỏ qua, đúng thứ NFR-03 cần tránh.
+
+Node cập nhật bằng cách trộn nông, vì trường này không có reducer của LangGraph nên trả về thẳng sẽ ghi đè toàn bộ:
+
+```python
+return {"telemetry": {**state.get("telemetry", {}), "detect_method": "langdetect"}}
 ```
 
 ## 3. REST API
@@ -85,6 +96,7 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `PUT` | `/auth/me/language` | `{"preferred_language": str}` | `UserDTO` | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `{"messages": [MessageDTO]}` | Chưa hiện thực |
 | `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Chưa hiện thực |
+| `GET` | `/stats?days=` | — | Xem §3.4 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -129,6 +141,31 @@ Trường `translation_id` là bắt buộc trong mỗi phần tử của mảng
 ### 3.3. Endpoint kế thừa
 
 Hai endpoint `POST /api/v1/chat` và `GET /api/v1/status` là mã nguồn kế thừa từ template, không thuộc phạm vi đặc tả này. Hai endpoint sẽ được loại bỏ đồng thời với việc thay thế `src/agents/` bằng Agent dịch thuật. Không phát triển tính năng mới dựa trên hai endpoint này.
+
+### 3.4. `GET /stats`
+
+Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không bắt buộc, nhận 1..365, bỏ trống thì tính toàn bộ dữ liệu.
+
+```json
+{
+  "window_days": 7,
+  "total_attempts": 128,
+  "outcomes": {"llm": 96, "passthrough": 24, "secondary": 6, "timeout": 2},
+  "fallback_rate": 0.0547,
+  "detect_methods": {"langdetect": 100, "llm": 28},
+  "fallback_reasons": {"llm_error": 6, "wrong_language": 2},
+  "models_served": {"llama-3.3-70b-versatile": 104, "(none)": 24},
+  "language_pairs": {"vi->en": {"count": 60, "p50_ms": 780, "p95_ms": 1430}},
+  "input_tokens": 24800,
+  "output_tokens": 1960,
+  "total_ms_p50": 810,
+  "total_ms_p95": 1520
+}
+```
+
+Endpoint **yêu cầu xác thực**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Mọi thành viên đã đăng nhập đều đọc được.
+
+`fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
 
 ## 4. WebSocket Protocol
 
@@ -195,6 +232,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at` |
 | `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
+| `translation_attempts` | `id`, `message_id`, `target_language`, `source_language_declared`, `source_language_detected`, `outcome`, `provider`, `model_configured`, `model_served`, `detect_method`, `llm_calls`, `input_tokens`, `output_tokens`, `finish_reason`, `detect_ms`, `context_ms`, `translate_ms`, `fallback_ms`, `total_ms`, `context_lines`, `fallback_reason`, `translation_id`, `created_at` |
 
 **Ghi chú:**
 
@@ -206,6 +244,10 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 6. `translation_results` có ràng buộc duy nhất `(message_id, target_language)`. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại.
 7. `translation_results.is_fallback` đúng khi văn bản **không** đến từ LLM đã cấu hình, bao gồm cả trường hợp provider dự phòng dịch thành công. `model` để rỗng khi không tầng nào dịch được và hệ thống trả nguyên bản (`ARCHITECTURE.md` §5.1).
 8. **Không có công cụ migration trong MVP.** `Base.metadata.create_all` tạo được bảng còn thiếu nhưng không bao giờ ALTER bảng đã có, nên thay đổi schema ở môi trường phát triển được áp dụng bằng `make reset-db` (xoá và tạo lại). Xem ADR-06.
+9. `translation_attempts` là **nhật ký đo lường**, không phải trạng thái ứng dụng (ADR-16). Mỗi cặp (tin nhắn × ngôn ngữ đích) được thử ghi một dòng, **kể cả khi không sinh ra bản dịch nào**. Khác `translation_results` ở ba điểm có chủ đích: không có ràng buộc duy nhất (chạy lại là một lượt thử mới, đáng đếm riêng), `translation_id` cho phép `NULL` với `ON DELETE SET NULL` (xoá bản dịch không được xoá bằng chứng rằng đã dịch), và các cột được tự do thay đổi theo nhu cầu đo — **không** thành phần nào ngoài `src/services/metrics.py` và `scripts/report_metrics.py` được đọc bảng này.
+10. `translation_attempts.outcome` nhận đúng bảy giá trị, có `CheckConstraint` ở mức cơ sở dữ liệu: `llm`, `secondary`, `original` (ba trường hợp có dòng trong `translation_results`), và `passthrough`, `timeout`, `error`, `empty` (bốn trường hợp không có). Bốn giá trị sau chính là mẫu số còn thiếu: mọi tỷ lệ fallback tính riêng trên các lượt thành công đều không phải là một tỷ lệ.
+11. `translation_attempts.source_language_detected` để `NULL` khi nhận diện bị bỏ qua hoặc thất bại. Không được ghi giá trị khai báo vào đây: hai cột sẽ khớp nhau do cách xây dựng, và tỷ lệ đồng thuận của ADR-11 sẽ luôn đọc ra 100% bất kể nhận diện hoạt động thế nào.
+12. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
 
 ## 6. Đặc tả lỗi
 
