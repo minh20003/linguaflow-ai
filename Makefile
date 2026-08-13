@@ -1,4 +1,4 @@
-.PHONY: run reset-db test lint format typecheck check clean
+.PHONY: run reset-db test lint format typecheck check clean metrics
 
 run:
 	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
@@ -12,6 +12,12 @@ reset-db:
 
 test:
 	pytest tests/ -v
+
+# Summarises what the agent actually did, from the database. Calls no model and
+# costs no quota, unlike `python eval/run_eval.py` which scores translation
+# quality against the golden set.
+metrics:
+	python scripts/report_metrics.py
 
 lint:
 	ruff check src/ tests/ eval/

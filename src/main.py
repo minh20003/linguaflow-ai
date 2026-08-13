@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.agents.observability import verify_langfuse_credentials
+from src.api.metrics import router as metrics_router
 from src.api.routes import router
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
@@ -57,6 +58,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(metrics_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
 
 

@@ -187,6 +187,10 @@ async def detect_language(state: AgentState) -> dict:
         # them apart.
         langdetect_agreed=False if local else None,
         detect_ms=_elapsed_ms(started),
+        # Recorded here too, so a run that never reaches the translate node —
+        # a passthrough, or a failure before it — still reports which model
+        # served it. The translate node overwrites this with its own answer.
+        model_served=call_info.model_served,
         llm_calls=_running_total(state, "llm_calls", 1),
         input_tokens=_running_total(state, "input_tokens", call_info.input_tokens),
         output_tokens=_running_total(state, "output_tokens", call_info.output_tokens),
