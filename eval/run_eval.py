@@ -53,6 +53,7 @@ from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E4
 from src.agents.context_provider import InMemoryContextProvider  # noqa: E402
 from src.agents.graph import build_translation_graph  # noqa: E402
 from src.agents.observability import build_runnable_config  # noqa: E402
+from src.agents.prompts import build_context_block  # noqa: E402
 from src.config import configure_logging, get_settings  # noqa: E402
 from src.services.llm import extract_text, get_llm  # noqa: E402
 from src.services.metrics import group_scores, percentile  # noqa: E402
@@ -79,13 +80,13 @@ Score the system translation against the reference translation.
 
 Source language: {source_language}
 Target language: {target_language}
-Original: {original_text}
+{context_block}Original: {original_text}
 Reference translation: {expected}
 System translation: {actual}
 
 # Scoring criteria
 - Meaning preserved relative to the original (most important)
-- Correct pronouns and recovered subjects given the context
+- Correct pronouns and recovered subjects given the conversation history above
 - Technical terms, proper nouns and figures kept intact
 - Reads naturally in the target language
 
@@ -96,7 +97,11 @@ wording that carries the same meaning still scores high.
 characters.\
 """
 
-_SCORE_PATTERN = re.compile(r"[01](?:\.\d+)?")
+# Anchored at both ends. A loose search reads "8/10" as 1.0 and hands a mediocre
+# translation a perfect score, which is worse than recording no score at all. The
+# prompt asks for a bare number, so anything else is a judge that did not comply
+# — a signal in its own right, not something to salvage by guessing.
+_SCORE_PATTERN = re.compile(r"\s*([01](?:\.\d+)?)\s*")
 
 
 def load_golden_set(limit: int | None = None) -> list[dict]:
@@ -131,6 +136,11 @@ async def judge(sample: dict, actual: str, judge_llm: BaseChatModel) -> float | 
     prompt = JUDGE_PROMPT.format(
         source_language=sample["source_language"],
         target_language=sample["target_language"],
+        # The judge is asked to grade recovered subjects and pronoun choice
+        # "given the conversation history", and until now was never shown any.
+        # Rendered through the same helper the agent uses, so the judge sees
+        # exactly the context the agent saw, sanitised the same way.
+        context_block=build_context_block(sample.get("context_messages", [])),
         original_text=sample["original_text"],
         expected=sample["expected_translation"],
         actual=actual,
@@ -142,12 +152,23 @@ async def judge(sample: dict, actual: str, judge_llm: BaseChatModel) -> float | 
         print(f"    [!] Judge lỗi: {type(exc).__name__}: {exc}")
         return None
 
-    match = _SCORE_PATTERN.search(raw)
+    return parse_score(raw)
+
+
+def parse_score(raw: str) -> float | None:
+    """Read the judge's reply as a score, or refuse it.
+
+    Returns:
+        The score, or None when the reply was not a bare number — a judge that
+        ignored the output format has also had its reasoning unconstrained, so
+        its answer is not worth recovering.
+    """
+    match = _SCORE_PATTERN.fullmatch(raw)
     if not match:
         print(f"    [!] Judge trả về không phải điểm số: {raw[:60]!r}")
         return None
 
-    return min(1.0, max(0.0, float(match.group())))
+    return min(1.0, max(0.0, float(match.group(1))))
 
 
 async def run_sample(
@@ -178,6 +199,7 @@ async def run_sample(
 
     actual = state.get("translated_text", "")
     score = await judge(sample, actual, judge_llm)
+    telemetry = state.get("telemetry", {})
 
     return {
         "id": sample["id"],
@@ -191,6 +213,7 @@ async def run_sample(
         "score": score,
         "latency_ms": state.get("latency_ms", 0),
         "is_fallback": state.get("is_fallback", False),
+        "outcome": telemetry.get("outcome", ""),
     }
 
 
@@ -203,25 +226,32 @@ def summarize(results: list[dict]) -> dict:
     Returns:
         Summary statistics dictionary.
     """
-    scored = [r for r in results if r["score"] is not None]
-    latencies = [r["latency_ms"] for r in results if r["latency_ms"] > 0]
+    # A passthrough sample (source language already equals target) is returned
+    # verbatim without a model being called, and the judge duly scores it ~1.0.
+    # Counting that as translation quality inflates every aggregate it touches
+    # with work nobody did, so it is reported separately instead. It was already
+    # missing from the latency figures by accident — the `> 0` filter below —
+    # which is now the deliberate treatment across the board.
+    passthrough = [r for r in results if r["outcome"] == "passthrough"]
+    translated = [r for r in results if r["outcome"] != "passthrough"]
 
-    by_category: dict[str, list[float]] = {}
-    for r in scored:
-        by_category.setdefault(r["category"], []).append(r["score"])
+    scored = [r for r in translated if r["score"] is not None]
+    latencies = [r["latency_ms"] for r in translated if r["latency_ms"] > 0]
 
     return {
         "by_chat_type": group_scores(scored, "chat_type", PASS_THRESHOLD),
         "by_context_level": group_scores(scored, "context_level", PASS_THRESHOLD),
         "by_language_pair": group_scores(scored, "language_pair", PASS_THRESHOLD),
+        "by_category": group_scores(scored, "category", PASS_THRESHOLD),
         "total": len(results),
+        "translated": len(translated),
+        "passthrough": len(passthrough),
         "scored": len(scored),
         "passed": sum(1 for r in scored if r["score"] >= PASS_THRESHOLD),
-        "fallback": sum(1 for r in results if r["is_fallback"]),
+        "fallback": sum(1 for r in translated if r["is_fallback"]),
         "avg_score": statistics.mean([r["score"] for r in scored]) if scored else 0.0,
         "avg_latency": statistics.mean(latencies) if latencies else 0.0,
         "p95_latency": percentile(latencies, 95),
-        "by_category": {k: statistics.mean(v) for k, v in sorted(by_category.items())},
     }
 
 
@@ -319,6 +349,19 @@ def render_report(
     for label, target, actual, is_passed in _metric_rows(summary, accuracy):
         lines.append(f"| {label} | {target} | {actual} | {'Đạt' if is_passed else 'Chưa đạt'} |")
 
+    lines += [
+        "",
+        f"Mẫu đo: {summary['translated']}/{summary['total']} — "
+        f"{summary['passthrough']} mẫu passthrough (nguồn trùng đích) bị loại khỏi mọi "
+        "chỉ số vì không có model nào được gọi, judge vẫn chấm ~1.0 và điều đó chỉ làm "
+        "đẹp số liệu.",
+        "",
+        f"Hai chỉ số dùng hai mẫu số khác nhau: **tỷ lệ đạt** tính trên "
+        f"{summary['scored']} mẫu judge chấm được, còn **số lần fallback** tính trên cả "
+        f"{summary['translated']} mẫu đã dịch — một mẫu judge từ chối chấm vẫn có thể "
+        "đã fallback.",
+    ]
+
 
     lines += [
         "",
@@ -348,12 +391,16 @@ def render_report(
     lines += [
         "## 3. Điểm theo nhóm tình huống",
         "",
-        "| Nhóm | Điểm trung bình |",
-        "|---|---|",
+        "Cột số mẫu quan trọng ở bảng này hơn các bảng khác: phần lớn nhóm chỉ có một "
+        "đến hai mẫu, nên điểm trung bình của chúng không nói lên xu hướng.",
+        "",
+        "| Nhóm | Số mẫu | Điểm trung bình | Tỷ lệ đạt |",
+        "|---|---|---|---|",
     ]
 
-    for category, score in summary["by_category"].items():
-        lines.append(f"| `{category}` | {score:.3f} |")
+    for category, (count, mean_score, passed) in summary["by_category"].items():
+        rate = passed / count * 100 if count else 0
+        lines.append(f"| `{category}` | {count} | {mean_score:.3f} | {rate:.0f}% |")
 
     lines += [
         "",
