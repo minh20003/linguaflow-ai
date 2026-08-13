@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.agents.observability import verify_langfuse_credentials
 from src.api.routes import router
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
@@ -25,6 +26,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings)
     logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
+
+    # Blocking, so it runs once here rather than on any request path.
+    verify_langfuse_credentials()
 
     # create_all adds missing tables but never alters existing ones — a schema
     # change needs the database recreated (see ADR-06, `make reset-db`).

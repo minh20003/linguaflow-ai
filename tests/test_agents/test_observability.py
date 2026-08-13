@@ -9,7 +9,12 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from src.agents import observability
-from src.agents.observability import build_runnable_config, get_langfuse_handler
+from src.agents.observability import (
+    build_runnable_config,
+    get_langfuse_handler,
+    verify_langfuse_credentials,
+)
+from src.config import Settings
 
 MODULE = "src.agents.observability"
 
@@ -74,5 +79,51 @@ def test_handler_is_none_when_init_fails():
     ):
         assert get_langfuse_handler() is None
         assert build_runnable_config() == {}
+
+
+def test_langfuse_host_accepts_the_sdk_env_name(monkeypatch):
+    """LANGFUSE_BASE_URL is the name the Langfuse SDK documents.
+
+    A .env written against those docs used to be dropped by `extra="ignore"`,
+    leaving the host on its EU default — which answers 401 to a US key, on a
+    background thread, where nothing in this process would notice.
+    """
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+
+    settings = Settings(_env_file=None, jwt_secret="test-secret")
+
+    assert settings.langfuse_host == "https://us.cloud.langfuse.com"
+
+
+def test_verify_is_false_when_tracing_is_disabled():
+    """No keys means tracing is off by choice — probe nothing, report False."""
+    with patch(f"{MODULE}.get_settings", return_value=make_langfuse_settings()):
+        assert verify_langfuse_credentials() is False
+
+
+def test_verify_is_true_when_credentials_are_accepted():
+    """A successful auth_check is the one signal that traces will arrive."""
+    settings = make_langfuse_settings(public_key="pk", secret_key="sk")
+    client = type("Client", (), {"auth_check": lambda self: True})()
+
+    with (
+        patch(f"{MODULE}.get_settings", return_value=settings),
+        patch(f"{MODULE}.get_langfuse_handler", return_value=object()),
+        patch("langfuse.get_client", return_value=client),
+    ):
+        assert verify_langfuse_credentials() is True
+
+
+def test_verify_is_false_when_the_probe_raises():
+    """Tracing is optional: a rejected or unreachable host must not stop startup."""
+    settings = make_langfuse_settings(public_key="pk", secret_key="sk")
+
+    with (
+        patch(f"{MODULE}.get_settings", return_value=settings),
+        patch(f"{MODULE}.get_langfuse_handler", return_value=object()),
+        patch("langfuse.get_client", side_effect=RuntimeError("401 Unauthorized")),
+    ):
+        assert verify_langfuse_credentials() is False
 
 

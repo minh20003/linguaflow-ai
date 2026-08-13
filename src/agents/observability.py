@@ -56,6 +56,57 @@ def get_langfuse_handler() -> Any | None:
     return _init_langfuse_handler()
 
 
+def verify_langfuse_credentials() -> bool:
+    """Probe Langfuse once at startup and report the result loudly.
+
+    Constructing the client authenticates nothing: spans are exported later by a
+    background thread, so bad credentials surface as an HTTP 401 nobody in this
+    process is watching for. Tracing then looks enabled while recording nothing.
+    A single blocking check at startup turns that into one clear log line.
+
+    `auth_check` is blocking and the SDK discourages it on a request path, which
+    is why this is called from the application lifespan and nowhere else.
+
+    Returns:
+        True when tracing is verified working. False when it is disabled, the
+        package is missing, or the credentials were rejected — never raises,
+        because tracing is optional and must not block startup.
+    """
+    settings = get_settings()
+
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+        return False
+
+    # Builds the singleton client with our host and keys. Without this the
+    # module-level client is unconfigured and auth_check reports "not
+    # initialized", which would look like a credential problem it isn't.
+    if get_langfuse_handler() is None:
+        return False
+
+    try:
+        from langfuse import get_client
+
+        if get_client().auth_check():
+            logger.info("Langfuse tracing enabled, host %s", settings.langfuse_host)
+            return True
+    except Exception as exc:
+        logger.error(
+            "Langfuse credentials rejected by %s (%s). Traces will be dropped. "
+            "Check that the host region matches the keys — a US key sent to the "
+            "EU host answers 401.",
+            settings.langfuse_host,
+            exc,
+        )
+        return False
+
+    logger.error(
+        "Langfuse credentials rejected by %s. Traces will be dropped. Check that "
+        "the host region matches the keys — a US key sent to the EU host answers 401.",
+        settings.langfuse_host,
+    )
+    return False
+
+
 def build_runnable_config(**metadata: Any) -> dict[str, Any]:
     """Build the config to pass to ``graph.ainvoke()``.
 

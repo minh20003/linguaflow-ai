@@ -13,7 +13,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,7 +67,14 @@ class Settings(BaseSettings):
     # Observability — Langfuse (F-03.4). Empty keys disable tracing.
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
-    langfuse_host: str = "https://cloud.langfuse.com"
+    # Accepts either env name. The Langfuse SDK itself reads LANGFUSE_BASE_URL,
+    # so a .env written against the SDK's own docs would otherwise be dropped by
+    # `extra="ignore"` and silently fall back to the EU default — which answers
+    # 401 to a US key. The region here must match the region the keys came from.
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
 
     # Database. The driver must be async — `create_async_engine` cannot open a
     # bare `sqlite://` URL, so the default carries the aiosqlite driver.
@@ -124,6 +131,17 @@ def configure_logging(settings: Settings | None = None) -> None:
     app_logger.setLevel(settings.log_level)
     # Handled here, so don't also hand records to whatever the root has attached.
     app_logger.propagate = False
+
+    # Tracing failures happen on the OTel exporter's background thread, in a
+    # logger outside the `src` tree. Left alone they reach stderr unformatted via
+    # logging.lastResort and would vanish entirely the day a file handler is
+    # added. Attached at WARNING so their routine INFO chatter stays out.
+    for name in ("opentelemetry", "langfuse"):
+        library_logger = logging.getLogger(name)
+        library_logger.handlers.clear()
+        library_logger.addHandler(handler)
+        library_logger.setLevel(logging.WARNING)
+        library_logger.propagate = False
 
 
 @lru_cache
