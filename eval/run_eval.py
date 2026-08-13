@@ -55,6 +55,7 @@ from src.agents.graph import build_translation_graph  # noqa: E402
 from src.agents.observability import build_runnable_config  # noqa: E402
 from src.config import configure_logging, get_settings  # noqa: E402
 from src.services.llm import extract_text, get_llm  # noqa: E402
+from src.services.metrics import group_scores, percentile  # noqa: E402
 
 GOLDEN_SET = Path(__file__).parent / "golden_set.jsonl"
 REPORT_PATH = Path(__file__).parent / "results" / "report.md"
@@ -193,45 +194,6 @@ async def run_sample(
     }
 
 
-def percentile(values: list[int], pct: float) -> float:
-    """Percentile of a sequence, safe on empty and single-element input.
-
-    ``statistics.quantiles`` needs at least two points; below that the only
-    reasonable estimate is the single value itself.
-    """
-    if not values:
-        return 0.0
-    if len(values) < 2:
-        return float(values[0])
-
-    ordered = sorted(values)
-    rank = pct / 100 * (len(ordered) - 1)
-    lower = int(rank)
-    upper = min(lower + 1, len(ordered) - 1)
-    return ordered[lower] + (ordered[upper] - ordered[lower]) * (rank - lower)
-
-
-def group_scores(scored: list[dict], key: str) -> dict[str, tuple[int, float, int]]:
-    """Group scored samples by one field: {value: (count, mean score, passed)}.
-
-    Used for the per-dimension breakdowns (category, chat type, context level,
-    language pair) so the report can show where the agent actually degrades
-    rather than only a single aggregate number.
-    """
-    buckets: dict[str, list[float]] = {}
-    for r in scored:
-        buckets.setdefault(r.get(key) or "(unknown)", []).append(r["score"])
-
-    return {
-        value: (
-            len(scores),
-            statistics.mean(scores),
-            sum(1 for s in scores if s >= PASS_THRESHOLD),
-        )
-        for value, scores in sorted(buckets.items())
-    }
-
-
 def summarize(results: list[dict]) -> dict:
     """Aggregate evaluation scores and latency metrics across test results.
 
@@ -249,9 +211,9 @@ def summarize(results: list[dict]) -> dict:
         by_category.setdefault(r["category"], []).append(r["score"])
 
     return {
-        "by_chat_type": group_scores(scored, "chat_type"),
-        "by_context_level": group_scores(scored, "context_level"),
-        "by_language_pair": group_scores(scored, "language_pair"),
+        "by_chat_type": group_scores(scored, "chat_type", PASS_THRESHOLD),
+        "by_context_level": group_scores(scored, "context_level", PASS_THRESHOLD),
+        "by_language_pair": group_scores(scored, "language_pair", PASS_THRESHOLD),
         "total": len(results),
         "scored": len(scored),
         "passed": sum(1 for r in scored if r["score"] >= PASS_THRESHOLD),
