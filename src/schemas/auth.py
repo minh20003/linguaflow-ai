@@ -23,6 +23,33 @@ SUPPORTED_LANGUAGES = {
 }
 
 
+def normalize_language(value: str) -> str:
+    """Lower-case a language code and reject anything unsupported.
+
+    Shared by every schema that accepts a language, so the allowlist is checked
+    in exactly one place (docs/CONTRACT.md section 1).
+
+    Raises:
+        ValueError: The code is not in SUPPORTED_LANGUAGES.
+    """
+    normalized = value.lower()
+    if normalized not in SUPPORTED_LANGUAGES:
+        raise ValueError(
+            f"Unsupported language code: {value}. "
+            f"Supported codes: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+        )
+    return normalized
+
+
+def normalize_email(value: str) -> str:
+    """Trim and lower-case an email so one address means one account.
+
+    Applied on both registration and login; without it, registering as
+    `Foo@x.com` would create an account that `foo@x.com` cannot reach.
+    """
+    return value.strip().lower()
+
+
 class LoginRequest(BaseModel):
     """Request schema for user login."""
 
@@ -146,10 +173,4 @@ class UpdateLanguageRequest(BaseModel):
     @classmethod
     def validate_language(cls, v: str) -> str:
         """Validate that the language code is supported."""
-        normalized = v.lower()
-        if normalized not in SUPPORTED_LANGUAGES:
-            raise ValueError(
-                f"Unsupported language code: {v}. "
-                f"Supported codes: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
-            )
-        return normalized
+        return normalize_language(v)

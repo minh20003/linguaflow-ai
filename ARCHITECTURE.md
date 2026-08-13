@@ -40,7 +40,7 @@ Người dùng có thể đối chiếu bản gốc với bản dịch và gửi
 | F-05 | Human-in-the-loop (hiệu chỉnh bản dịch, gửi phản hồi) | Sprint 2 |
 | F-06 | Chính sách lưu trữ và quyền riêng tư | Sprint 3 |
 
-Định nghĩa chi tiết từng tính năng: xem PRD (`docs/T217/Gate 1/2. PRD.docx`, lưu ngoài kho mã nguồn — xem mục 10).
+Định nghĩa chi tiết từng tính năng: xem tài liệu PRD của dự án.
 
 ### 2.2. Ngoài phạm vi MVP
 
@@ -95,8 +95,8 @@ Trình tự gọi giữa các tầng: xem [Sequence Diagram](docs/architecture_d
 | Hạng mục | Mô tả |
 |---|---|
 | Loại agent | State machine tuỳ biến. Không áp dụng pattern ReAct do luồng dịch không yêu cầu agent tự quyết định gọi tool lặp lại, chỉ cần pipeline có rẽ nhánh điều kiện và đường fallback |
-| State | `source_language`, `target_language`, `original_text`, `context_messages`, `translated_text`, `translation_id`, `is_valid`, `is_fallback`, `model`, `latency_ms`, `error`. Định nghĩa bắt buộc tại [`docs/CONTRACT.md`](docs/CONTRACT.md) §2 |
-| Chuỗi node | `detect_language` → `check_same_language` (rẽ nhánh) → `build_context` → `translate` (gọi LLM, streaming) → `validate_output` → `deliver`, song song với `persist_async` (ghi CSDL bất đồng bộ) |
+| State | `source_language`, `target_language`, `original_text`, `context_messages`, `translated_text`, `translation_id`, `is_valid`, `is_fallback`, `model`, `latency_ms`, `error`, `telemetry`. Định nghĩa bắt buộc tại [`docs/CONTRACT.md`](docs/CONTRACT.md) §2. Riêng các khoá **bên trong** `telemetry` không thuộc hợp đồng — xem ADR-16 |
+| Chuỗi node | `detect_language` (hai tầng: langdetect rồi LLM khi mâu thuẫn, xem ADR-11) → rẽ nhánh theo `source_language == target_language` → `build_context` → `translate` → `validate_output`, song song với ghi CSDL bất đồng bộ |
 | Cơ chế fallback | Khi `validate_output` thất bại hoặc LLM timeout, hệ thống trả về `original_text` và không chặn luồng chat |
 | Mô hình ngôn ngữ | Lựa chọn qua biến môi trường `LLM_PROVIDER`. Mặc định Groq (`llama-3.3-70b-versatile`); hỗ trợ `deepseek`, `gemini`, `openai`. Xem ADR-10 |
 
@@ -109,10 +109,12 @@ Việc lựa chọn provider chính thức được quyết định trên cơ s�
 | Hệ quản trị | SQLite async (`sqlite+aiosqlite`) cho môi trường phát triển; PostgreSQL (`postgresql+asyncpg`) cho môi trường production. Chuyển đổi bằng biến `DATABASE_URL` |
 | ORM | SQLAlchemy 2.0 async (`src/database/`) |
 | Vai trò | Vừa lưu trữ lịch sử hội thoại dài hạn, vừa là nguồn cung cấp ngữ cảnh cho Agent (xem ADR-01) |
-| Bảng dữ liệu | `users`, `conversations`, `conversation_members`, `messages`, `translation_results`, `feedbacks` |
+| Bảng dữ liệu | `users`, `conversations`, `conversation_members`, `messages`, `translation_results`, `feedbacks`, `translation_attempts` |
 | Vector Store | Không sử dụng trong phạm vi MVP (xem ADR-01) |
 
-Tại thời điểm cập nhật tài liệu, chỉ bảng `users` đã được hiện thực hoá. Schema chi tiết: xem [ER Diagram](docs/architecture_diagram.md#4-er-diagram).
+`translation_attempts` là nhật ký đo lường, không phải trạng thái ứng dụng: nó tồn tại để trả lời NFR-03 và chỉ được đọc bởi `src/services/metrics.py` cùng `scripts/report_metrics.py`. Xem ADR-16.
+
+Schema chi tiết: xem [ER Diagram](docs/architecture_diagram.md#4-er-diagram).
 
 ## 4. Luồng dữ liệu
 
@@ -133,12 +135,45 @@ Trình tự đầy đủ bao gồm giao thức streaming: xem [Sequence Diagram]
 | Mã | Yêu cầu | Chỉ tiêu | Biện pháp |
 |---|---|---|---|
 | NFR-01 | Độ trễ dịch | Dưới 1 giây cho một câu văn bản thông thường | Sử dụng streaming API, hiển thị bản dịch theo từng chunk |
-| NFR-02 | Khả năng chịu lỗi | Lỗi hoặc timeout của LLM không làm mất tin nhắn | Luồng gửi tin gốc độc lập với luồng dịch (bước 2 và bước 5-7 không phụ thuộc nhau) |
-| NFR-03 | Khả năng giám sát | Ghi nhận độ trễ và mô hình sử dụng cho mọi bản dịch | Lưu `latency_ms` và `model` trong `translation_results`; tích hợp Langfuse từ Sprint 1 |
+| NFR-02 | Khả năng chịu lỗi | Lỗi hoặc timeout của LLM không làm mất tin nhắn | Luồng gửi tin gốc độc lập với luồng dịch (bước 2 và bước 5-7 không phụ thuộc nhau); chuỗi dự phòng hai tầng mô tả ở §5.1 |
+| NFR-03 | Khả năng giám sát | Mọi lượt thử dịch đều để lại một dòng dữ liệu, đủ để trả lời bằng SQL: chất lượng ra sao, provider và model nào thực sự phục vụ, cặp ngôn ngữ nào | Bảng `translation_attempts` ghi một dòng cho mỗi cặp (tin nhắn × ngôn ngữ đích) được thử, **kể cả bốn trường hợp không sinh ra bản dịch** (ADR-16); `translation_results` giữ `latency_ms` và `model` phục vụ hiển thị; Langfuse cung cấp trace và chi phí token, có kiểm tra xác thực lúc khởi động. Đọc số liệu bằng `make metrics` hoặc `GET /api/v1/stats` |
+
+### 5.1. Chuỗi dự phòng khi dịch thất bại
+
+Khi LLM lỗi, timeout, hoặc trả về bản dịch không hợp lệ (rỗng, hoặc dài bất thường do mô hình giải thích thay vì dịch), Agent đi lần lượt qua hai tầng:
+
+| Tầng | Thành phần | Kết quả | `model` | `is_fallback` |
+|---|---|---|---|---|
+| 1 | LLM đã cấu hình qua `LLM_PROVIDER` | Bản dịch chính | Tên model thật | `false` |
+| 2 | `deep-translator` (ADR-07) | Bản dịch dự phòng | `deep-translator:google` | `true` |
+| 3 | Không gọi ai | Nguyên văn bản gốc | Rỗng | `true` |
+
+Ba ràng buộc bắt buộc giữ khi sửa `src/services/fallback_translator.py`:
+
+1. **Không bao giờ raise.** Thiếu package, mất mạng, bị giới hạn tần suất, cặp ngôn ngữ không hỗ trợ — tất cả đều trả `None`, và node giữ nguyên bản gốc đã ghi sẵn trong state.
+2. **Không chặn event loop.** `deep-translator` là thư viện đồng bộ nên phải chạy trong worker thread kèm timeout (`FALLBACK_TRANSLATOR_TIMEOUT_SECONDS`). Timeout giải phóng coroutine nhưng không huỷ được thread — chấp nhận được vì thread chỉ giữ một request HTTP.
+3. **`is_fallback` vẫn là `true` khi tầng 2 thành công.** Kết quả không đến từ LLM đã cấu hình, nên Frontend phải tiếp tục hiển thị chỉ báo chất lượng suy giảm. Trường `model` cho biết bản dịch do tầng nào tạo ra.
+
+**Điều kiện chuyển sang tầng 2.** Ngoài lỗi và timeout của LLM, `validate_output` còn đẩy sang tầng dự phòng khi bản dịch rỗng, dài bất thường so với bản gốc, hoặc **không đúng ngôn ngữ đích** (ADR-13). Trường hợp cuối bắt được câu từ chối của model — vốn quá ngắn để lọt quy tắc độ dài. Đầu ra của tầng 2 cũng chịu đúng kiểm tra ngôn ngữ đó trước khi được chấp nhận, vì nó không quay lại `validate_output`.
+
+**Timeout ở mức toàn bộ lượt chạy không thuộc Agent.** Hệ thống chỉ có timeout theo từng lần gọi (`LLM_TIMEOUT_SECONDS`, `FALLBACK_TRANSLATOR_TIMEOUT_SECONDS`). Hạn thời gian cho cả lượt dịch thuộc về bên gọi — Chat Service bọc `graph.ainvoke` trong `asyncio.wait_for` — vì chỉ bên gọi mới biết người dùng còn chờ được bao lâu. Xem ADR-14.
+
+### 5.2. Guardrail đầu vào và đầu ra
+
+Ba lớp kiểm tra, cài đặt trong `src/agents/guardrails.py` (ADR-12, ADR-13). Tổng chi phí trên đường thành công khoảng 2ms, tức 0,2% ngân sách của NFR-01.
+
+| Lớp | Kiểm tra | Khi vi phạm |
+|---|---|---|
+| Đầu vào | `original_text` tối đa 2000 ký tự | Ghi `error`, trả nguyên bản. Không cắt bớt — nửa bản dịch tệ hơn không dịch |
+| Đầu vào | `target_language` phải đúng dạng ISO 639-1 hai chữ cái thường | Ghi `error`, trả nguyên bản. Giá trị này đi thẳng vào system prompt và đến từ trường hồ sơ người dùng tự sửa được |
+| Prompt | Mỗi dòng ngữ cảnh bị gộp xuống dòng, escape dấu ngoặc nhọn, cắt còn 500 ký tự | Áp dụng im lặng tại `build_context_block` |
+| Đầu ra | Ngôn ngữ bản dịch phải khớp `target_language`, kiểm khi bản dịch dài từ 20 ký tự | Chuyển sang tầng dự phòng |
+
+Hàm phụ thuộc thư viện ngoài thì **fail open** (langdetect lỗi → chấp nhận bản dịch), hàm thuần số học và regex thì **fail closed**. Nguyên tắc này giữ cho một lỗi phụ thuộc không đẩy toàn bộ lưu lượng sang provider dự phòng.
 
 ## 6. Bảo mật và chính sách lưu trữ dữ liệu
 
-> **Đính chính thuật ngữ:** Tài liệu giai đoạn trước sử dụng thuật ngữ "E2E" (End-to-End Encryption) cho tính năng F-06. Thuật ngữ này không chính xác về mặt kỹ thuật: Agent bắt buộc phải đọc nội dung dạng plaintext để gọi LLM, do đó hệ thống không thể đáp ứng định nghĩa mã hoá đầu-cuối. Tài liệu này thay bằng mô tả đúng bản chất là chính sách lưu trữ và kiểm soát truy cập.
+> **Ghi chú về bảo mật:** Hệ thống áp dụng chính sách lưu trữ an toàn và kiểm soát truy cập. Agent yêu cầu đọc nội dung tin nhắn dạng plaintext để thực hiện dịch thuật và cung cấp ngữ cảnh cho mô hình ngôn ngữ.
 
 ### 6.1. Phạm vi lưu trữ
 
@@ -155,6 +190,22 @@ Trình tự đầy đủ bao gồm giao thức streaming: xem [Sequence Diagram]
 
 Tính năng xoá hội thoại theo yêu cầu người dùng (right-to-be-forgotten) không thuộc phạm vi MVP. Schema hiện tại với khoá ngoại xác định rõ ràng cho phép hiện thực hoá tính năng này theo `conversation_id` khi cần.
 
+### 6.4. Chuyển dữ liệu ra dịch vụ bên thứ ba
+
+Nội dung tin nhắn của người dùng rời khỏi hệ thống qua ba kênh. Cả ba đều tắt được bằng cấu hình, nhưng chỉ kênh đầu tiên là bắt buộc để tính năng dịch hoạt động.
+
+| Kênh | Dữ liệu gửi đi | Ràng buộc pháp lý | Cơ chế tắt |
+|---|---|---|---|
+| LLM provider theo `LLM_PROVIDER` (Groq, DeepSeek, Gemini, OpenAI) | `original_text` và tối đa 5 tin nhắn ngữ cảnh gần nhất | Theo điều khoản dịch vụ của từng nhà cung cấp; truy cập bằng API key của tài khoản | Không tắt được — đây là kênh thực hiện việc dịch |
+| `deep-translator` → endpoint web của Google Translate (ADR-07) | Toàn văn `original_text` | **Endpoint không chính thức, không dùng API key, do đó không có hợp đồng và không có thoả thuận xử lý dữ liệu (DPA)** | `FALLBACK_TRANSLATOR_ENABLED=false` |
+| Langfuse (F-03.4) | Toàn bộ prompt và completion, tức bao gồm cả tin nhắn lẫn ngữ cảnh | Theo điều khoản của Langfuse Cloud | Để trống `LANGFUSE_PUBLIC_KEY` và `LANGFUSE_SECRET_KEY` |
+
+**Hệ quả cần lưu ý khi vận hành:**
+
+1. Kênh dự phòng kích hoạt trên *mọi* đường fallback — thiếu API key, bị giới hạn tần suất, lỗi mạng, timeout, hoặc bản dịch không hợp lệ. Một sự cố tạm thời ở LLM provider vì vậy làm toàn bộ tin nhắn đang xử lý được gửi sang Google.
+2. Người nhận chỉ thấy `is_fallback = true`, và theo `docs/CONTRACT.md` §4 Frontend hiển thị cờ này như chỉ báo chất lượng, không phải chỉ báo về quyền riêng tư. Hệ thống hiện không thông báo cho người dùng về việc chuyển dữ liệu này.
+3. **Không được xử lý dữ liệu người dùng thật khi `FALLBACK_TRANSLATOR_ENABLED=true` ở bất kỳ môi trường nào chịu yêu cầu về thoả thuận xử lý dữ liệu.** Với môi trường phát triển, ràng buộc tại §6.2 về việc không đưa dữ liệu thật vào vẫn áp dụng đầy đủ.
+
 ## 7. Quyết định kiến trúc (ADR)
 
 | Mã | Nội dung quyết định | Lựa chọn | Căn cứ |
@@ -164,11 +215,19 @@ Tính năng xoá hội thoại theo yêu cầu người dùng (right-to-be-forgo
 | ADR-03 | Tối ưu fan-out theo nhóm ngôn ngữ | Không thực hiện trong Sprint 1 | Đây là cải tiến hiệu năng, không phải yêu cầu chức năng. Việc tối ưu được thực hiện sau khi có số liệu đo thực tế, tránh thiết kế vượt nhu cầu khi luồng end-to-end chưa hoàn chỉnh |
 | ADR-04 | Framework Backend | FastAPI | Hỗ trợ async nguyên bản, phù hợp với tác vụ I/O-bound (chờ phản hồi LLM); tự động sinh tài liệu API |
 | ADR-05 | Điều phối Agent | LangGraph | Luồng xử lý yêu cầu rẽ nhánh điều kiện và đường fallback. Chain tuyến tính không đáp ứng được |
-| ADR-06 | Cơ sở dữ liệu | SQLite async (dev) và PostgreSQL (prod), ORM SQLAlchemy 2.0 async | Môi trường phát triển không yêu cầu cài đặt PostgreSQL cục bộ, chỉ thay đổi `DATABASE_URL` khi triển khai. PostgreSQL hỗ trợ kiểu JSON và có thể bật `pgvector` cho Glossary mà không phải thay đổi hệ quản trị |
-| ADR-07 | Provider dịch dự phòng | Không tích hợp NLLB hoặc Google Translate trong MVP | Cơ chế fallback trả về bản gốc khi LLM lỗi đã đáp ứng NFR-02. Việc bổ sung provider thứ hai làm tăng số tích hợp và số API key phải quản lý khi chưa có số liệu chứng minh nhu cầu. Sẽ xem xét lại nếu kết quả benchmark Golden Set không đạt yêu cầu |
+| ADR-06 | Cơ sở dữ liệu | SQLite async (dev) và PostgreSQL (prod), ORM SQLAlchemy 2.0 async | Môi trường phát triển không yêu cầu cài đặt PostgreSQL cục bộ, chỉ thay đổi `DATABASE_URL` khi triển khai. PostgreSQL hỗ trợ kiểu JSON và có thể bật `pgvector` cho Glossary mà không phải thay đổi hệ quản trị Không sử dụng công cụ migration (Alembic) trong MVP: dữ liệu ở môi trường phát triển chỉ gồm vài tài khoản seed, và §6.2 vốn đã cấm đưa dữ liệu thật vào môi trường này. `Base.metadata.create_all` tạo được bảng còn thiếu nhưng không ALTER bảng đã có, nên thay đổi schema được áp dụng bằng `make reset-db` (xoá và tạo lại). Xem xét lại khi cơ sở dữ liệu production được cấp phát |
+| ADR-07 | Provider dịch dự phòng | **Tích hợp `deep-translator` (Google Translate) làm tầng dự phòng khi LLM lỗi** | Đề bài yêu cầu hệ thống có cơ chế dịch dự phòng, nên đây là ràng buộc phạm vi chứ không phải lựa chọn kỹ thuật. So với NLLB, `deep-translator` không cần API key, không cần self-host mô hình và cài bằng một dòng `pip`, phù hợp với hạ tầng gói miễn phí của nhóm. Đánh đổi đã chấp nhận: endpoint web của Google Translate là không chính thức nên phải coi việc gián đoạn là tình huống thường gặp — vì vậy đường trả về nguyên bản vẫn được giữ nguyên phía sau, và toàn bộ lỗi của provider này đều bị nuốt thành `None` (NFR-02). Tắt bằng `FALLBACK_TRANSLATOR_ENABLED=false`. Chi tiết §5.1 |
 | ADR-08 | Lớp cache (Redis) | Không sử dụng trong MVP | Truy vấn 3-5 bản ghi gần nhất đáp ứng yêu cầu hiệu năng ở quy mô MVP. Việc bổ sung Redis làm tăng số thành phần phải vận hành khi chưa có số liệu chứng minh nhu cầu. Sẽ xem xét lại nếu đo được độ trễ truy vấn CSDL là điểm nghẽn |
-| ADR-09 | Ngôn ngữ Backend | Python/FastAPI thống nhất toàn hệ thống | LangGraph và các SDK của LLM đều là Python. Sử dụng thống nhất một ngôn ngữ với Agent giúp giảm số runtime phải vận hành, phù hợp với quy mô nhóm hiện tại. Quyết định này thay thế phương án "FastAPI hoặc Node" trong tài liệu giai đoạn trước |
-| ADR-10 | Provider LLM | Factory đa provider điều khiển qua `LLM_PROVIDER`; mặc định Groq | Giới hạn tần suất của các gói miễn phí khác biệt đáng kể (Groq khoảng 30 request/phút, Gemini khoảng 10 request/phút, Mistral 1 request/giây). Cơ chế factory cho phép chuyển provider khi bị giới hạn tần suất mà không phải sửa mã nguồn. Groq được chọn làm mặc định do tốc độ inference cao nhất, phù hợp yêu cầu real-time. DeepSeek tuân thủ chuẩn OpenAI-compatible nên tái sử dụng `langchain-openai` thông qua tham số `base_url`, không cần bổ sung SDK |
+| ADR-09 | Ngôn ngữ Backend | Python/FastAPI thống nhất toàn hệ thống | LangGraph và các SDK của LLM đều là Python. Sử dụng thống nhất một ngôn ngữ với Agent giúp giảm số runtime phải vận hành, phù hợp với quy mô nhóm hiện tại |
+| ADR-10 | Provider LLM | Factory đa provider điều khiển qua `LLM_PROVIDER`; **mặc định và khuyến nghị dùng Groq** | Số liệu đo trên cùng 3 mẫu: Groq 2610ms so với Gemini 8441ms cho một tin nhắn, tức nhanh hơn 3.2 lần. Ngoài ra gói miễn phí của Gemini chỉ cho **20 request mỗi ngày** cho `gemini-2.5-flash`, không đủ cho một buổi demo, nên Gemini chỉ giữ vai trò dự phòng khi thử nghiệm. OpenAI yêu cầu tài khoản còn credit. Cơ chế factory cho phép chuyển provider mà không sửa mã nguồn. DeepSeek tuân thủ chuẩn OpenAI-compatible nên tái sử dụng `langchain-openai` qua tham số `base_url` |
+| ADR-11 | Xác định ngôn ngữ nguồn | Hai tầng: `langdetect` cục bộ trước, chỉ gọi LLM khi kết quả mâu thuẫn với `preferred_language` của người gửi | LLM detect tốn 1285ms mỗi tin nhắn, chiếm 49% tổng thời gian xử lý. `langdetect` chạy cục bộ hết khoảng 2ms. Trường hợp phổ biến nhất là người dùng viết đúng ngôn ngữ đã cài đặt, khi đó hai nguồn trùng nhau và không cần gọi LLM. Không dùng `langdetect` một mình vì độ chính xác kém với câu ngắn (chuỗi "Ok anh" bị nhận nhầm thành tiếng Tagalog), nên khi có mâu thuẫn phải để LLM phân xử. Kết quả đo: tổng thời gian giảm từ 2610ms xuống 1501ms |
+| ADR-12 | Xử lý nội dung không tin cậy trong prompt | Cô lập bằng thẻ phân định `<conversation_history>` và `<message>`, kèm làm sạch từng dòng ngữ cảnh (gộp xuống dòng và ký tự điều khiển thành khoảng trắng, **escape dấu ngoặc nhọn thành `&amp;lt;`/`&amp;gt;`**, giới hạn 500 ký tự mỗi dòng) và giới hạn 2000 ký tự cho tin nhắn. **Không** cố phát hiện ý đồ tấn công | `build_context_block` trước đây nối các dòng ngữ cảnh bằng ký tự xuống dòng, nên một tin nhắn chứa xuống dòng có thể giả mạo tiêu đề phần thứ hai và chiếm quyền điều khiển bản dịch. Nguy hiểm hơn dạng tự tấn công thông thường ở chỗ ngữ cảnh do **người khác** trong hội thoại viết ra, tức A có thể chiếm quyền bản dịch của B. Gộp xuống dòng một mình là chưa đủ — thẻ giả mạo vẫn nằm inline và vẫn đọc được như cấu trúc, nên phải escape dấu ngoặc nhọn; việc escape không tốn gì vì dòng ngữ cảnh chỉ được model *đọc*, không bao giờ xuất hiện trong bản dịch trả cho người nhận. Riêng phần thân tin nhắn không escape (sẽ làm hỏng bản dịch đầu ra) — rủi ro ở đây thấp hơn hẳn vì đó là tự tấn công: người gửi chỉ thao túng được bản dịch tin nhắn của chính mình, và phần này nằm cuối prompt nên không có chỉ dẫn tin cậy nào phía sau để ghi đè. Việc làm sạch loại bỏ chính khả năng giả mạo cấu trúc, nên nó là biện pháp giảm thiểu thực sự; còn một bộ phát hiện ý đồ sẽ thêm độ trễ và dương tính giả vào một pipeline mà trường hợp xấu nhất vốn đã là trả nguyên bản an toàn. `target_language` cũng được kiểm tra hình dạng ISO 639-1 trước khi nội suy vào system prompt, do giá trị này đến từ trường hồ sơ người dùng tự sửa được |
+| ADR-13 | Kiểm tra tính hợp lệ của bản dịch đầu ra | Bản dịch bị từ chối khi `langdetect` nhận ra nó **vẫn đúng ngôn ngữ nguồn** trong khi đích khác nguồn. **Không** kiểm theo kiểu "có đúng ngôn ngữ đích không", **không** gọi LLM lần hai, **không** dùng danh sách cụm từ từ chối. Áp dụng cho cả `validate_output` lẫn `fallback_translate` | Bắt được ba dạng hỏng mà quy tắc tỷ lệ độ dài bỏ sót khi phản hồi ngắn: model từ chối (`"I can't help with that."` chỉ 24 ký tự, dưới ngưỡng 200 nên trước đây được giao cho người nhận với `is_valid = true`), trả lại nguyên văn chưa dịch, và trả lời tin nhắn thay vì dịch. **Phương án đầu tiên — so bản dịch với `target_language` — đã bị bác bỏ sau khi đo thực tế.** `langdetect` sai một cách tự tin trên đúng loại văn bản sản phẩm này nhắm tới: chuỗi `"Hotfix merged, CI green now"` bị nhận là tiếng Hà Lan ở mức 0.86, `"Docker Kubernetes Jenkins CI/CD pipeline"` bị nhận là tiếng Đức ở mức 0.9999. Cách đó loại bỏ chính những bản dịch đúng của tin nhắn kỹ thuật rồi trả về nguyên bản chưa dịch — ngược hẳn mục đích. Nâng ngưỡng độ dài không cứu được (ca tiếng Đức dài 40 ký tự) và đòi thêm biên tin cậy cũng không. Cách hiện tại chỉ yêu cầu bộ nhận diện **đồng ý với một giá trị đã biết** là ngôn ngữ nguồn do `detect_language` xác định; một lần nhận nhầm sang ngôn ngữ thứ ba bất kỳ không còn chứng minh điều gì và không gây hậu quả gì. Chấp nhận bỏ sót hơn là báo nhầm: bỏ sót một câu từ chối chỉ hỏng một tin nhắn, còn báo nhầm làm giảm chất lượng mọi tin nhắn kỹ thuật trong hội thoại. Chỉ chạy khi bản dịch dài từ 20 ký tự; khi thư viện lỗi hoặc không nhận diện được thì bản dịch được chấp nhận, tránh việc một lỗi phụ thuộc đẩy toàn bộ lưu lượng sang provider dự phòng |
+| ADR-14 | Ranh giới an toàn AI trong phạm vi MVP | Guardrail giới hạn ở ba lớp: chặn kích thước đầu vào, cô lập văn bản không tin cậy trong prompt, và kiểm tra tính hợp lệ của đầu ra. **Không** có bộ phân loại kiểm duyệt nội dung, phát hiện độc hại hay PII; **không** giới hạn tần suất theo người dùng; **không** ngân sách token; **không** timeout ở mức agent | Hệ thống *dịch* nội dung người dùng chứ không *sinh* nội dung mới, nên bề mặt rủi ro hẹp hơn một trợ lý hội thoại: mô hình không được yêu cầu đưa ra quan điểm hay lời khuyên. Mọi đường lỗi đều đã suy giảm về việc trả nguyên bản (NFR-02), tức trường hợp xấu nhất là người nhận đọc tin chưa dịch chứ không phải nhận nội dung sai lệch. Ba hạng mục bị loại đều thuộc tầng API (`src/api/routes.py`, do nhánh khác sở hữu) hoặc thuộc Post-MVP theo phạm vi F-01..F-06. Timeout ở mức agent thuộc về bên gọi (`asyncio.wait_for` quanh `graph.ainvoke`), mà Chat Service chưa tồn tại. Sẽ xem xét lại khi hệ thống phục vụ người dùng ngoài nhóm |
+| ADR-15 | Công bố luồng dữ liệu ra dịch vụ bên thứ ba | Ghi đầy đủ ba kênh chuyển dữ liệu tại §6.4, mỗi kênh kèm cơ chế tắt bằng cấu hình | Trước thay đổi này, `deep-translator` chỉ được mô tả như kỹ thuật bảo đảm sẵn sàng tại ADR-07 và §5.1; không tài liệu nào nêu rằng nó gửi toàn văn tin nhắn tới một endpoint không có hợp đồng xử lý dữ liệu. Langfuse cũng gửi toàn bộ prompt nhưng không xuất hiện ở mục bảo mật. Một luồng dữ liệu không được ghi nhận thì không thể được đánh giá rủi ro, nên việc công bố là điều kiện cần trước khi hệ thống nhận dữ liệu thật |
+| ADR-16 | Nơi lưu số liệu đo của Agent | **Bảng mới `translation_attempts`**, tách khỏi `translation_results`; không dùng Prometheus/Grafana | Bốn đường ra của luồng dịch — timeout, exception, passthrough và bản dịch rỗng — **không sinh dòng nào** trong `translation_results`. Mọi tỷ lệ tính trên bảng đó vì thế đều chia cho một mẫu số đã loại sẵn phần lớn các ca hỏng: "tỷ lệ fallback" không đo được vì chính cái bị fallback lại không được ghi. Thêm cột vào `translation_results` không giải quyết được điều này *và* còn đòi `make reset-db` (ADR-06), trong khi bảng mới thì `create_all` tạo được mà không đụng dữ liệu cũ. Hai bảng cũng khác nhau về bản chất: `translation_results` là trạng thái ứng dụng, có ràng buộc duy nhất, cột nằm trong hợp đồng và được client đọc; `translation_attempts` là nhật ký chỉ ghi thêm, không ràng buộc duy nhất (chạy lại là một lượt thử mới), và cột được tự do đổi theo nhu cầu đo. Không chọn Prometheus/Grafana vì dự án chưa có scraper — một endpoint không ai đọc chỉ là hình thức, còn hai service trong compose là chi phí vận hành thật cho một dự án 6 tuần. Khoá `attempt_id` được sinh trước khi chạy graph và dùng làm cả PK lẫn thuộc tính trace, nên tra được hai chiều giữa Langfuse và cơ sở dữ liệu |
+| ADR-17 | Phương pháp đánh giá chất lượng dịch | LLM-as-judge, **chấm một lần mỗi mẫu**, có cho judge xem ngữ cảnh hội thoại; không chấm điểm thành phần, không chạy lặp để đo dao động | Không có bộ tham chiếu do người chấm, và việc thuê người chấm 53 mẫu × mỗi lần đổi provider nằm ngoài khả năng của nhóm. Judge **phải** được xem `context_messages`: tiêu chí chấm vốn có mục "đại từ và chủ ngữ được khôi phục đúng theo ngữ cảnh", mà trước đây judge chưa bao giờ được cho xem ngữ cảnh nào — với một sản phẩm dịch theo ngữ cảnh thì đó là lỗ hổng đo lường lớn nhất. Ba hạn chế đã biết, ghi ra để người đọc báo cáo không diễn giải quá mức: (1) judge và model dịch đều chạy ở `temperature=0.3` và mỗi mẫu chỉ chấm một lần, nên hai lần chạy cùng mã nguồn vẫn lệch nhau — vì vậy `--compare` chỉ báo "thay đổi" khi vượt ngưỡng đã công bố (0.05 với điểm trung bình, 5 điểm phần trăm với tỷ lệ đạt), còn lại ghi "trong khoảng nhiễu", và **không** tính p-value giả vờ có ý nghĩa với n=53; (2) chấm điểm thành phần và chạy lặp sẽ tốn gấp 3-5 lần hạn mức mỗi lần chạy (~318 request), vượt xa gói miễn phí — xem xét lại khi có hạn mức trả phí; (3) khi provider chấm trùng provider dịch thì model tự chấm chính nó, báo cáo in cảnh báo nhưng không chặn. Mẫu passthrough (nguồn trùng đích) bị loại khỏi mọi chỉ số chất lượng vì không model nào được gọi mà judge vẫn cho ~1.0 |
+
 
 ## 8. Triển khai
 
@@ -199,14 +258,14 @@ Các hạng mục Post-MVP, chưa được thiết kế chi tiết:
 | [`docs/CONTRACT.md`](docs/CONTRACT.md) | Đặc tả giao diện API, WebSocket, schema cơ sở dữ liệu |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Quy định làm việc nhóm và quy trình quản lý mã nguồn |
 
-### 10.2. Tài liệu quản trị dự án (lưu ngoài kho mã nguồn)
+### 10.2. Tài liệu quản trị dự án
 
-Thư mục `docs/T217/` không được đưa vào kho mã nguồn (khai báo trong `.gitignore`). Các tài liệu dưới đây được lưu trữ và chia sẻ qua kênh nội bộ của nhóm.
+Các tài liệu quản trị và đặc tả ban đầu được lưu trữ trên kênh nội bộ của nhóm:
 
-| Tài liệu | Đường dẫn | Nội dung |
-|---|---|---|
-| PRD | `docs/T217/Gate 1/2. PRD.docx` | Đặc tả yêu cầu sản phẩm, xác định phạm vi F-01 đến F-06 |
-| Brief | `docs/T217/Gate 1/1. Brief.docx` | Bối cảnh bài toán, phân tích cạnh tranh, khoảng trống thị trường |
-| Project Charter | `docs/T217/1. T217 - Project Chart + Report.xlsx` | Mục tiêu, phạm vi, mốc dự án, rủi ro, tiêu chí thành công |
-| Quản lý dự án | `docs/T217/2. T217 - Team Project Management.xlsx` | Backlog, User Story, đặc tả tính năng, theo dõi lỗi |
-| Sơ đồ Gate 2 | `docs/T217/Gate 2/ArchitectureDesign.drawio` | Bản thiết kế giai đoạn Gate 2 (đã thay thế bằng `docs/architecture_diagram.md`) |
+| Tài liệu | Nội dung |
+|---|---|
+| PRD | Đặc tả yêu cầu sản phẩm, xác định phạm vi F-01 đến F-06 |
+| Project Brief | Bối cảnh bài toán, phân tích cạnh tranh, khoảng trống thị trường |
+| Project Charter | Mục tiêu, phạm vi, mốc dự án, rủi ro, tiêu chí thành công |
+| Team Project Management | Backlog, User Story, đặc tả tính năng, theo dõi lỗi |
+

@@ -27,6 +27,7 @@ from src.services.chat import (
     ConversationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.translation import schedule_translations
 
 AUTH_TIMEOUT_SECONDS = 10
 
@@ -210,6 +211,9 @@ async def websocket_endpoint(
                     result.recipient_ids,
                     MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
                 )
+                # Fire and forget. Guarded by `created` so an idempotent resend
+                # does not translate the same message twice.
+                schedule_translations(message=result.message, publisher=manager)
     except WebSocketDisconnect:
         return
     finally:

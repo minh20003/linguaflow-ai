@@ -7,11 +7,8 @@
 
 ## Phạm vi và hiệu lực
 
-Tài liệu này chuẩn hoá quy định làm việc của nhóm, tổng hợp từ `docs/T217/1. T217 - Project Chart + Report.xlsx` (sheet *Quy Định*, *Quy Định Nội Bộ*) và `docs/T217/2. T217 - Team Project Management.xlsx`.
+Tài liệu này chuẩn hoá quy định làm việc của nhóm và là **nguồn tham chiếu duy nhất** về quy trình làm việc, tiêu chuẩn chất lượng và quản lý mã nguồn trong suốt dự án.
 
-Đây là nguồn tham chiếu duy nhất về quy trình làm việc. Trường hợp có khác biệt với các tệp Excel nêu trên, áp dụng theo tài liệu này.
-
-> **Ghi chú:** thư mục `docs/T217/` không được đưa vào kho mã nguồn (khai báo trong `.gitignore`). Các tệp Excel nêu trên được lưu trữ và chia sẻ qua kênh nội bộ của nhóm. Danh mục đầy đủ: xem [`ARCHITECTURE.md`](ARCHITECTURE.md) mục 10.2.
 
 ## Mục lục
 
@@ -21,6 +18,10 @@ Tài liệu này chuẩn hoá quy định làm việc của nhóm, tổng hợp 
 4. [Quản lý mã nguồn](#4-quản-lý-mã-nguồn)
 5. [Quy trình giao việc](#5-quy-trình-giao-việc)
 6. [Tiêu chuẩn chất lượng](#6-tiêu-chuẩn-chất-lượng)
+   - 6.1. [Ngôn ngữ trong mã nguồn](#61-ngôn-ngữ-trong-mã-nguồn)
+   - 6.2. [Quy ước đặt tên](#62-quy-ước-đặt-tên)
+   - 6.3. [Chú thích và docstring](#63-chú-thích-và-docstring)
+   - 6.4. [Kiểm tra trước khi commit](#64-kiểm-tra-trước-khi-commit)
 7. [Ra quyết định và xử lý bất đồng](#7-ra-quyết-định-và-xử-lý-bất-đồng)
 8. [Báo cáo và quy trình leo thang](#8-báo-cáo-và-quy-trình-leo-thang)
 9. [Nguyên tắc làm việc](#9-nguyên-tắc-làm-việc)
@@ -85,8 +86,6 @@ test: add unit tests for translate node
 chore: bump langchain-groq version
 ```
 
-> Quy định này thay thế hướng dẫn trong tệp Excel gốc. Hướng dẫn cũ không nhất quán: quy định viết tiếng Anh nhưng ví dụ minh hoạ sử dụng tiền tố tiếng Việt (`Thêm:`, `Sửa:`, `Cập nhật:`).
-
 ### 4.3. Pull Request và review
 
 | Hạng mục | Quy định |
@@ -120,6 +119,117 @@ Không commit: `node_modules`, `.env`, API key, tệp build, tệp tạm. Các m
 | Hiệu năng | API phản hồi dưới 1 giây; dịch thuật dưới 1 giây (NFR-01); trang chính tải dưới 3 giây. Trường hợp không đạt phải ghi nhận nguyên nhân và kế hoạch tối ưu |
 | Bảo mật | Không hard-code API key và mật khẩu; sử dụng `.env`; kiểm tra hợp lệ toàn bộ dữ liệu đầu vào từ người dùng |
 | Giao diện | Không có lỗi hiển thị ảnh hưởng khả năng sử dụng (vỡ bố cục, chồng lấn văn bản, thành phần không tương tác được) |
+
+Bốn mục dưới đây cụ thể hoá dòng "Mã nguồn" trong bảng trên.
+
+> Quy định này cụ thể hoá và thay thế mục *Naming Conventions* trong `docs/guide/code-style/python.md` (nội dung template dùng chung cho toàn khoá).
+
+### 6.1. Ngôn ngữ trong mã nguồn
+
+| Viết bằng tiếng Anh | Viết bằng tiếng Việt |
+|---|---|
+| Tên biến, hàm, lớp, module, **tên hàm test** | Tài liệu Markdown (`README.md`, `ARCHITECTURE.md`, `docs/**`) |
+| Chú thích `#` và docstring | Báo cáo sinh ra tại `eval/results/report.md` |
+| Thông điệp ghi log | Chuỗi hiển thị cho người dùng cuối |
+| Nội dung prompt gửi cho LLM | |
+| Tiêu đề commit, tên nhánh, tiêu đề Pull Request | |
+
+Riêng các trường trong `eval/golden_set.jsonl` viết theo ngôn ngữ của tình huống đang kiểm thử.
+
+Prompt viết bằng tiếng Anh không phải vì lý do hình thức: system prompt viết bằng một ngôn ngữ sẽ làm tăng khả năng model trả lời bằng chính ngôn ngữ đó thay vì ngôn ngữ đích được yêu cầu.
+
+### 6.2. Quy ước đặt tên
+
+**Python (`src/`, `tests/`, `eval/`)**
+
+| Loại | Quy ước | Ví dụ |
+|---|---|---|
+| Hàm, biến, phương thức | `snake_case` | `translate_message`, `preferred_language` |
+| Lớp, Pydantic model, Enum | `PascalCase` | `TranslationAgent`, `AgentState` |
+| Hằng số | `SCREAMING_SNAKE_CASE` | `MAX_RETRY_COUNT`, `DEFAULT_TIMEOUT_MS` |
+| Hàm hỗ trợ nội bộ module | Một dấu gạch dưới ở đầu | `_build_prompt` |
+| Biến boolean | Tiền tố `is_` / `has_` / `should_` | `is_fallback`, `has_context` |
+| Biến exception | Luôn đặt là `exc` | `except Exception as exc` |
+| Module, tệp | `snake_case.py`, khớp lớp hoặc hàm chính bên trong | `context_provider.py` |
+| Hàm nhà máy | `build_x` trả về **một giá trị**; `make_x` trả về **một callable** | `build_translation_graph`, `make_build_context` |
+
+Không viết tắt. `docs/CONTRACT.md` §1 đã cấm các dạng như `lang`, `src_lang`; quy tắc này áp dụng cho toàn bộ mã nguồn.
+
+**TypeScript / React (frontend)**
+
+| Loại | Quy ước | Ví dụ |
+|---|---|---|
+| Biến, hàm, hook | `camelCase` | `sendMessage`, `useTranslation` |
+| Component, type, interface | `PascalCase` | `ChatWindow`, `TranslationAgentState` |
+| Hook | Luôn có tiền tố `use` | `useWebSocket` |
+| Hằng số | `SCREAMING_SNAKE_CASE`; object cấu hình dùng `camelCase` | `MAX_MESSAGE_LENGTH`, `defaultConfig` |
+| Interface props | `<TênComponent>Props` | `ChatWindowProps` |
+| Tệp component | `PascalCase.tsx`, khớp tên component | `ChatWindow.tsx` |
+| Tệp không phải component | `kebab-case.ts` | `use-websocket.ts` |
+
+**Cơ sở dữ liệu (Supabase PostgreSQL)**
+
+| Loại | Quy ước | Ví dụ |
+|---|---|---|
+| Bảng | Số nhiều, `snake_case` | `messages`, `translation_results` |
+| Cột | `snake_case` | `preferred_language`, `is_fallback` |
+| Khoá ngoại | `<bảng_số_ít>_id` | `user_id`, `message_id` |
+| Cột boolean | Tiền tố `is_` / `has_` | `is_deleted` |
+| Cột thời gian | Hậu tố `_at` | `created_at` |
+
+**API và WebSocket** — phải khớp `docs/CONTRACT.md` chính xác
+
+| Loại | Quy ước | Ví dụ |
+|---|---|---|
+| Đường dẫn REST | `kebab-case`, danh từ số nhiều | `/api/v1/chat-sessions` |
+| Tên sự kiện WebSocket | `snake_case`, động từ đứng trước | `send_message`, `translation_result` |
+| Trường trong payload JSON | `snake_case`, ánh xạ 1:1 với tên cột CSDL khi trường đó tương ứng trực tiếp một cột | `is_fallback` |
+
+Cần tên trường / endpoint / sự kiện mới → bổ sung vào `docs/CONTRACT.md` và được nhóm duyệt trước, không tự đặt tên trong mã nguồn.
+
+#### 6.2.1. Đặt tên hàm test
+
+Theo mẫu `test_<đối tượng>_<điều kiện>_<kết quả mong đợi>`. Tên test phải đọc được như một câu mô tả hành vi mà không cần mở phần thân hàm.
+
+```python
+def test_route_skips_llm_when_languages_match(): ...
+def test_returns_none_on_timeout(): ...
+def test_secondary_provider_translates_when_llm_fails(): ...
+```
+
+Tránh những tên chỉ nêu điều kiện mà không nêu kết quả (`test_timeout`), hoặc chỉ là một danh từ (`test_translation`). Tên test không được trùng nhau kể cả khi nằm ở hai tệp khác nhau.
+
+#### 6.2.2. Tên bị đóng băng
+
+Ba nhóm tên sau **đứng trên** mọi quy ước ở §6.2 và không được đổi để "cho đúng chuẩn":
+
+1. Tên do `docs/CONTRACT.md` ràng buộc: trường của `AgentState`, trường JSON, tên bảng và tên cột. Muốn đổi phải sửa `CONTRACT.md` trước và báo nhóm.
+2. Chuỗi tên node LangGraph trong `src/agents/graph.py` — chúng xuất hiện trong sơ đồ tại `docs/architecture_diagram.md` §2 và trong `ARCHITECTURE.md` §5.1.
+3. Biến `agent` trong `src/agents/graph.py`, do `src/api/routes.py` đang import theo tên này.
+
+### 6.3. Chú thích và docstring
+
+- Chú thích trả lời câu hỏi **tại sao**, không thuật lại **cái gì**. Nếu một đoạn mã cần chú thích để hiểu nó đang làm gì, hãy đặt lại tên hoặc tách hàm thay vì thêm chú thích.
+- Không chú thích những dòng đã hiển nhiên (`# tăng biến đếm`).
+- Không để lại mã bị comment.
+- Mọi module trong `src/` có docstring ở đầu tệp.
+- Mọi hàm và lớp public có docstring nêu mục đích và các tác dụng phụ không hiển nhiên.
+- Dùng khối `Args:` / `Returns:` / `Raises:` theo chuẩn Google **khi** hàm có từ hai tham số trở lên, hoặc khi giá trị trả về không suy ra được từ tên hàm và annotation. Các trường hợp còn lại viết docstring dạng văn xuôi.
+
+**Ngoại lệ có chủ đích:** hàm node LangGraph nhận đúng một tham số `state: AgentState` và trả về dict cập nhật một phần. Quy ước này đã được mô tả một lần tại docstring của `src/agents/nodes/translation.py`, nên các node dùng docstring văn xuôi, không lặp lại khối `Args:` ở từng hàm. Hàm lồng bên trong (closure) cũng vậy khi docstring của hàm bao ngoài đã giải thích đủ.
+
+Giữ hàm nhỏ, mỗi hàm một trách nhiệm. Nếu một hàm cần chú thích nội bộ để giải thích các bước, hãy tách nó thành các hàm nhỏ hơn.
+
+### 6.4. Kiểm tra trước khi commit
+
+```bash
+ruff check src/ tests/ eval/
+pytest tests/ -q
+```
+
+Cả hai lệnh phải pass. Không tắt rule để lệnh pass.
+
+**Lưu ý về giới hạn của công cụ:** không có linter nào trong dự án phát hiện được định danh hoặc chú thích viết bằng tiếng Việt. Rule `N` của `ruff` chỉ kiểm tra kiểu chữ (`snake_case`, `PascalCase`), còn `PLC2401` chỉ bắt được ký tự non-ASCII — trong khi tiếng Việt không dấu là ASCII thuần. Việc bảo đảm §6.1 và §6.2 hoàn toàn thuộc trách nhiệm người review.
 
 ## 7. Ra quyết định và xử lý bất đồng
 

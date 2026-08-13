@@ -1,12 +1,239 @@
-from langchain_openai import ChatOpenAI
+"""LLM factory — selects a provider through the LLM_PROVIDER setting.
 
-from src.config import get_settings
+Switching providers only requires editing .env, never the code (ADR-10). This
+matters because free tiers differ sharply in rate limits, so a provider that
+throttles mid-demo has to be swapped quickly.
+"""
+
+from dataclasses import dataclass
+
+from langchain_core.language_models.chat_models import BaseChatModel
+
+from src.config import Settings, get_settings
+
+# Model used when LLM_MODEL is left empty
+DEFAULT_MODELS: dict[str, str] = {
+    "groq": "llama-3.3-70b-versatile",
+    "deepseek": "deepseek-chat",
+    "gemini": "gemini-2.5-flash",
+    "openai": "gpt-4o-mini",
+}
+
+# Settings field holding each provider's API key. pydantic-settings maps the
+# field name to the environment variable by upper-casing it, so this one table
+# also gives us the variable name to quote in error messages.
+PROVIDER_KEY_FIELD: dict[str, str] = {
+    "groq": "groq_api_key",
+    "deepseek": "deepseek_api_key",
+    "gemini": "google_api_key",
+    "openai": "openai_api_key",
+}
+
+# DeepSeek is OpenAI-compatible, so it reuses the OpenAI client
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
-def get_llm() -> ChatOpenAI:
-    settings = get_settings()
-    return ChatOpenAI(
-        model=settings.model_name,
-        api_key=settings.openai_api_key,
-        temperature=settings.llm_temperature,
+class LLMConfigError(RuntimeError):
+    """Raised when the provider is unknown or its API key is missing."""
+
+
+# Chat models already built, keyed on the configuration that shapes them. The API
+# key is deliberately not part of the key: it would put the secret in a
+# module-level structure that any traceback dumping locals would render.
+_CLIENTS: dict[tuple[str, str, float, int, int], BaseChatModel] = {}
+
+
+def extract_text(response: object) -> str:
+    """Return the plain text of a chat-model response.
+
+    Lives here rather than in a node so every caller of :func:`get_llm` — the
+    translation nodes and the evaluation judge alike — shares one implementation.
+
+    ``BaseMessage.text`` already flattens plain-string content and content-block
+    lists. The ``content`` fallbacks cover response objects that only define that
+    attribute: lightweight test doubles, and providers returning raw blocks.
+    """
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+
+    content = getattr(response, "content", response)
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        # Content-block form: [{"type": "text", "text": "..."}, ...]
+        parts = [
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        ]
+        if parts:
+            return "".join(parts).strip()
+
+    return str(content).strip()
+
+
+@dataclass(frozen=True, slots=True)
+class LlmCallInfo:
+    """What the provider reported about a call it just served.
+
+    Every field defaults to empty. Callers get a fully-formed object whether the
+    provider reported anything or not, so no reader has to test for None.
+    """
+
+    model_served: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    finish_reason: str = ""
+    request_id: str = ""
+
+
+def extract_call_info(response: object) -> LlmCallInfo:
+    """Read the accounting metadata off a chat-model response.
+
+    Separate from :func:`extract_text` rather than folded into it. That function
+    is called by the nodes and by the evaluation judge, and returns a plain
+    string on which both already depend; measurement must not change its shape.
+
+    ``model_served`` is the model the provider says it used, which is not always
+    the model that was requested — aliases resolve to a dated version, and
+    providers reroute under load. Reading it from the client instead, as the
+    translate node used to, records an intention rather than a fact.
+
+    ``finish_reason`` earns its place: a value of ``"length"`` explains a whole
+    class of fallback that currently looks like a model producing rambling
+    output, when the output was really cut off mid-sentence by ``LLM_MAX_TOKENS``.
+
+    Returns:
+        The metadata found. An empty ``LlmCallInfo`` when the response carries
+        none — including for the lightweight doubles used across the test suite,
+        which define only ``content``. Never raises: telemetry must not be able
+        to break a translation (NFR-02).
+    """
+    try:
+        usage = getattr(response, "usage_metadata", None) or {}
+        metadata = getattr(response, "response_metadata", None) or {}
+
+        return LlmCallInfo(
+            model_served=str(metadata.get("model_name") or metadata.get("model") or ""),
+            input_tokens=int(usage.get("input_tokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or 0),
+            finish_reason=str(metadata.get("finish_reason") or ""),
+            request_id=str(getattr(response, "id", "") or ""),
+        )
+    except Exception:  # noqa: BLE001 - measurement must never break a translation
+        return LlmCallInfo()
+
+
+def _build_llm(
+    provider: str,
+    model: str,
+    temperature: float,
+    timeout: int,
+    max_tokens: int,
+    api_key: str,
+) -> BaseChatModel:
+    """Construct a chat model, reusing the one already built for this config.
+
+    Constructing a provider client costs roughly 0.9s — mostly building the HTTP
+    client and its TLS context — which would otherwise be paid on every
+    translated message. Reuse also keeps the underlying HTTP connection pool
+    alive instead of renegotiating TLS per request.
+
+    Note that the cached client outlives the event loop it was created on, so a
+    process that runs several ``asyncio.run()`` calls must not share it.
+
+    Args:
+        provider: One of the keys in DEFAULT_MODELS.
+        model: Model identifier to request from that provider.
+        temperature: Sampling temperature.
+        timeout: Per-request timeout in seconds.
+        max_tokens: Upper bound on generated tokens.
+        api_key: Credential for the provider. Deliberately excluded from the
+            cache key so the secret never lands in a module-level structure.
+
+    Returns:
+        A chat model, reused across calls with the same configuration.
+    """
+    cache_key = (provider, model, temperature, timeout, max_tokens)
+    cached = _CLIENTS.get(cache_key)
+    if cached is not None:
+        return cached
+
+    common = {"model": model, "temperature": temperature, "timeout": timeout}
+
+    if provider == "groq":
+        from langchain_groq import ChatGroq
+
+        client: BaseChatModel = ChatGroq(api_key=api_key, max_tokens=max_tokens, **common)
+    elif provider == "deepseek":
+        from langchain_openai import ChatOpenAI
+
+        client = ChatOpenAI(
+            api_key=api_key, base_url=DEEPSEEK_BASE_URL, max_tokens=max_tokens, **common
+        )
+    elif provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        # ChatGoogleGenerativeAI names this max_output_tokens, not max_tokens —
+        # it cannot go in `common` with the others.
+        client = ChatGoogleGenerativeAI(
+            google_api_key=api_key, max_output_tokens=max_tokens, **common
+        )
+    else:  # provider == "openai"
+        from langchain_openai import ChatOpenAI
+
+        client = ChatOpenAI(api_key=api_key, max_tokens=max_tokens, **common)
+
+    _CLIENTS[cache_key] = client
+    return client
+
+
+def get_llm(
+    settings: Settings | None = None,
+    provider: str | None = None,
+) -> BaseChatModel:
+    """Return the chat model for the configured provider.
+
+    Args:
+        settings: configuration to read. Defaults to the process settings.
+        provider: overrides ``settings.llm_provider``. Used by the evaluation
+            script to score with a different model than the one being tested.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    provider = provider or settings.llm_provider
+
+    if provider not in DEFAULT_MODELS:
+        raise LLMConfigError(
+            f"Unknown LLM_PROVIDER: {provider}. "
+            f"Expected one of: {', '.join(sorted(DEFAULT_MODELS))}"
+        )
+
+    # Validate the key *before* importing the provider package, so a missing key
+    # reports a clear error instead of an ImportError when the package is absent.
+    key_field = PROVIDER_KEY_FIELD[provider]
+    api_key = getattr(settings, key_field, "")
+    if not api_key:
+        raise LLMConfigError(
+            f"LLM_PROVIDER={provider} but {key_field.upper()} is not set. "
+            f"Add {key_field.upper()} to .env or switch LLM_PROVIDER to another provider."
+        )
+
+    # An explicit provider override ignores LLM_MODEL, which belongs to the
+    # provider configured in settings.
+    model = DEFAULT_MODELS[provider]
+    if provider == settings.llm_provider and settings.llm_model:
+        model = settings.llm_model
+
+    return _build_llm(
+        provider,
+        model,
+        settings.llm_temperature,
+        settings.llm_timeout_seconds,
+        settings.llm_max_tokens,
+        api_key,
     )

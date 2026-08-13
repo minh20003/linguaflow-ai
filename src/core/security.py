@@ -1,8 +1,8 @@
 """Security utilities: password hashing and JWT handling."""
 
-from datetime import UTC, datetime, timedelta
 import hashlib
 import secrets
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt

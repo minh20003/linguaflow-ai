@@ -156,6 +156,20 @@ class ChatService:
         )
         return tuple(result.all())
 
+    async def get_conversation_members(
+        self,
+        *,
+        conversation_id: str,
+    ) -> Sequence[User]:
+        """Return the member rows themselves, for rendering and for language fan-out."""
+        result = await self._db.scalars(
+            select(User)
+            .join(ConversationMember, ConversationMember.user_id == User.id)
+            .where(ConversationMember.conversation_id == conversation_id)
+            .order_by(User.id)
+        )
+        return result.all()
+
     async def get_message_history(
         self,
         *,
@@ -223,11 +237,18 @@ class ChatService:
                 created=False,
             )
 
+        # Provisional only. The agent's detect_language node decides the real
+        # value and overwrites it (docs/CONTRACT.md section 4.3).
+        sender_language = await self._db.scalar(
+            select(User.preferred_language).where(User.id == sender_id)
+        )
+
         message = Message(
             client_message_id=client_message_id,
             conversation_id=conversation_id,
             sender_id=sender_id,
             original_text=text,
+            source_language=sender_language or "en",
         )
         self._db.add(message)
 

@@ -29,6 +29,13 @@
   border-inline: 1px solid var(--rule);
 }
 
+/* Embedded in the side-by-side demo, the shell must fill its pane rather than
+   the viewport — 100svh inside a shorter container pushes the composer out of
+   sight. */
+.embedded {
+  height: 100%;
+}
+
 .ledger {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;

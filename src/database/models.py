@@ -3,7 +3,18 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -188,6 +199,189 @@ class Message(Base):
         nullable=False,
     )
     original_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Provisional on insert — it is the sender's preferred_language, which says
+    # what they usually write in, not what this message is in. The agent's
+    # detect_language node overwrites it (docs/CONTRACT.md section 4.3).
+    source_language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class TranslationResult(Base):
+    """One message rendered into one target language.
+
+    Members who share a target language share a row, so the `translation_id`
+    they each receive is the same — which is what lets F-05 attach feedback to a
+    translation rather than to a recipient (docs/CONTRACT.md section 4.4).
+    """
+
+    __tablename__ = "translation_results"
+    __table_args__ = (
+        # Enforces the shared-row rule above in the schema rather than in hope,
+        # and makes the background translation task idempotent under retry.
+        UniqueConstraint(
+            "message_id",
+            "target_language",
+            name="uq_translation_results_message_target",
+        ),
+        Index("ix_translation_results_message_id", "message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    message_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_language: Mapped[str] = mapped_column(String(10), nullable=False)
+    translated_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Empty when tier 3 of the fallback chain returned the original untranslated
+    # (ARCHITECTURE.md section 5.1).
+    model: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # True whenever the text did not come from the configured LLM, including a
+    # successful secondary-provider translation.
+    is_fallback: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class Feedback(Base):
+    """A reader's correction of a translation (F-05).
+
+    The table exists so `translation_results` has somewhere to point; the
+    endpoint and the correction UI are Sprint 2.
+    """
+
+    __tablename__ = "feedbacks"
+    __table_args__ = (
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_feedbacks_rating"),
+        Index("ix_feedbacks_translation_id", "translation_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    translation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("translation_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    correction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+# Every way a translation attempt can end. The first three produce a
+# `translation_results` row; the last four produce nothing at all, which is
+# exactly why this table exists — without them there is no denominator, and a
+# "fallback rate" computed only over successes is not a rate of anything.
+ATTEMPT_OUTCOMES = (
+    "llm",  # the configured LLM translated and the output passed validation
+    "secondary",  # deep-translator translated instead (ADR-07 tier 2)
+    "original",  # no tier translated, the original text was delivered (tier 3)
+    "passthrough",  # source language equalled target, no model was called
+    "timeout",  # the run exceeded translation_timeout_seconds
+    "error",  # the graph raised
+    "empty",  # the graph returned an empty translation
+)
+
+
+class TranslationAttempt(Base):
+    """One row per (message, target language) tried, whatever the outcome.
+
+    A measurement log, not application state, and the difference drives the
+    schema. `translation_results` holds what readers are shown, so it is unique
+    on (message_id, target_language) and carries only the fields the product
+    contract exposes. This table is append-only: a retry is a second attempt and
+    deserves its own row, so there is no unique constraint, and the columns are
+    free to change with what the team wants to measure.
+
+    Writes must never be allowed to fail a translation — see `record_attempt`
+    in `src/services/translation.py`, which is the only writer.
+    """
+
+    __tablename__ = "translation_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ({})".format(", ".join(f"'{o}'" for o in ATTEMPT_OUTCOMES)),
+            name="ck_translation_attempts_outcome",
+        ),
+        Index("ix_translation_attempts_created_at", "created_at"),
+        Index("ix_translation_attempts_message_id", "message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    message_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_language: Mapped[str] = mapped_column(String(10), nullable=False)
+    # What the sender's profile claimed, known before the run starts.
+    source_language_declared: Mapped[str] = mapped_column(String(10), nullable=False)
+    # What detection concluded. Null when detection was skipped or failed, so
+    # the gap between the two columns is itself measurable (ADR-11).
+    source_language_detected: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    provider: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    model_configured: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    # What the provider reported serving, which is not always what was asked
+    # for: aliases resolve, and providers reroute under load.
+    model_served: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+
+    detect_method: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+    llm_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finish_reason: Mapped[str] = mapped_column(String(20), nullable=False, default="")
+
+    detect_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    context_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    translate_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fallback_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Wall clock around the whole run, measured in the service layer. Wider than
+    # `translation_results.latency_ms`, which covers model time only: this is
+    # what the reader waited, and what NFR-01 is about.
+    total_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    context_lines: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Machine-readable code, not prose — the log lines stay for humans.
+    fallback_reason: Mapped[str] = mapped_column(String(30), nullable=False, default="")
+
+    # SET NULL rather than CASCADE, the opposite of `feedbacks`, and on purpose:
+    # deleting a translation must not delete the record that it happened.
+    translation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("translation_results.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

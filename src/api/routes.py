@@ -12,7 +12,6 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.graph import agent
 from src.config import get_settings
 from src.core.deps import get_current_user
 from src.core.security import (
@@ -23,9 +22,15 @@ from src.core.security import (
     verify_password,
 )
 from src.database import get_db
-from src.database.models import Conversation, PasswordResetToken, RefreshSession, User
-from src.models.schemas import ChatRequest, ChatResponse
+from src.database.models import (
+    Conversation,
+    PasswordResetToken,
+    RefreshSession,
+    TranslationResult,
+    User,
+)
 from src.schemas.auth import (
+    SUPPORTED_LANGUAGES,
     AuthResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
@@ -36,12 +41,14 @@ from src.schemas.auth import (
     ResetPasswordRequest,
     UpdateLanguageRequest,
     UserResponse,
+    normalize_email,
 )
 from src.schemas.chat import (
+    AttachmentResponse,
     ConversationCreateRequest,
     ConversationResponse,
-    AttachmentResponse,
     MessageResponse,
+    TranslationSummary,
 )
 from src.services.chat import (
     ChatService,
@@ -311,6 +318,35 @@ async def update_preferred_language(
     return UserResponse.model_validate(current_user)
 
 
+@router.get("/languages", response_model=list[str])
+async def list_supported_languages() -> list[str]:
+    """Return the language codes the system accepts.
+
+    Serving the allowlist is what lets the frontend stop keeping its own copy;
+    `SUPPORTED_LANGUAGES` stays the single source of truth (CONTRACT section 1).
+    """
+    return sorted(SUPPORTED_LANGUAGES)
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def find_users(
+    email: str = Query(..., min_length=3, max_length=255),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UserResponse]:
+    """Look up an account by exact email, for adding members to a conversation.
+
+    A list rather than a single object: an empty list is an unambiguous "no such
+    account", where a 404 would be confused with a broken route. Exact match
+    only — this is a resolver for a known address, not a directory search.
+
+    Authentication is required so it is not an anonymous enumeration oracle. It
+    remains one for signed-in users, which is accepted at this stage.
+    """
+    user = await db.scalar(select(User).where(User.email == normalize_email(email)))
+    return [UserResponse.model_validate(user)] if user is not None else []
+
+
 # ========================
 # Conversation Endpoints
 # ========================
@@ -415,7 +451,44 @@ async def get_conversation_messages(
             detail=str(exc),
         ) from exc
 
-    return [MessageResponse.model_validate(message) for message in messages]
+    translations = await _translations_by_message(db, [message.id for message in messages])
+    return [
+        MessageResponse(
+            id=message.id,
+            client_message_id=message.client_message_id,
+            conversation_id=message.conversation_id,
+            sender_id=message.sender_id,
+            original_text=message.original_text,
+            source_language=message.source_language,
+            translations=translations.get(message.id, []),
+            created_at=message.created_at,
+        )
+        for message in messages
+    ]
+
+
+async def _translations_by_message(
+    db: AsyncSession,
+    message_ids: list[str],
+) -> dict[str, list[TranslationSummary]]:
+    """Load every translation for a page of messages in one query.
+
+    History is how a client recovers translations it missed while disconnected,
+    so this is what keeps a socket dropping mid-translation from losing data.
+    """
+    if not message_ids:
+        return {}
+
+    rows = await db.execute(
+        select(TranslationResult).where(TranslationResult.message_id.in_(message_ids))
+    )
+
+    grouped: dict[str, list[TranslationSummary]] = {}
+    for translation in rows.scalars():
+        grouped.setdefault(translation.message_id, []).append(
+            TranslationSummary.model_validate(translation)
+        )
+    return grouped
 
 
 @router.post(
@@ -503,26 +576,3 @@ async def download_conversation_attachment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
     return FileResponse(path, filename=path.name.split("_", 1)[-1], media_type=mimetypes.guess_type(path.name)[0])
 
-
-# ========================
-# Legacy Chat Endpoints
-# ========================
-
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
-    """Chat với AI agent."""
-    try:
-        result = await agent.ainvoke({"query": request.message})
-        return ChatResponse(
-            response=result.get("response", ""),
-            analysis=result.get("analysis", ""),
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/status")
-async def agent_status():
-    """Kiểm tra trạng thái agent."""
-    return {"status": "ready", "agent": "LangGraph Agent v1.0"}

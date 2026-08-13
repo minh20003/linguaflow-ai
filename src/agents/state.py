@@ -1,18 +1,49 @@
+"""State schema for the Translation Agent.
+
+Defined by docs/CONTRACT.md section 2. Field names are shared across Frontend,
+Backend and Agent — do not rename them here without updating the contract first.
+"""
+
 from __future__ import annotations
 
 from typing import TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """State schema cho LangGraph agent.
+    """State passed between nodes of the translation graph.
 
-    Mỗi node đọc và ghi vào state này.
-    total=False cho phép tất cả fields là optional.
+    ``total=False`` lets each node return only the fields it changes; LangGraph
+    merges those partial updates into the shared state.
     """
 
-    query: str
-    context: str
-    analysis: str
-    response: str
+    # Identifiers supplied by the Chat Service
+    conversation_id: str
+    message_id: str
+    sender_id: str
+
+    # Input
+    original_text: str
+    source_language: str  # ISO 639-1; provisional on entry, overwritten by detection
+    target_language: str  # Taken from users.preferred_language of the recipient
+
+    # Conversation context
+    context_messages: list[str]  # 3-5 recent messages, preformatted for the prompt
+
+    # Output
+    translated_text: str
+    translation_id: str  # Row id in translation_results, required by F-05
+    is_valid: bool  # Result of the validate_output node
+    is_fallback: bool  # True when the original text is returned after a failure
+
+    # Measurements persisted to translation_results and reported to Langfuse
+    model: str
+    latency_ms: int
+
     error: str
-    metadata: dict
+
+    # Measurement only. The keys inside are NOT part of the contract: they are
+    # written by the nodes, read by `record_attempt`, and free to change with
+    # what the team wants to measure. One field rather than eight keeps a new
+    # metric from being a contract change every time (docs/CONTRACT.md
+    # section 2). No client may depend on anything in here.
+    telemetry: dict

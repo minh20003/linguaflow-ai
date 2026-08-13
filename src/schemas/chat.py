@@ -26,6 +26,16 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class ConversationMemberSummary(BaseModel):
+    """Enough about a member to render them and to know what they read."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    preferred_language: str
+
+
 class ConversationResponse(BaseModel):
     """Conversation metadata returned to an authenticated member."""
 
@@ -35,6 +45,23 @@ class ConversationResponse(BaseModel):
     created_by: str
     created_at: datetime
     member_ids: list[str]
+    # `member_ids` alone leaves a direct conversation with no name to show and
+    # every incoming message unattributed. Both are kept: the id list is what
+    # existing clients read.
+    members: list[ConversationMemberSummary] = []
+
+
+class TranslationSummary(BaseModel):
+    """One rendered translation attached to a message in REST history."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    translation_id: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
 
 
 class MessageResponse(BaseModel):
@@ -47,6 +74,11 @@ class MessageResponse(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
+    source_language: str
+    # Carrying translations here is what makes a socket that dropped mid
+    # translation a non-event: the client recovers them on reconnect rather
+    # than waiting for a `translation_completed` that was already sent.
+    translations: list[TranslationSummary] = []
     created_at: datetime
 
 
@@ -129,6 +161,29 @@ class MessageReceivedEvent(BaseModel):
 
     type: Literal["message_received"] = "message_received"
     message: RealtimeMessage
+
+
+class TranslationCompletedEvent(BaseModel):
+    """WebSocket delivery event for a finished translation.
+
+    Sent only to members whose `preferred_language` equals `target_language`;
+    the socket is per-user, so the filtering happens at fan-out rather than at
+    the client (docs/CONTRACT.md section 4.4).
+
+    `conversation_id` is carried explicitly because a per-user socket gives the
+    client no other way to route this event to the right thread.
+    """
+
+    type: Literal["translation_completed"] = "translation_completed"
+    message_id: str
+    conversation_id: str
+    translation_id: str
+    source_language: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
 
 
 class ErrorEvent(BaseModel):
