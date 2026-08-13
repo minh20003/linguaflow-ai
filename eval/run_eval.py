@@ -38,8 +38,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import re
+import secrets
 import statistics
 import sys
 from datetime import UTC, datetime
@@ -59,7 +61,8 @@ from src.services.llm import extract_text, get_llm  # noqa: E402
 from src.services.metrics import group_scores, percentile  # noqa: E402
 
 GOLDEN_SET = Path(__file__).parent / "golden_set.jsonl"
-REPORT_PATH = Path(__file__).parent / "results" / "report.md"
+RESULTS_DIR = Path(__file__).parent / "results"
+REPORT_PATH = RESULTS_DIR / "report.md"
 
 # A judge score at or above this counts the translation as acceptable
 PASS_THRESHOLD = 0.7
@@ -200,13 +203,21 @@ async def run_sample(
     actual = state.get("translated_text", "")
     score = await judge(sample, actual, judge_llm)
     telemetry = state.get("telemetry", {})
+    declared = sample["source_language"]
+    detected = state.get("source_language") or declared
 
     return {
         "id": sample["id"],
         "category": sample.get("category", ""),
         "chat_type": sample.get("chat_type", ""),
         "context_level": sample.get("context_level", ""),
-        "language_pair": f"{sample['source_language']}->{sample['target_language']}",
+        # Built from the language actually detected, not the one the sample
+        # declares. Under the declared value a misdetected sample is filed
+        # under a pair it was never translated as, and the error disappears
+        # into a bucket that looks healthy.
+        "language_pair": f"{detected}->{sample['target_language']}",
+        "source_language_declared": declared,
+        "source_language_detected": detected,
         "original": sample["original_text"],
         "expected": sample["expected_translation"],
         "actual": actual,
@@ -214,6 +225,15 @@ async def run_sample(
         "latency_ms": state.get("latency_ms", 0),
         "is_fallback": state.get("is_fallback", False),
         "outcome": telemetry.get("outcome", ""),
+        # Attribution: which provider and model produced this particular
+        # translation, and what it cost. Without it a report is a set of
+        # numbers with nothing to attribute them to.
+        "provider": get_settings().llm_provider,
+        "model_served": telemetry.get("model_served", ""),
+        "detect_method": telemetry.get("detect_method", ""),
+        "llm_calls": telemetry.get("llm_calls", 0),
+        "input_tokens": telemetry.get("input_tokens", 0),
+        "output_tokens": telemetry.get("output_tokens", 0),
     }
 
 
@@ -252,6 +272,23 @@ def summarize(results: list[dict]) -> dict:
         "avg_score": statistics.mean([r["score"] for r in scored]) if scored else 0.0,
         "avg_latency": statistics.mean(latencies) if latencies else 0.0,
         "p95_latency": percentile(latencies, 95),
+        # Tests ADR-11's premise directly. The two-tier design assumes people
+        # usually write in the language they configured, so the local detector
+        # usually agrees and the arbitration call is rarely needed. If this rate
+        # were low, the design would be paying for a step it does not save.
+        "detect_agreement": (
+            sum(
+                1
+                for r in results
+                if r["source_language_detected"] == r["source_language_declared"]
+            )
+            / len(results)
+            if results
+            else 0.0
+        ),
+        "llm_calls": sum(r["llm_calls"] for r in results),
+        "input_tokens": sum(r["input_tokens"] for r in results),
+        "output_tokens": sum(r["output_tokens"] for r in results),
     }
 
 
@@ -464,6 +501,140 @@ def render_report(
     return "\n".join(lines)
 
 
+def make_run_id() -> str:
+    """Identify one run: sortable by time, unique between runs in the same minute."""
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return f"{stamp}-{secrets.token_hex(3)}"
+
+
+def golden_set_sha() -> str:
+    """Fingerprint the dataset, so two runs can be told apart from two datasets.
+
+    A comparison across an edited golden set is meaningless, and without this
+    there is no way to notice it happened.
+    """
+    return hashlib.sha256(GOLDEN_SET.read_bytes()).hexdigest()[:12]
+
+
+def write_run(results: list[dict], summary: dict, judge_provider: str | None) -> Path:
+    """Persist the full run, including every translation in full.
+
+    `report.md` is overwritten each time and truncates translations to fit a
+    table, so no complete record of what the agent produced survives a second
+    run. This is that record.
+    """
+    settings = get_settings()
+    run_id = make_run_id()
+    path = RESULTS_DIR / f"{run_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "started_at": datetime.now(UTC).isoformat(),
+                "provider": settings.llm_provider,
+                "model_configured": settings.llm_model,
+                "judge_provider": judge_provider or settings.llm_provider,
+                "golden_set_sha": golden_set_sha(),
+                "summary": summary,
+                "samples": results,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+# How much a metric must move before the comparison calls it a change rather
+# than noise. Both the translating model and the judge run at temperature 0.3,
+# each sample is scored exactly once, and many breakdown buckets hold a single
+# sample — so a small movement between two runs of identical code is expected.
+# These are declared thresholds, not statistics: with n=53 and one observation
+# per sample there is nothing here to compute a meaningful p-value from.
+NOISE_AVG_SCORE = 0.05
+NOISE_PASS_RATE = 5.0
+
+
+def _pass_rate(summary: dict) -> float:
+    """Share of scored samples that met the threshold, as a percentage."""
+    return summary["passed"] / summary["scored"] * 100 if summary["scored"] else 0.0
+
+
+def compare_runs(baseline: dict, current: dict, summary: dict) -> str:
+    """Render the difference between a stored run and the one just finished."""
+    base_summary = baseline["summary"]
+    lines = [
+        "",
+        f"So sánh với {baseline['run_id']} "
+        f"({baseline['provider']} → {current['provider']})",
+        "",
+    ]
+
+    if baseline.get("golden_set_sha") != current["golden_set_sha"]:
+        lines += [
+            "  [!] Bộ dữ liệu đã thay đổi giữa hai lần chạy — số liệu không so sánh "
+            "trực tiếp được.",
+            "",
+        ]
+
+    comparisons = [
+        ("Điểm trung bình", base_summary["avg_score"], summary["avg_score"],
+         NOISE_AVG_SCORE, "{:.3f}"),
+        ("Tỷ lệ đạt (%)", _pass_rate(base_summary), _pass_rate(summary),
+         NOISE_PASS_RATE, "{:.1f}"),
+        ("Độ trễ TB (ms)", base_summary["avg_latency"], summary["avg_latency"],
+         None, "{:.0f}"),
+        ("Độ trễ p95 (ms)", base_summary["p95_latency"], summary["p95_latency"],
+         None, "{:.0f}"),
+        ("Số lần fallback", base_summary["fallback"], summary["fallback"],
+         None, "{:.0f}"),
+    ]
+
+    lines += ["| Chỉ số | Trước | Sau | Thay đổi |", "|---|---:|---:|---|"]
+    for label, before, after, noise, fmt in comparisons:
+        delta = after - before
+        if noise is not None and abs(delta) < noise:
+            verdict = f"trong khoảng nhiễu (±{noise:g})"
+        elif f"{delta:{fmt[2:-1]}}".strip("-0.") == "":
+            # Rounds to zero at the precision shown. Printing "-0" for a
+            # difference of half a millisecond reads as a regression.
+            verdict = "không đổi"
+        else:
+            verdict = f"{delta:+{fmt[2:-1]}}"
+        lines.append(f"| {label} | {fmt.format(before)} | {fmt.format(after)} | {verdict} |")
+
+    before_pass = {
+        s["id"]: s["score"] is not None and s["score"] >= PASS_THRESHOLD
+        for s in baseline["samples"]
+    }
+    flipped = [
+        (s["id"], before_pass[s["id"]], s["score"] is not None and s["score"] >= PASS_THRESHOLD)
+        for s in current["samples"]
+        if s["id"] in before_pass
+        and before_pass[s["id"]] != (s["score"] is not None and s["score"] >= PASS_THRESHOLD)
+    ]
+
+    if flipped:
+        lines += ["", "Mẫu đổi trạng thái đạt/không đạt:"]
+        lines += [
+            f"  {sample_id}: {'đạt' if was else 'chưa đạt'} → {'đạt' if now else 'chưa đạt'}"
+            for sample_id, was, now in flipped
+        ]
+    else:
+        lines += ["", "Không mẫu nào đổi trạng thái đạt/không đạt."]
+
+    return "\n".join(lines)
+
+
+def load_run(path: Path) -> dict:
+    """Read a stored run, failing with a readable message rather than a traceback."""
+    if not path.exists():
+        raise FileNotFoundError(f"Không tìm thấy lần chạy để so sánh: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 async def main() -> int:
     """Run translation evaluation suite and output report.
 
@@ -481,7 +652,16 @@ async def main() -> int:
             "model sẽ tự chấm chính nó và điểm bị thiên vị."
         ),
     )
+    parser.add_argument(
+        "--compare",
+        type=Path,
+        help="Đường dẫn tới file JSON của một lần chạy trước để so sánh",
+    )
     args = parser.parse_args()
+
+    # Read before the run, not after: a missing file should fail immediately
+    # rather than after several minutes of paid API calls.
+    baseline = load_run(args.compare) if args.compare else None
 
     # This harness drives the graph without going through src/main.py, so it has
     # to configure logging itself or the agent's fallback records are discarded.
@@ -527,12 +707,33 @@ async def main() -> int:
         f"fallback {summary['fallback']}"
     )
 
+    print(
+        f"Nhận diện khớp khai báo: {summary['detect_agreement'] * 100:.0f}% · "
+        f"{summary['llm_calls']} lượt gọi LLM · "
+        f"{summary['input_tokens']}/{summary['output_tokens']} token vào/ra"
+    )
+
     if not args.no_write:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(
             render_report(results, summary, args.judge_provider), encoding="utf-8"
         )
         print(f"Đã ghi báo cáo: {REPORT_PATH}")
+        run_path = write_run(results, summary, args.judge_provider)
+        print(f"Đã lưu lần chạy: {run_path}")
+
+    if baseline is not None:
+        print(
+            compare_runs(
+                baseline,
+                {
+                    "provider": get_settings().llm_provider,
+                    "golden_set_sha": golden_set_sha(),
+                    "samples": results,
+                },
+                summary,
+            )
+        )
 
     return 0
 

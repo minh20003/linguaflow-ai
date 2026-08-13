@@ -32,6 +32,40 @@ def load_run_eval():
 run_eval = load_run_eval()
 
 
+def sample_result(**overrides) -> dict:
+    """One entry as `run_sample` returns it, with every field populated.
+
+    Written out in full rather than patched per test: `summarize` reads the
+    whole record, and a test that omits half of it would pass against a
+    summary that had quietly stopped reading those fields.
+    """
+    result = {
+        "id": "gs-000",
+        "category": "pronoun",
+        "chat_type": "direct",
+        "context_level": "rich",
+        "language_pair": "vi->en",
+        "source_language_declared": "vi",
+        "source_language_detected": "vi",
+        "original": "Deploy xong chưa anh?",
+        "expected": "Is the deploy done?",
+        "actual": "Is the deploy done?",
+        "score": 1.0,
+        "latency_ms": 500,
+        "is_fallback": False,
+        "outcome": "llm",
+        "provider": "groq",
+        "model_served": "llama-3.3-70b-versatile",
+        "detect_method": "langdetect",
+        "llm_calls": 1,
+        "input_tokens": 100,
+        "output_tokens": 10,
+    }
+    result.update(overrides)
+    return result
+
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
@@ -72,26 +106,14 @@ def test_passthrough_samples_are_kept_out_of_the_score():
     Left in, it raises the average by rewarding work that never happened.
     """
     results = [
-        {
-            "outcome": "passthrough",
-            "score": 1.0,
-            "category": "same-language",
-            "chat_type": "direct",
-            "context_level": "poor",
-            "language_pair": "vi->vi",
-            "latency_ms": 0,
-            "is_fallback": False,
-        },
-        {
-            "outcome": "llm",
-            "score": 0.6,
-            "category": "pronoun",
-            "chat_type": "direct",
-            "context_level": "rich",
-            "language_pair": "vi->en",
-            "latency_ms": 800,
-            "is_fallback": False,
-        },
+        sample_result(
+            outcome="passthrough",
+            score=1.0,
+            language_pair="vi->vi",
+            latency_ms=0,
+            llm_calls=0,
+        ),
+        sample_result(outcome="llm", score=0.6, latency_ms=800),
     ]
 
     summary = run_eval.summarize(results)
@@ -106,17 +128,7 @@ def test_passthrough_samples_are_kept_out_of_the_score():
 def test_categories_carry_their_sample_count():
     """Most category buckets hold one or two samples; a bare mean hides that."""
     results = [
-        {
-            "outcome": "llm",
-            "score": score,
-            "category": "idiom",
-            "chat_type": "group",
-            "context_level": "rich",
-            "language_pair": "vi->en",
-            "latency_ms": 500,
-            "is_fallback": False,
-        }
-        for score in (1.0, 0.5)
+        sample_result(category="idiom", score=score) for score in (1.0, 0.5)
     ]
 
     assert run_eval.summarize(results)["by_category"]["idiom"] == (2, 0.75, 1)
@@ -124,21 +136,116 @@ def test_categories_carry_their_sample_count():
 
 def test_an_unscored_sample_still_counts_towards_fallbacks():
     """The two figures have different denominators, and the report says so."""
-    results = [
-        {
-            "outcome": "original",
-            "score": None,
-            "category": "refusal",
-            "chat_type": "direct",
-            "context_level": "poor",
-            "language_pair": "vi->en",
-            "latency_ms": 300,
-            "is_fallback": True,
-        }
-    ]
+    results = [sample_result(outcome="original", score=None, is_fallback=True)]
 
     summary = run_eval.summarize(results)
 
     assert summary["scored"] == 0
     assert summary["fallback"] == 1
     assert summary["avg_score"] == 0.0
+
+
+def test_detect_agreement_measures_adr_11s_premise():
+    """The two-tier detector only pays off if the local tier usually agrees."""
+    results = [
+        sample_result(source_language_declared="vi", source_language_detected="vi"),
+        sample_result(source_language_declared="vi", source_language_detected="en"),
+    ]
+
+    assert run_eval.summarize(results)["detect_agreement"] == 0.5
+
+
+def make_run(avg_score: float, passed: int, sample_scores: dict[str, float]) -> dict:
+    """A stored run, as `write_run` would have persisted it."""
+    return {
+        "run_id": "20260101-120000-abcdef",
+        "provider": "groq",
+        "golden_set_sha": "deadbeef1234",
+        "summary": {
+            "avg_score": avg_score,
+            "passed": passed,
+            "scored": len(sample_scores),
+            "avg_latency": 800.0,
+            "p95_latency": 1500.0,
+            "fallback": 0,
+        },
+        "samples": [
+            sample_result(id=sample_id, score=score)
+            for sample_id, score in sample_scores.items()
+        ],
+    }
+
+
+def test_a_small_movement_is_reported_as_noise():
+    """Two runs of identical code differ; saying so is more useful than a delta.
+
+    Both models run at temperature 0.3 and each sample is scored once, so a
+    third of a point on one sample moves the average without meaning anything.
+    """
+    baseline = make_run(0.90, 2, {"gs-001": 1.0, "gs-002": 0.8})
+    summary = {
+        "avg_score": 0.92,
+        "passed": 2,
+        "scored": 2,
+        "avg_latency": 810.0,
+        "p95_latency": 1520.0,
+        "fallback": 0,
+    }
+    current = {
+        "provider": "groq",
+        "golden_set_sha": "deadbeef1234",
+        "samples": [
+            sample_result(id="gs-001", score=1.0),
+            sample_result(id="gs-002", score=0.84),
+        ],
+    }
+
+    output = run_eval.compare_runs(baseline, current, summary)
+
+    assert "trong khoảng nhiễu" in output
+    assert "Không mẫu nào đổi trạng thái" in output
+
+
+def test_a_sample_crossing_the_threshold_is_named():
+    """An average that barely moves can still hide a sample that broke."""
+    baseline = make_run(0.85, 2, {"gs-001": 1.0, "gs-002": 0.75})
+    summary = {
+        "avg_score": 0.80,
+        "passed": 1,
+        "scored": 2,
+        "avg_latency": 800.0,
+        "p95_latency": 1500.0,
+        "fallback": 0,
+    }
+    current = {
+        "provider": "groq",
+        "golden_set_sha": "deadbeef1234",
+        "samples": [
+            sample_result(id="gs-001", score=1.0),
+            sample_result(id="gs-002", score=0.60),
+        ],
+    }
+
+    output = run_eval.compare_runs(baseline, current, summary)
+
+    assert "gs-002: đạt → chưa đạt" in output
+
+
+def test_an_edited_dataset_is_flagged():
+    """Comparing across two different golden sets compares nothing."""
+    baseline = make_run(0.90, 1, {"gs-001": 0.9})
+    summary = {
+        "avg_score": 0.90,
+        "passed": 1,
+        "scored": 1,
+        "avg_latency": 800.0,
+        "p95_latency": 1500.0,
+        "fallback": 0,
+    }
+    current = {
+        "provider": "groq",
+        "golden_set_sha": "0000ffff9999",
+        "samples": [sample_result(id="gs-001", score=0.9)],
+    }
+
+    assert "Bộ dữ liệu đã thay đổi" in run_eval.compare_runs(baseline, current, summary)
