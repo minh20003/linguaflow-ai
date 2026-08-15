@@ -7,7 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import Conversation, ConversationMember, Message, User
+from src.database.models import (
+    Conversation,
+    ConversationMember,
+    Feedback,
+    Message,
+    TranslationResult,
+    User,
+)
 from src.schemas.chat import ConversationType
 
 
@@ -38,6 +45,14 @@ class ClientMessageIdConflictError(ChatServiceError):
     def __init__(self, client_message_id: str) -> None:
         self.client_message_id = client_message_id
         super().__init__("client_message_id was already used with different text")
+
+
+class TranslationNotFoundError(ChatServiceError):
+    """Raised when feedback references a translation that does not exist."""
+
+    def __init__(self, translation_id: str) -> None:
+        self.translation_id = translation_id
+        super().__init__("Translation not found")
 
 
 class ConversationValidationError(ChatServiceError):
@@ -281,6 +296,74 @@ class ChatService:
             recipient_ids=recipient_ids,
             created=True,
         )
+
+    async def submit_translation_feedback(
+        self,
+        *,
+        user_id: str,
+        translation_id: str,
+        rating: int,
+        correction: str | None,
+    ) -> Feedback:
+        """Record one reader's verdict on a translation, replacing their previous one.
+
+        Args:
+            user_id: Account submitting the feedback.
+            translation_id: Translation being rated.
+            rating: 1 to 5, matching the table's check constraint.
+            correction: Suggested replacement text, or None.
+
+        Returns:
+            The stored feedback row.
+
+        Raises:
+            ConversationValidationError: Rating outside the allowed range.
+            TranslationNotFoundError: No translation carries that id.
+            ConversationMembershipError: Caller cannot read the rated message.
+        """
+        if not 1 <= rating <= 5:
+            raise ConversationValidationError("rating must be between 1 and 5")
+
+        conversation_id = await self._db.scalar(
+            select(Message.conversation_id)
+            .join(TranslationResult, TranslationResult.message_id == Message.id)
+            .where(TranslationResult.id == translation_id)
+        )
+        if conversation_id is None:
+            raise TranslationNotFoundError(translation_id)
+
+        # Without this, holding a translation_id would be enough to write
+        # feedback on a conversation the caller was never part of.
+        await self._require_membership(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+
+        existing_feedback = await self._db.scalar(
+            select(Feedback).where(
+                Feedback.translation_id == translation_id,
+                Feedback.user_id == user_id,
+            )
+        )
+        # One vote per reader is enforced here rather than by a unique
+        # constraint: adding one to the existing table needs a destructive
+        # rebuild (ADR-06), and a changed vote should replace, not accumulate.
+        if existing_feedback is not None:
+            existing_feedback.rating = rating
+            existing_feedback.correction = correction
+            feedback = existing_feedback
+        else:
+            feedback = Feedback(
+                translation_id=translation_id,
+                user_id=user_id,
+                rating=rating,
+                correction=correction,
+            )
+            self._db.add(feedback)
+
+        await self._db.commit()
+        await self._db.refresh(feedback)
+        return feedback
 
     async def _require_membership(
         self,

@@ -26,6 +26,9 @@ export interface TranslationSummary {
   model: string;
   latency_ms: number;
   is_fallback: boolean;
+  /** This account's own rating, null until it votes (F-05). */
+  my_rating: number | null;
+  my_correction: string | null;
 }
 
 export interface HistoryMessage {
@@ -111,4 +114,27 @@ export async function lookupUserByEmail(
     token,
   );
   return matches[0] ?? null;
+}
+
+/**
+ * Rate a translation, optionally suggesting better wording (F-05).
+ *
+ * Thumbs up and down are sent as the extremes of the server's 1-5 range, and a
+ * second call from the same account replaces its earlier verdict rather than
+ * adding another one — so a reader can change their mind freely.
+ *
+ * Lives here rather than in `api.ts` because this is the client that already
+ * carries the session header and the shared error handling.
+ */
+export function submitTranslationFeedback(
+  translationId: string,
+  rating: number,
+  correction?: string | null,
+  token?: string,
+): Promise<{ feedback_id: string }> {
+  return request<{ feedback_id: string }>(
+    `/translations/${encodeURIComponent(translationId)}/feedback`,
+    token,
+    { method: "POST", body: JSON.stringify({ rating, correction: correction ?? null }) },
+  );
 }

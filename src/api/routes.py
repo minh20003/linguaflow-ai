@@ -24,6 +24,7 @@ from src.core.security import (
 from src.database import get_db
 from src.database.models import (
     Conversation,
+    Feedback,
     PasswordResetToken,
     RefreshSession,
     TranslationResult,
@@ -47,6 +48,8 @@ from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
     ConversationResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     MessageResponse,
     TranslationSummary,
 )
@@ -56,6 +59,7 @@ from src.services.chat import (
     ConversationNotFoundError,
     ConversationValidationError,
     ReferencedUsersNotFoundError,
+    TranslationNotFoundError,
 )
 
 router = APIRouter()
@@ -451,7 +455,11 @@ async def get_conversation_messages(
             detail=str(exc),
         ) from exc
 
-    translations = await _translations_by_message(db, [message.id for message in messages])
+    translations = await _translations_by_message(
+        db,
+        [message.id for message in messages],
+        reader_id=current_user.id,
+    )
     return [
         MessageResponse(
             id=message.id,
@@ -467,26 +475,112 @@ async def get_conversation_messages(
     ]
 
 
+@router.post(
+    "/translations/{translation_id}/feedback",
+    response_model=FeedbackResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_translation_feedback(
+    translation_id: str,
+    payload: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FeedbackResponse:
+    """Record the authenticated reader's rating and optional correction (F-05).
+
+    Re-submitting replaces that reader's previous verdict on the same
+    translation rather than adding a second row.
+    """
+    service = ChatService(db)
+    try:
+        feedback = await service.submit_translation_feedback(
+            user_id=current_user.id,
+            translation_id=translation_id,
+            rating=payload.rating,
+            correction=payload.correction,
+        )
+    except TranslationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Translation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except ConversationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return FeedbackResponse(feedback_id=feedback.id)
+
+
 async def _translations_by_message(
     db: AsyncSession,
     message_ids: list[str],
+    reader_id: str,
 ) -> dict[str, list[TranslationSummary]]:
     """Load every translation for a page of messages in one query.
 
     History is how a client recovers translations it missed while disconnected,
     so this is what keeps a socket dropping mid-translation from losing data.
+    Each summary also carries `reader_id`'s own feedback, which is what lets a
+    rating button still look rated after a reload.
+
+    Args:
+        db: Open session.
+        message_ids: Messages whose translations are being rendered.
+        reader_id: Account whose feedback is attached; never another member's.
+
+    Returns:
+        Translations grouped by message id, in no guaranteed order.
     """
     if not message_ids:
         return {}
 
-    rows = await db.execute(
-        select(TranslationResult).where(TranslationResult.message_id.in_(message_ids))
+    rows = list(
+        (
+            await db.scalars(
+                select(TranslationResult).where(
+                    TranslationResult.message_id.in_(message_ids)
+                )
+            )
+        ).all()
     )
 
+    my_feedback = {
+        feedback.translation_id: feedback
+        for feedback in (
+            await db.scalars(
+                select(Feedback).where(
+                    Feedback.user_id == reader_id,
+                    Feedback.translation_id.in_([row.id for row in rows]),
+                )
+            )
+        ).all()
+    }
+
     grouped: dict[str, list[TranslationSummary]] = {}
-    for translation in rows.scalars():
-        grouped.setdefault(translation.message_id, []).append(
-            TranslationSummary.model_validate(translation)
+    for row in rows:
+        feedback = my_feedback.get(row.id)
+        grouped.setdefault(row.message_id, []).append(
+            # Built field by field rather than validated from the ORM object:
+            # the row's primary key is `id`, and the client needs it under the
+            # name `translation_id` so F-05 can attach feedback to it
+            # (docs/CONTRACT.md section 4.4). `from_attributes` cannot rename.
+            TranslationSummary(
+                translation_id=row.id,
+                target_language=row.target_language,
+                translated_text=row.translated_text,
+                model=row.model,
+                latency_ms=row.latency_ms,
+                is_fallback=row.is_fallback,
+                my_rating=feedback.rating if feedback else None,
+                my_correction=feedback.correction if feedback else None,
+            )
         )
     return grouped
 

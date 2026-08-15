@@ -62,6 +62,39 @@ class TranslationSummary(BaseModel):
     model: str
     latency_ms: int
     is_fallback: bool
+    # The requesting account's own feedback, so a vote survives a page reload.
+    # Per-caller data: never shared between accounts (docs/CONTRACT.md §3.2).
+    my_rating: int | None = None
+    my_correction: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    """A reader's verdict on one translation (F-05).
+
+    The UI offers a thumbs pair rather than five stars, so it sends the extremes
+    of the range the `feedbacks` table already constrains: 5 for up, 1 for down.
+    Keeping the column as-is is what lets this ship without a schema migration.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rating: int = Field(ge=1, le=5)
+    correction: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("correction")
+    @classmethod
+    def correction_must_not_be_blank(cls, value: str | None) -> str | None:
+        """Store a missing correction as null rather than as whitespace."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class FeedbackResponse(BaseModel):
+    """Identifier of the stored feedback row."""
+
+    feedback_id: str
 
 
 class MessageResponse(BaseModel):
