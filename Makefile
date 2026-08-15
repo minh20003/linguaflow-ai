@@ -1,13 +1,24 @@
-.PHONY: run reset-db test lint format typecheck check clean metrics
+.PHONY: run migrate revision reset-db test lint format typecheck check clean metrics
 
 run:
 	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
-# create_all adds missing tables but never alters existing ones, so a schema
-# change is applied in development by recreating the database (ADR-06).
+# Alembic owns the schema (ADR-06). The application no longer creates tables at
+# startup, so a fresh checkout needs this before `make run`.
+migrate:
+	alembic upgrade head
+
+# Write a migration from whatever changed in src/database/models.py, then read
+# it: autogenerate is a draft, not an answer.
+revision:
+	alembic revision --autogenerate -m "$(m)"
+
+# Drops every table and rebuilds it from the migrations, then seeds the two dev
+# accounts. Destroys the local data on purpose; production is upgraded with
+# `make migrate` instead, which keeps it.
 reset-db:
-	rm -f data/app.db data/app.db-wal data/app.db-shm
-	mkdir -p data
+	alembic downgrade base
+	alembic upgrade head
 	python scripts/seed_dev_users.py
 
 test:

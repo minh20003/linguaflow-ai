@@ -16,6 +16,13 @@ from typing import Literal
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Values that look configured but are not. Everything here has been copied out
+# of a template at some point, so none of them may guard a real deployment.
+_PLACEHOLDER_JWT_SECRETS = frozenset(
+    {"your-secret-key-here", "change-me", "changeme", "secret", "dev-secret"}
+)
+_MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
+
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
@@ -34,6 +41,11 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
+    # Matched against the Origin header when the exact list above does not.
+    # Vercel gives every pull request its own hostname, so a preview build can
+    # only reach the API through a pattern — for example
+    # `https://linguaflow-[a-z0-9-]+\.vercel\.app`. Empty disables it.
+    cors_origin_regex: str = ""
 
     # LLM
     llm_provider: Literal["groq", "deepseek", "gemini", "openai"] = "groq"
@@ -79,6 +91,11 @@ class Settings(BaseSettings):
     # Database. The driver must be async — `create_async_engine` cannot open a
     # bare `sqlite://` URL, so the default carries the aiosqlite driver.
     database_url: str = "sqlite+aiosqlite:///./data/app.db"
+    # PostgreSQL connections opened per process. Kept small on purpose: one
+    # WebSocket holds one session for as long as it stays open, so the pool has
+    # to be sized against concurrent sockets rather than requests per second.
+    database_pool_size: int = Field(default=5, ge=1, le=50)
+    database_max_overflow: int = Field(default=10, ge=0, le=50)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
@@ -92,15 +109,64 @@ class Settings(BaseSettings):
     refresh_expire_days: int = Field(default=30, ge=1, le=90)
     password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
 
+    @field_validator("database_url")
+    @classmethod
+    def database_url_must_name_an_async_driver(cls, v: str) -> str:
+        """Rewrite a plain PostgreSQL URL onto the async driver.
+
+        Managed databases hand out `postgres://…` or `postgresql://…`, which
+        SQLAlchemy reads as the synchronous psycopg driver. `create_async_engine`
+        then fails with "the asyncio extension requires an async driver" — an
+        error that says nothing about the connection string it came from. Since
+        asyncpg is the only PostgreSQL driver this project installs, the fix is
+        never a different one, so it is applied here rather than asked of
+        whoever pastes the URL into the deployment settings.
+        """
+        for prefix in ("postgresql+", "postgres+"):
+            if v.startswith(prefix):
+                return v
+        for prefix in ("postgresql://", "postgres://"):
+            if v.startswith(prefix):
+                return f"postgresql+asyncpg://{v[len(prefix):]}"
+        return v
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """The allowed origins as a list, from the comma-separated setting.
+
+        Entries are stripped: a value written the way a human writes a list,
+        `http://a, http://b`, would otherwise produce ` http://b`, which matches
+        no browser Origin header and fails as a CORS error with nothing in the
+        logs to explain it.
+        """
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
     @field_validator("jwt_secret")
     @classmethod
     def jwt_secret_must_be_set(cls, v: str, info) -> str:
-        """Ensure JWT secret is not empty in production."""
+        """Reject a missing secret anywhere, and a guessable one in production.
+
+        Anyone holding this value can mint a token for any account, so in
+        production the placeholder that ships in `.env.example` — which passes an
+        "is it empty" check perfectly well — is treated as no secret at all.
+        """
+        generate = (
+            'Generate one with: python -c "import secrets; '
+            'print(secrets.token_urlsafe(48))"'
+        )
         if not v:
-            raise ValueError(
-                "JWT_SECRET environment variable is required. "
-                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
-            )
+            raise ValueError(f"JWT_SECRET environment variable is required. {generate}")
+        if info.data.get("app_env") == "production":
+            if v in _PLACEHOLDER_JWT_SECRETS:
+                raise ValueError(
+                    f"JWT_SECRET is still the example value. {generate}"
+                )
+            if len(v) < _MIN_PRODUCTION_JWT_SECRET_LENGTH:
+                raise ValueError(
+                    "JWT_SECRET must be at least "
+                    f"{_MIN_PRODUCTION_JWT_SECRET_LENGTH} characters in production. "
+                    f"{generate}"
+                )
         return v
 
 

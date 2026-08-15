@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 
 from fastapi import APIRouter, Depends, WebSocket
 from pydantic import BaseModel, ValidationError
@@ -9,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketDisconnect
 
+from src.config import get_settings
 from src.core.deps import get_user_by_token
 from src.database import get_db
 from src.schemas.chat import (
@@ -41,6 +43,27 @@ connection_manager = ConnectionManager()
 def get_connection_manager() -> ConnectionManager:
     """Provide the single-process connection manager for dependency overrides."""
     return connection_manager
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    """Whether a browser at `origin` may open this socket.
+
+    `CORSMiddleware` never runs for a WebSocket handshake, so without this check
+    any page on the internet could open a socket in a signed-in visitor's browser
+    and read their conversations. The same allowlist as CORS is used, so there is
+    one place to add a deployed domain.
+
+    A request with no `Origin` header is allowed: that is a non-browser client
+    (the test client, `curl`, a native app), which is not what the header
+    defends against — an attacker who can forge headers can forge this one too.
+    """
+    if origin is None:
+        return True
+    settings = get_settings()
+    if origin in settings.cors_origin_list:
+        return True
+    pattern = settings.cors_origin_regex
+    return bool(pattern) and re.fullmatch(pattern, origin) is not None
 
 
 async def _send_event(websocket: WebSocket, event: BaseModel) -> None:
@@ -123,6 +146,12 @@ async def websocket_endpoint(
     manager: ConnectionManager = Depends(get_connection_manager),
 ) -> None:
     """Authenticate a socket, persist messages, then fan them out to members."""
+    if not _origin_allowed(websocket.headers.get("origin")):
+        # Refused before `accept()`, so the handshake fails outright rather than
+        # opening a socket only to close it.
+        await websocket.close(code=4403)
+        return
+
     await websocket.accept()
     user_id: str | None = None
 

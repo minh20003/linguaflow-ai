@@ -24,8 +24,12 @@ deep-translator>=1.11.0
 # Database
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
-# alembic>=1.14.0  # Uncomment when migrations are needed
-# psycopg2-binary>=2.9.0  # Uncomment for PostgreSQL
+# Migrations — bat buoc tu khi trien khai that: create_all khong ALTER duoc bang
+# da ton tai, xoa co so du lieu de doi schema la mat du lieu nguoi dung (ADR-06).
+alembic>=1.14.0
+# Driver PostgreSQL bat dong bo. Phai la asyncpg chu khong phai psycopg2:
+# create_async_engine khong mo duoc URL cua driver dong bo.
+asyncpg>=0.30.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
