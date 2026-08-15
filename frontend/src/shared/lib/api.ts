@@ -140,3 +140,35 @@ export async function uploadConversationAttachment(
   }
   return payload as unknown as AttachmentUpload;
 }
+
+/**
+ * Change which language this account reads messages in.
+ *
+ * The server answers with the updated profile, which the caller stores so the
+ * cached user and the next translation request agree on the language.
+ */
+export async function updateLanguage(code: string, accessToken: string): Promise<AuthUser> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/me/language`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ preferred_language: code }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok || !payload?.id) {
+    throw new Error(payload?.detail || "Không đổi được ngôn ngữ.");
+  }
+  return payload as unknown as AuthUser;
+}
+
+/**
+ * The language codes the server accepts.
+ *
+ * Fetched rather than hardcoded: `docs/CONTRACT.md` section 1 makes the backend
+ * allowlist the single source of truth, and a second copy in the frontend is
+ * how the selector came to be missing a language the server supports.
+ */
+export async function listLanguages(): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/api/v1/languages`);
+  if (!response.ok) throw new Error("Không tải được danh sách ngôn ngữ.");
+  return (await response.json()) as string[];
+}

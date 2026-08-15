@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Button from "@/shared/ui/Button";
 import Input from "@/shared/ui/Input";
-import { register } from "@/shared/lib/api";
+import { listLanguages, register } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
 import { mainLabel } from "@/shared/lib/i18n";
-import { SUPPORTED_LANGUAGES } from "@/shared/lib/constants";
+import LanguagePicker from "@/shared/ui/LanguagePicker";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
@@ -40,6 +40,18 @@ export default function RegisterForm() {
   /* Ngôn ngữ lấy từ dải bên trái — nó chính là preferred_language, nên form
      không dựng thêm bảng chọn thứ hai. */
   const { lang, setLang } = useLanguage();
+  // The allowlist belongs to the backend (CONTRACT section 1). It also supplies
+  // the count in the headline, which was hardcoded as "Mười" and had been wrong
+  // ever since a language was added.
+  const [codes, setCodes] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listLanguages()
+      .then((list) => !cancelled && setCodes(list))
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -118,7 +130,7 @@ export default function RegisterForm() {
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <h1 className={styles.lede}>
         <span>Một tài khoản.</span>
-        <span>Mười ngôn ngữ đọc được.</span>
+        <span>{codes.length ? `${codes.length} ngôn ngữ` : "Nhiều ngôn ngữ"} đọc được.</span>
       </h1>
 
       <hr className={styles.divider} />
@@ -209,9 +221,13 @@ export default function RegisterForm() {
 
       <div className={styles.languageField}>
         <label htmlFor="register-language">Ngôn ngữ</label>
-        <select id="register-language" value={lang} onChange={(event) => setLang(event.target.value as typeof lang)}>
-          {SUPPORTED_LANGUAGES.map((language) => <option key={language.code} value={language.code}>{language.name}</option>)}
-        </select>
+        <LanguagePicker
+          id="register-language"
+          value={lang}
+          onChange={(code) => setLang(code as typeof lang)}
+          label="Ngôn ngữ bạn muốn đọc"
+          codes={codes}
+        />
       </div>
 
       <div className={styles.termsBlock}>
@@ -227,8 +243,8 @@ export default function RegisterForm() {
             aria-describedby={errors.agree ? "register-agree-error" : undefined}
           />
           <span>
-            Tôi đồng ý với <a href="#">{mainLabel("terms")}</a> và{" "}
-            <a href="#">Chính sách riêng tư</a>
+            Tôi đồng ý với <Link href="/terms" target="_blank">{mainLabel("terms")}</Link> và{" "}
+            <Link href="/privacy" target="_blank">Chính sách riêng tư</Link>
           </span>
         </label>
         {errors.agree && (

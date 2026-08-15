@@ -72,7 +72,7 @@ export default function LoginForm() {
         <span className={styles.actionMain}>{mainLabel("signIn")}</span>
       </Button>
 
-      <p className={styles.footer}>Bạn mới đến LinguaChat? <Link href="/register">Tạo tài khoản miễn phí</Link></p>
+      <p className={styles.footer}>Bạn mới đến LinguaFlow? <Link href="/register">Tạo tài khoản miễn phí</Link></p>
     </form>
   );
 }

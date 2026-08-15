@@ -10,6 +10,8 @@
  *   <- {"type":"message_created", client_message_id, message}   to the sender
  *   <- {"type":"message_received", message}                     to other members
  *   <- {"type":"translation_completed", ...}                    to readers of that language
+ *   <- {"type":"message_updated", ...}                          when a sender edits (F-06)
+ *   <- {"type":"message_deleted", ...}                          when a sender withdraws
  *   <- {"type":"error", code, message}
  */
 
@@ -51,11 +53,48 @@ export interface TranslationCompleted {
   is_fallback: boolean;
 }
 
+export interface TypingNotice {
+  type: "typing";
+  conversation_id: string;
+  user_id: string;
+  is_typing: boolean;
+}
+
+export interface MessageRead {
+  type: "message_read";
+  conversation_id: string;
+  user_id: string;
+  read_at: string;
+}
+
+export interface MessageUpdated {
+  type: "message_updated";
+  message_id: string;
+  conversation_id: string;
+  original_text: string;
+  edited_at: string;
+}
+
+export interface MessageDeleted {
+  type: "message_deleted";
+  message_id: string;
+  conversation_id: string;
+  deleted_at: string;
+}
+
 export interface ChatSocketHandlers {
   /** The sender's own message came back with its server id. */
   onMessageCreated?: (clientMessageId: string, message: RealtimeMessage) => void;
   /** Somebody else sent a message. */
   onMessageReceived?: (message: RealtimeMessage) => void;
+  /** Somebody started or stopped composing in a conversation. */
+  onTyping?: (event: TypingNotice) => void;
+  /** Somebody read the conversation, so what I sent there has been seen. */
+  onMessageRead?: (event: MessageRead) => void;
+  /** Somebody rewrote a message they had sent (F-06). */
+  onMessageUpdated?: (event: MessageUpdated) => void;
+  /** Somebody withdrew a message they had sent (F-06). */
+  onMessageDeleted?: (event: MessageDeleted) => void;
   /** A translation finished for a language this account reads. */
   onTranslationCompleted?: (event: TranslationCompleted) => void;
   /** A non-fatal application error. */
@@ -71,7 +110,12 @@ export interface ChatSocket {
     clientMessageId: string;
     conversationId: string;
     text: string;
+    /** A file uploaded beforehand, and the message being answered (§3.7). */
+    attachmentId?: string | null;
+    replyToMessageId?: string | null;
   }) => boolean;
+  /** Announce that this account started or stopped composing. */
+  sendTyping: (conversationId: string, isTyping: boolean) => void;
 }
 
 function socketUrl(): string {
@@ -153,6 +197,18 @@ export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): 
         case "translation_completed":
           callbacks.onTranslationCompleted?.(event as unknown as TranslationCompleted);
           break;
+        case "typing":
+          callbacks.onTyping?.(event as unknown as TypingNotice);
+          break;
+        case "message_read":
+          callbacks.onMessageRead?.(event as unknown as MessageRead);
+          break;
+        case "message_updated":
+          callbacks.onMessageUpdated?.(event as unknown as MessageUpdated);
+          break;
+        case "message_deleted":
+          callbacks.onMessageDeleted?.(event as unknown as MessageDeleted);
+          break;
         case "error": {
           const code = event.code as string;
           if (FATAL_ERROR_CODES.has(code)) {
@@ -211,10 +267,26 @@ export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): 
         client_message_id: input.clientMessageId,
         conversation_id: input.conversationId,
         text: input.text,
+        attachment_id: input.attachmentId ?? null,
+        reply_to_message_id: input.replyToMessageId ?? null,
       }),
     );
     return true;
   }, []);
 
-  return { connected, sendMessage };
+  /** Fire and forget: a lost typing notice is not worth reporting. */
+  const sendTyping: ChatSocket["sendTyping"] = useCallback((conversationId, isTyping) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+    socket.send(
+      JSON.stringify({
+        type: "typing",
+        conversation_id: conversationId,
+        is_typing: isTyping,
+      }),
+    );
+  }, []);
+
+  return { connected, sendMessage, sendTyping };
 }

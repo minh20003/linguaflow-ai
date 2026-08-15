@@ -1,6 +1,6 @@
 .head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--s-4);
   padding: var(--s-4) var(--s-5);
@@ -8,12 +8,13 @@
 }
 
 .brand {
-  font-family: var(--font-mono);
-  font-size: var(--fs-label);
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--primary);
+  font-size: var(--fs-lead);
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 @media (max-width: 559px) {

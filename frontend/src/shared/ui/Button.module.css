@@ -32,15 +32,16 @@
 /* ─── Biến thể ───────────────────────────────────────────── */
 
 .primary {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--ink-inverse);
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--ink-hover);
-  border-color: var(--ink-hover);
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
+
 
 .secondary {
   background: transparent;
@@ -93,7 +94,7 @@
 .button::before,
 .caret {
   content: "▌";
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   visibility: hidden;
 }
 

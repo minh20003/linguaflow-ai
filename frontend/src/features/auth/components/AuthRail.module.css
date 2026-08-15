@@ -3,12 +3,13 @@
   flex-direction: column;
   gap: var(--s-5);
   padding: var(--s-7) var(--s-5);
-  background: #f4f8fc;
+  background: var(--surface-label);
   border-inline-end: 1px solid var(--rule);
 }
 
+
 .eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;

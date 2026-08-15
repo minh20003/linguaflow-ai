@@ -14,7 +14,7 @@
 }
 
 .label {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--fs-label);
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -34,11 +34,11 @@
 
 /* Chữ, không phải icon con mắt. */
 .reveal {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: none;
-  color: var(--indigo);
+  color: var(--primary);
   padding-inline: var(--s-2);
   transition: color var(--dur-hover) linear;
 }
@@ -62,7 +62,7 @@
 }
 
 .input::placeholder {
-  color: var(--ink-disabled);
+  color: var(--ink-placeholder);
 }
 
 .input:hover:not(:disabled) {
@@ -70,7 +70,7 @@
 }
 
 .input:focus-visible {
-  border-color: var(--indigo);
+  border-color: var(--primary);
 }
 
 .input:disabled {
@@ -80,8 +80,8 @@
 }
 
 .field:has(.error) .input {
-  border-color: var(--bengara);
-  background: var(--bengara-weak);
+  border-color: var(--danger);
+  background: var(--danger-weak);
 }
 
 .error {
@@ -89,7 +89,7 @@
   align-items: flex-start;
   gap: var(--s-2);
   font-size: var(--fs-small);
-  color: var(--bengara);
+  color: var(--danger);
   animation: fadeInPlace var(--dur-fade) linear;
 }
 
@@ -103,7 +103,7 @@
   margin-top: 2px;
   border: 1px solid currentColor;
   border-radius: var(--r-1);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   line-height: 1;
 }
