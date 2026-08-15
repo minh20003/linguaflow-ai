@@ -11,11 +11,11 @@
 }
 
 .eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--koke);
+  color: var(--success);
 }
 
 .loginTitle {
@@ -23,7 +23,7 @@
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.02em;
-  color: var(--indigo);
+  color: var(--primary);
 }
 
 .loginDescription {
@@ -36,8 +36,8 @@
 .loginButton {
   align-items: center;
   border-radius: 8px;
-  background: var(--indigo);
-  border-color: var(--indigo);
+  background: var(--primary);
+  border-color: var(--primary);
   line-height: 1;
 }
 
@@ -98,7 +98,7 @@
 .check input[type="checkbox"] {
   width: 15px;
   height: 15px;
-  accent-color: var(--indigo);
+  accent-color: var(--primary);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -110,7 +110,7 @@
 
 .quiet {
   font-size: var(--fs-small);
-  color: var(--indigo);
+  color: var(--primary);
 }
 
 /* Lỗi cấp form — dấu + chữ, viền đất son, không bóng phát sáng. */
@@ -119,11 +119,11 @@
   align-items: flex-start;
   gap: var(--s-3);
   padding: var(--s-3) var(--s-4);
-  background: var(--bengara-weak);
-  border: 1px solid var(--bengara);
+  background: var(--danger-weak);
+  border: 1px solid var(--danger);
   border-radius: var(--r-1);
   font-size: var(--fs-small);
-  color: var(--bengara);
+  color: var(--danger);
   animation: fadeInPlace var(--dur-fade) linear;
 }
 
@@ -136,7 +136,7 @@
   margin-top: 2px;
   border: 1px solid currentColor;
   border-radius: var(--r-1);
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: 10px;
   line-height: 1;
 }
@@ -210,7 +210,7 @@
 
 .weak {
   width: 33%;
-  background: var(--bengara);
+  background: var(--danger);
 }
 
 .medium {
@@ -220,11 +220,11 @@
 
 .strong {
   width: 100%;
-  background: var(--koke);
+  background: var(--success);
 }
 
 .strengthLabel {
-  font-family: var(--font-mono);
+  font-family: var(--font-body);
   font-size: var(--fs-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -252,7 +252,7 @@
   margin-top: 3px;
   width: 15px;
   height: 15px;
-  accent-color: var(--indigo);
+  accent-color: var(--primary);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -260,5 +260,5 @@
 .languageField { display: grid; gap: var(--s-2); }
 .languageField label { color: var(--ink-secondary); font-size: var(--fs-label); font-weight: 500; }
 .languageField select { width: 100%; min-height: 42px; padding: 0 var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-1); color: var(--ink); background: var(--surface-insert); font: inherit; }
-.languageField select:focus-visible { border-color: var(--indigo); outline: 2px solid var(--indigo-weak); outline-offset: 1px; }
+.languageField select:focus-visible { border-color: var(--primary); outline: 2px solid var(--primary-light); outline-offset: 1px; }
 .languageField span { color: var(--ink-muted); font-size: var(--fs-micro); }

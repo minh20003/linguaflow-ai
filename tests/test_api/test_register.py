@@ -9,6 +9,11 @@ from __future__ import annotations
 import itertools
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.security import get_password_hash
+from src.database.models import User
 
 _next_username = itertools.count()
 
@@ -151,21 +156,70 @@ async def test_a_malformed_username_is_rejected(client):
     assert response.status_code == 422
 
 
+@pytest_asyncio.fixture
+async def named_user(test_db: AsyncSession) -> User:
+    """An account with both name fields filled, unlike the shared fixtures."""
+    user = User(
+        email="an.nguyen@example.com",
+        username="annguyen",
+        display_name="Nguyễn An",
+        password_hash=get_password_hash("a-good-password"),
+        role="member",
+        preferred_language="vi",
+    )
+    test_db.add(user)
+    await test_db.commit()
+    await test_db.refresh(user)
+    return user
+
+
 @pytest.mark.asyncio
-async def test_user_lookup_finds_an_account_by_email(client, test_user, test_user_headers):
+async def test_user_search_finds_an_account_by_email_prefix(
+    client, test_user_two, test_user_headers
+):
     response = await client.get(
-        "/api/v1/users", params={"email": test_user.email}, headers=test_user_headers
+        "/api/v1/users", params={"q": "second@"}, headers=test_user_headers
     )
 
     assert response.status_code == 200
-    assert [u["id"] for u in response.json()] == [test_user.id]
+    assert [u["id"] for u in response.json()] == [test_user_two.id]
 
 
 @pytest.mark.asyncio
-async def test_user_lookup_returns_an_empty_list_when_unknown(client, test_user_headers):
-    """Empty rather than 404, which would read as a broken route."""
+async def test_user_search_finds_an_account_by_username_prefix(
+    client, named_user, test_user_headers
+):
+    response = await client.get("/api/v1/users", params={"q": "anng"}, headers=test_user_headers)
+
+    assert response.status_code == 200
+    assert [u["id"] for u in response.json()] == [named_user.id]
+
+
+@pytest.mark.asyncio
+async def test_user_search_matches_any_word_of_a_display_name(
+    client, named_user, test_user_headers
+):
+    """Searching a person by the part of their name you know is the normal case."""
+    response = await client.get("/api/v1/users", params={"q": "an"}, headers=test_user_headers)
+
+    assert response.status_code == 200
+    assert named_user.id in [u["id"] for u in response.json()]
+
+
+@pytest.mark.asyncio
+async def test_user_search_ignores_case(client, named_user, test_user_headers):
     response = await client.get(
-        "/api/v1/users", params={"email": "nobody@example.com"}, headers=test_user_headers
+        "/api/v1/users", params={"q": "NGUYỄN"}, headers=test_user_headers
+    )
+
+    assert [u["id"] for u in response.json()] == [named_user.id]
+
+
+@pytest.mark.asyncio
+async def test_user_search_never_returns_the_caller(client, test_user, test_user_headers):
+    """Offering a conversation with yourself is the one result never wanted."""
+    response = await client.get(
+        "/api/v1/users", params={"q": test_user.email}, headers=test_user_headers
     )
 
     assert response.status_code == 200
@@ -173,8 +227,39 @@ async def test_user_lookup_returns_an_empty_list_when_unknown(client, test_user_
 
 
 @pytest.mark.asyncio
-async def test_user_lookup_requires_authentication(client, test_user):
-    response = await client.get("/api/v1/users", params={"email": test_user.email})
+async def test_user_search_treats_a_wildcard_as_literal_text(
+    client, named_user, test_user_two, test_user_headers
+):
+    """`%` is a LIKE wildcard; unescaped it would list the whole user table."""
+    response = await client.get("/api/v1/users", params={"q": "%%"}, headers=test_user_headers)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_user_search_returns_an_empty_list_when_nobody_matches(client, test_user_headers):
+    """Empty rather than 404, which would read as a broken route."""
+    response = await client.get(
+        "/api/v1/users", params={"q": "nobody@example.com"}, headers=test_user_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_user_search_rejects_a_query_too_short_to_narrow_anything(
+    client, test_user_headers
+):
+    response = await client.get("/api/v1/users", params={"q": "a"}, headers=test_user_headers)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_user_search_requires_authentication(client, test_user):
+    response = await client.get("/api/v1/users", params={"q": test_user.email})
 
     assert response.status_code in (401, 403)
 

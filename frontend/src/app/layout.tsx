@@ -1,14 +1,12 @@
 import type { Metadata } from "next";
-import { Be_Vietnam_Pro, IBM_Plex_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, IBM_Plex_Mono } from "next/font/google";
+import { ThemeProvider } from "@/shared/lib/ThemeContext";
 import "./globals.css";
 
-/* Be Vietnam Pro thay Inter: dấu thanh tiếng Việt không chồng lên chữ hoa
-   (Ậ, Ỗ, Ừ), hẹp hơn nên chịu được mật độ, và không phải chữ ký của giao
-   diện sinh tự động. Cả hai đều là font tĩnh nên phải khai báo weight. */
-const beVietnam = Be_Vietnam_Pro({
-  subsets: ["latin", "latin-ext", "vietnamese"],
-  weight: ["400", "500", "600"],
-  variable: "--font-be-vietnam",
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin", "vietnamese"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plus-jakarta",
   display: "swap",
 });
 
@@ -20,7 +18,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LinguaChat",
+  title: "LinguaFlow",
   description:
     "Nhắn tin bằng tiếng của bạn, người kia đọc bằng tiếng của họ. Dịch tự động 10 ngôn ngữ.",
 };
@@ -31,8 +29,40 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className={`${beVietnam.variable} ${plexMono.variable}`}>
-      <body>{children}</body>
+    // The script below writes data-theme onto this element before React
+    // hydrates, so the attribute is always present on the client and never in
+    // the server HTML. That difference is the whole point of the script — it is
+    // what stops a light flash before the saved theme applies — so the warning
+    // it would otherwise raise is suppressed here rather than worked around.
+    <html
+      lang="vi"
+      className={`${plusJakarta.variable} ${plexMono.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  // Only an explicit choice is written. "system" deliberately
+                  // leaves the attribute off so the prefers-color-scheme media
+                  // query decides, which is exactly what ThemeContext does —
+                  // setting it here too would make the two disagree.
+                  var saved = localStorage.getItem('lingua_theme_mode');
+                  if (saved === 'dark' || saved === 'light') {
+                    document.documentElement.setAttribute('data-theme', saved);
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body>
+        <ThemeProvider>{children}</ThemeProvider>
+      </body>
     </html>
   );
 }
+

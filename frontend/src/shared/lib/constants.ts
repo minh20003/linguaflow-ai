@@ -27,6 +27,7 @@ export const SUPPORTED_LANGUAGES = [
   { code: "de", display: "DE", name: "Deutsch" },
   { code: "es", display: "ES", name: "Español" },
   { code: "th", display: "TH", name: "ไทย" },
+  { code: "id", display: "ID", name: "Bahasa Indonesia" },
   { code: "pt", display: "PT", name: "Português" },
   { code: "ru", display: "RU", name: "Русский" },
   { code: "ar", display: "AR", name: "العربية" },
@@ -49,9 +50,17 @@ export const UI_LANGUAGE = "vi";
  */
 export const DEFAULT_LANGUAGE: LanguageCode = "en";
 
-export function getLanguage(code: LanguageCode) {
+/**
+ * Mô tả hiển thị cho một mã ngôn ngữ.
+ *
+ * Mã lạ sinh ra một mục ngay tại chỗ thay vì rơi về phần tử đầu bảng — trả về
+ * tiếng Việt cho một mã không nhận ra sẽ dựng ra hai ô "VI" cạnh nhau trong bộ
+ * chọn, và mục thứ hai lại lưu một giá trị hoàn toàn khác khi được chọn.
+ */
+export function getLanguage(code: string) {
   return (
-    SUPPORTED_LANGUAGES.find((l) => l.code === code) ?? SUPPORTED_LANGUAGES[0]
+    SUPPORTED_LANGUAGES.find((l) => l.code === code)
+    ?? { code, display: code.toUpperCase(), name: code.toUpperCase() }
   );
 }
 

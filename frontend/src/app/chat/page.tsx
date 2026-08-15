@@ -4,7 +4,7 @@ import MessagingApp from "@/features/chat/components/MessagingApp";
 import RequireAuth from "@/features/auth/components/RequireAuth";
 
 export const metadata: Metadata = {
-  title: "Tin nhắn — LinguaChat",
+  title: "Tin nhắn — LinguaFlow",
   description: "Trò chuyện và dịch tin nhắn theo thời gian thực.",
 };
 

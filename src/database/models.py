@@ -166,6 +166,12 @@ class ConversationMember(Base):
         nullable=False,
         server_default=func.now(),
     )
+    # How far this member has read. Null means they have never opened the
+    # conversation, so everything in it counts as unread.
+    last_read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
 class Message(Base):
@@ -203,6 +209,65 @@ class Message(Base):
     # what they usually write in, not what this message is in. The agent's
     # detect_language node overwrites it (docs/CONTRACT.md section 4.3).
     source_language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    # SET NULL rather than CASCADE: withdrawing a message must not take the
+    # replies to it down as well — they are other people's words.
+    reply_to_message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # Removal is soft: `translation_results` and `translation_attempts` reference
+    # this row, so deleting it would take the measurement evidence ADR-16 exists
+    # to preserve down with it, silently skewing the fallback rate in §3.4.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class Attachment(Base):
+    """A file uploaded to a conversation, optionally carried by a message.
+
+    `message_id` is nullable because the file is uploaded before the message
+    that carries it exists: the client uploads, gets an id back, then sends the
+    message referencing it (docs/CONTRACT.md §3.7).
+    """
+
+    __tablename__ = "attachments"
+    __table_args__ = (
+        Index("ix_attachments_conversation_id", "conversation_id"),
+        Index("ix_attachments_message_id", "message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # SET NULL keeps the stored file reachable for audit if its message goes.
+    message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    uploader_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
