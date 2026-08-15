@@ -73,6 +73,22 @@ AUX_BLOCK_RE = re.compile(
 )
 
 
+def resolve_log_dir() -> Path:
+    """The one directory AI log entries go to, wherever the tool was started from.
+
+    Resolved against the repository root — this file's parent's parent — and not
+    against the working directory. A tool launched inside `frontend/` used to
+    create a second `frontend/.ai-log/session.jsonl`; nothing submits that file,
+    so those entries were written and then silently never handed in.
+
+    An absolute AI_LOG_DIR is honoured as given. A relative one is taken from the
+    repository root, for the same reason.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    configured = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
+    return configured if configured.is_absolute() else project_root / configured
+
+
 def git(cmd: str) -> str:
     try:
         return subprocess.check_output(
@@ -325,8 +341,8 @@ def main() -> None:
               file=sys.stderr)
         sys.exit(0)
 
-    log_dir = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
-    log_dir.mkdir(exist_ok=True)
+    log_dir = resolve_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "session.jsonl"
     logged_ids = get_logged_entry_ids(log_file)
 
@@ -395,8 +411,8 @@ def _legacy_log(summary: str, model: str) -> None:
         "prompt": summary[:1000],
         "response_summary": f"[Antigravity] {summary[:500]}",
     }
-    log_dir = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
-    log_dir.mkdir(exist_ok=True)
+    log_dir = resolve_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
     with open(log_dir / "session.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     print(f"[antigravity-log] Logged manual: {summary[:80]}...", file=sys.stderr)

@@ -27,7 +27,15 @@ except ImportError:
 
 SERVER_URL = os.environ.get("AI_LOG_SERVER", "")
 API_KEY = os.environ.get("AI_LOG_API_KEY", "")
-LOG_DIR = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
+# Resolved against the repository root, not the working directory: a tool
+# started inside frontend/ used to write a second .ai-log nothing submits.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CONFIGURED_LOG_DIR = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
+LOG_DIR = (
+    _CONFIGURED_LOG_DIR
+    if _CONFIGURED_LOG_DIR.is_absolute()
+    else _PROJECT_ROOT / _CONFIGURED_LOG_DIR
+)
 LOG_FILE = LOG_DIR / "session.jsonl"
 ARCHIVE_DIR = LOG_DIR / "archive"
 
