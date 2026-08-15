@@ -50,6 +50,31 @@ def normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+def fallback_profile_names(
+    email: str,
+    username: str | None,
+    display_name: str | None,
+) -> tuple[str, str]:
+    """Fill in the profile names an older account may not have.
+
+    `username` and `display_name` arrived after the first accounts were created,
+    so both are nullable in the database. Every response that carries them fills
+    the gap the same way — with the local part of the email — so that no client
+    has to decide what to show when a name is missing.
+
+    Args:
+        email: Address the fallback is derived from.
+        username: Stored username, possibly None.
+        display_name: Stored display name, possibly None.
+
+    Returns:
+        The username and display name to send, neither of them empty.
+    """
+    fallback = email.split("@", 1)[0]
+    resolved_username = username or fallback
+    return resolved_username, display_name or resolved_username
+
+
 class LoginRequest(BaseModel):
     """Request schema for user login."""
 
@@ -145,9 +170,9 @@ class UserResponse(BaseModel):
     @model_validator(mode="after")
     def fill_legacy_profile_names(self) -> "UserResponse":
         """Keep profiles usable for accounts created before name fields existed."""
-        fallback = self.email.split("@", 1)[0]
-        self.username = self.username or fallback
-        self.display_name = self.display_name or self.username
+        self.username, self.display_name = fallback_profile_names(
+            self.email, self.username, self.display_name
+        )
         return self
 
 

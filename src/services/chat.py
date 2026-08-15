@@ -2,12 +2,15 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from src.database.models import (
+    Attachment,
     Conversation,
     ConversationMember,
     Feedback,
@@ -39,12 +42,29 @@ class ConversationMembershipError(ChatServiceError):
         super().__init__("You are not a member of this conversation")
 
 
-class ClientMessageIdConflictError(ChatServiceError):
-    """Raised when an idempotency key is reused with different message text."""
+class MessageNotFoundError(ChatServiceError):
+    """Raised when a message does not exist in the conversation given."""
 
-    def __init__(self, client_message_id: str) -> None:
-        self.client_message_id = client_message_id
-        super().__init__("client_message_id was already used with different text")
+    def __init__(self, message_id: str) -> None:
+        self.message_id = message_id
+        super().__init__("Message not found")
+
+
+class MessageOwnershipError(ChatServiceError):
+    """Raised when someone other than the sender tries to change a message."""
+
+    def __init__(self, message_id: str, user_id: str) -> None:
+        self.message_id = message_id
+        self.user_id = user_id
+        super().__init__("Only the sender can change this message")
+
+
+class MessageAlreadyDeletedError(ChatServiceError):
+    """Raised when editing a message that was already withdrawn."""
+
+    def __init__(self, message_id: str) -> None:
+        self.message_id = message_id
+        super().__init__("This message was already deleted")
 
 
 class TranslationNotFoundError(ChatServiceError):
@@ -53,6 +73,14 @@ class TranslationNotFoundError(ChatServiceError):
     def __init__(self, translation_id: str) -> None:
         self.translation_id = translation_id
         super().__init__("Translation not found")
+
+
+class ClientMessageIdConflictError(ChatServiceError):
+    """Raised when an idempotency key is reused with different message text."""
+
+    def __init__(self, client_message_id: str) -> None:
+        self.client_message_id = client_message_id
+        super().__init__("client_message_id was already used with different text")
 
 
 class ConversationValidationError(ChatServiceError):
@@ -65,6 +93,19 @@ class ReferencedUsersNotFoundError(ChatServiceError):
     def __init__(self, missing_user_ids: Sequence[str]) -> None:
         self.missing_user_ids = tuple(missing_user_ids)
         super().__init__("One or more referenced users do not exist")
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationResult:
+    """A conversation, and whether this call is what brought it into existence.
+
+    Mirrors `SendMessageResult.created`: both endpoints answer a request that may
+    turn out to be a repeat, and the caller needs the difference to pick a status
+    code without asking the database a second question.
+    """
+
+    conversation: Conversation
+    created: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +133,18 @@ class ChatService:
         conversation_type: ConversationType | str,
         member_ids: Sequence[str],
         title: str | None = None,
-    ) -> Conversation:
-        """Create a direct or group conversation with validated membership."""
+    ) -> ConversationResult:
+        """Create a direct or group conversation with validated membership.
+
+        A direct conversation that already exists is returned as it is rather
+        than duplicated: two people have one thread between them, and a second
+        one would split their history in half (docs/CONTRACT.md §3.5). Groups are
+        not deduplicated — the same people can have several groups for several
+        purposes.
+
+        Returns:
+            The conversation, and whether it was created by this call.
+        """
         self._validate_conversation_request(
             creator_id=creator_id,
             conversation_type=conversation_type,
@@ -124,6 +175,11 @@ class ChatService:
         if missing_user_ids:
             raise ReferencedUsersNotFoundError(missing_user_ids)
 
+        if conversation_type == "direct":
+            existing = await self._find_direct_conversation(unique_member_ids)
+            if existing is not None:
+                return ConversationResult(conversation=existing, created=False)
+
         conversation = Conversation(
             type=conversation_type,
             title=title,
@@ -143,7 +199,52 @@ class ChatService:
         )
         await self._db.flush()
         await self._db.refresh(conversation)
-        return conversation
+        return ConversationResult(conversation=conversation, created=True)
+
+    async def _find_direct_conversation(
+        self,
+        member_ids: Sequence[str],
+    ) -> Conversation | None:
+        """Return the direct conversation between exactly these two people.
+
+        One query: the membership rows for the pair are grouped by conversation
+        and only a group holding both of them counts. The total-member check
+        guards the case a group of two was somehow stored with type `direct`,
+        which would otherwise be reused as if it were the pair's own thread.
+
+        Args:
+            member_ids: The two distinct member ids, creator included.
+
+        Returns:
+            The existing conversation, or None when the pair has none yet.
+        """
+        # Aliased, and correlated explicitly: the outer query already joins
+        # ConversationMember, so an unaliased subquery correlates to that join
+        # instead of counting, and SQLAlchemy refuses it for having no FROM.
+        any_member = aliased(ConversationMember)
+        total_members = (
+            select(func.count())
+            .select_from(any_member)
+            .where(any_member.conversation_id == Conversation.id)
+            .correlate(Conversation)
+            .scalar_subquery()
+        )
+        return await self._db.scalar(
+            select(Conversation)
+            .join(
+                ConversationMember,
+                ConversationMember.conversation_id == Conversation.id,
+            )
+            .where(
+                Conversation.type == "direct",
+                ConversationMember.user_id.in_(member_ids),
+                total_members == len(member_ids),
+            )
+            .group_by(Conversation.id)
+            .having(func.count(func.distinct(ConversationMember.user_id)) == len(member_ids))
+            .order_by(Conversation.created_at, Conversation.id)
+            .limit(1)
+        )
 
     async def list_conversations(self, *, user_id: str) -> list[Conversation]:
         """List conversations the supplied user belongs to in stable order."""
@@ -157,6 +258,103 @@ class ChatService:
             .order_by(Conversation.created_at.desc(), Conversation.id.desc())
         )
         return list(result.all())
+
+    async def get_last_messages(
+        self,
+        *,
+        conversation_ids: Sequence[str],
+        reader_language: str,
+    ) -> dict[str, tuple[str, datetime]]:
+        """Summarise the newest message of each conversation for one reader.
+
+        Two queries regardless of how many conversations are passed: ranking the
+        messages in the database rather than fetching each conversation's last
+        message separately is what keeps the list endpoint off an N+1.
+
+        Args:
+            conversation_ids: Conversations to summarise.
+            reader_language: Language the calling account reads; the translation
+                into it is preferred over the original text where one exists.
+
+        Returns:
+            Conversation id mapped to its preview text and send time.
+            Conversations without messages are absent from the mapping.
+        """
+        if not conversation_ids:
+            return {}
+
+        ranked = (
+            select(
+                Message.id,
+                Message.conversation_id,
+                Message.original_text,
+                Message.created_at,
+                func.row_number()
+                .over(
+                    partition_by=Message.conversation_id,
+                    order_by=(Message.created_at.desc(), Message.id.desc()),
+                )
+                .label("rank"),
+            )
+            # A withdrawn message must not go on identifying the conversation in
+            # the sidebar; the one before it becomes the preview again.
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                Message.deleted_at.is_(None),
+            )
+            .subquery()
+        )
+        newest = (await self._db.execute(select(ranked).where(ranked.c.rank == 1))).all()
+
+        translated = {
+            message_id: text
+            for message_id, text in (
+                await self._db.execute(
+                    select(
+                        TranslationResult.message_id,
+                        TranslationResult.translated_text,
+                    ).where(
+                        TranslationResult.message_id.in_([row.id for row in newest]),
+                        TranslationResult.target_language == reader_language,
+                    )
+                )
+            ).all()
+        }
+
+        return {
+            row.conversation_id: (
+                translated.get(row.id, row.original_text),
+                row.created_at,
+            )
+            for row in newest
+        }
+
+    async def get_contact_ids(self, *, user_id: str) -> tuple[str, ...]:
+        """Everyone sharing at least one conversation with ``user_id``.
+
+        This is the audience for presence: connecting must not tell the whole
+        installation that someone came online, only the people they actually
+        talk to.
+
+        Args:
+            user_id: Account whose contacts are wanted; never included itself.
+
+        Returns:
+            Distinct user ids in a stable order.
+        """
+        mine = select(ConversationMember.conversation_id).where(
+            ConversationMember.user_id == user_id
+        )
+        result = await self._db.scalars(
+            select(ConversationMember.user_id)
+            .where(
+                ConversationMember.conversation_id.in_(mine),
+                ConversationMember.user_id != user_id,
+            )
+            .distinct()
+            .order_by(ConversationMember.user_id)
+        )
+        return tuple(result.all())
 
     async def get_conversation_member_ids(
         self,
@@ -184,6 +382,37 @@ class ChatService:
             .order_by(User.id)
         )
         return result.all()
+
+    async def get_members_by_conversation(
+        self,
+        *,
+        conversation_ids: Sequence[str],
+    ) -> dict[str, list[User]]:
+        """Load the members of many conversations in one query.
+
+        The list endpoint renders every conversation it returns, so asking per
+        conversation made the query count grow with the list — the same N+1 that
+        `get_last_messages` and `get_unread_counts` are shaped to avoid.
+
+        Args:
+            conversation_ids: Conversations whose members are wanted.
+
+        Returns:
+            Conversation id mapped to its members, ordered by user id.
+        """
+        if not conversation_ids:
+            return {}
+
+        rows = await self._db.execute(
+            select(ConversationMember.conversation_id, User)
+            .join(User, ConversationMember.user_id == User.id)
+            .where(ConversationMember.conversation_id.in_(conversation_ids))
+            .order_by(User.id)
+        )
+        grouped: dict[str, list[User]] = {}
+        for conversation_id, user in rows.all():
+            grouped.setdefault(conversation_id, []).append(user)
+        return grouped
 
     async def get_message_history(
         self,
@@ -214,6 +443,81 @@ class ChatService:
         recent_messages.reverse()
         return recent_messages
 
+    async def mark_conversation_read(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+    ) -> datetime:
+        """Move this member's read mark to now (docs/CONTRACT.md §3.8).
+
+        Args:
+            user_id: Member who has caught up.
+            conversation_id: Conversation being marked.
+
+        Returns:
+            The moment recorded, for the receipt other members are told about.
+
+        Raises:
+            ConversationNotFoundError: No such conversation.
+            ConversationMembershipError: Caller is not a member.
+        """
+        await self._require_membership(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        read_at = datetime.now(UTC)
+        await self._db.execute(
+            update(ConversationMember)
+            .where(
+                ConversationMember.conversation_id == conversation_id,
+                ConversationMember.user_id == user_id,
+            )
+            .values(last_read_at=read_at)
+        )
+        await self._db.commit()
+        return read_at
+
+    async def get_unread_counts(
+        self,
+        *,
+        user_id: str,
+        conversation_ids: Sequence[str],
+    ) -> dict[str, int]:
+        """Count each conversation's messages this user has not read yet.
+
+        One grouped query rather than one per conversation, for the same reason
+        `get_last_messages` is written that way.
+
+        Args:
+            user_id: Reader whose marks decide what counts.
+            conversation_ids: Conversations to count within.
+
+        Returns:
+            Conversation id mapped to its unread total; absent means zero.
+        """
+        if not conversation_ids:
+            return {}
+
+        # Own messages are never unread, and a withdrawn one has nothing to read.
+        rows = await self._db.execute(
+            select(Message.conversation_id, func.count(Message.id))
+            .join(
+                ConversationMember,
+                ConversationMember.conversation_id == Message.conversation_id,
+            )
+            .where(
+                ConversationMember.user_id == user_id,
+                Message.conversation_id.in_(conversation_ids),
+                Message.sender_id != user_id,
+                Message.deleted_at.is_(None),
+                (ConversationMember.last_read_at.is_(None))
+                | (Message.created_at > ConversationMember.last_read_at),
+            )
+            .group_by(Message.conversation_id)
+        )
+        return {conversation_id: total for conversation_id, total in rows.all()}
+
     async def send_message(
         self,
         *,
@@ -221,8 +525,15 @@ class ChatService:
         conversation_id: str,
         client_message_id: str,
         text: str,
+        attachment_id: str | None = None,
+        reply_to_message_id: str | None = None,
     ) -> SendMessageResult:
-        """Persist an authorized original message before any transport fan-out."""
+        """Persist an authorized original message before any transport fan-out.
+
+        An `attachment_id` is claimed by this message; a `reply_to_message_id`
+        is stored only when it names a message in the same conversation, so a
+        quote can never point somewhere the reader cannot see.
+        """
         self._validate_send_message_request(
             sender_id=sender_id,
             conversation_id=conversation_id,
@@ -264,6 +575,10 @@ class ChatService:
             sender_id=sender_id,
             original_text=text,
             source_language=sender_language or "en",
+            reply_to_message_id=await self._resolve_reply_target(
+                conversation_id=conversation_id,
+                reply_to_message_id=reply_to_message_id,
+            ),
         )
         self._db.add(message)
 
@@ -287,6 +602,13 @@ class ChatService:
                 created=False,
             )
 
+        await self._claim_attachment(
+            attachment_id=attachment_id,
+            conversation_id=conversation_id,
+            uploader_id=sender_id,
+            message_id=message.id,
+        )
+
         await self._db.refresh(message)
         # ``refresh`` starts a new read transaction; close it before transport
         # fan-out so an idle WebSocket does not retain a database transaction.
@@ -295,6 +617,173 @@ class ChatService:
             message=message,
             recipient_ids=recipient_ids,
             created=True,
+        )
+
+    async def edit_message(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+        text: str,
+    ) -> tuple[Message, tuple[str, ...]]:
+        """Replace a message's text on behalf of its sender (F-06).
+
+        Stale translations are dropped here rather than left to rot: they render
+        text the sender has retracted, and the caller schedules a fresh
+        translation from the returned message.
+
+        Args:
+            user_id: Account attempting the edit.
+            conversation_id: Conversation the message must belong to.
+            message_id: Message being edited.
+            text: Replacement text, already validated as non-blank.
+
+        Returns:
+            The updated message and the other members' ids, for realtime fan-out.
+
+        Raises:
+            MessageNotFoundError: No such message in that conversation.
+            MessageOwnershipError: Caller is not the sender.
+            MessageAlreadyDeletedError: The message was withdrawn.
+            ConversationValidationError: Text longer than the message limit.
+        """
+        if len(text) > self.max_message_length:
+            raise ConversationValidationError(
+                f"text must be at most {self.max_message_length} characters"
+            )
+
+        message, recipient_ids = await self._require_own_message(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+        if message.deleted_at is not None:
+            raise MessageAlreadyDeletedError(message_id)
+
+        message.original_text = text
+        message.edited_at = datetime.now(UTC)
+        await self._db.execute(
+            delete(TranslationResult).where(TranslationResult.message_id == message.id)
+        )
+        await self._db.commit()
+        await self._db.refresh(message)
+        return message, recipient_ids
+
+    async def delete_message(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+    ) -> tuple[Message, tuple[str, ...]]:
+        """Withdraw a message on behalf of its sender, keeping the row (F-06).
+
+        Deleting twice is not an error: the caller asked for the message to be
+        gone, and it is.
+
+        Args:
+            user_id: Account attempting the deletion.
+            conversation_id: Conversation the message must belong to.
+            message_id: Message being withdrawn.
+
+        Returns:
+            The updated message and the other members' ids, for realtime fan-out.
+
+        Raises:
+            MessageNotFoundError: No such message in that conversation.
+            MessageOwnershipError: Caller is not the sender.
+        """
+        message, recipient_ids = await self._require_own_message(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+        if message.deleted_at is None:
+            message.deleted_at = datetime.now(UTC)
+            await self._db.commit()
+            await self._db.refresh(message)
+        return message, recipient_ids
+
+    async def _resolve_reply_target(
+        self,
+        *,
+        conversation_id: str,
+        reply_to_message_id: str | None,
+    ) -> str | None:
+        """Keep a reply link only when it points inside this conversation.
+
+        A quote of a message from somewhere else would render text the reader is
+        not entitled to, so an id that does not belong here is dropped rather
+        than rejected — the message itself is still worth sending.
+        """
+        if reply_to_message_id is None:
+            return None
+        parent_conversation = await self._db.scalar(
+            select(Message.conversation_id).where(Message.id == reply_to_message_id)
+        )
+        return reply_to_message_id if parent_conversation == conversation_id else None
+
+    async def _claim_attachment(
+        self,
+        *,
+        attachment_id: str | None,
+        conversation_id: str,
+        uploader_id: str,
+        message_id: str,
+    ) -> None:
+        """Bind an already uploaded file to the message that carries it.
+
+        Scoped to the uploader and the conversation so one member cannot attach
+        another member's file, or a file from a conversation they left.
+        """
+        if attachment_id is None:
+            return
+        await self._db.execute(
+            update(Attachment)
+            .where(
+                Attachment.id == attachment_id,
+                Attachment.conversation_id == conversation_id,
+                Attachment.uploader_id == uploader_id,
+                Attachment.message_id.is_(None),
+            )
+            .values(message_id=message_id)
+        )
+        await self._db.commit()
+
+    async def get_attachments_by_message(
+        self,
+        *,
+        message_ids: Sequence[str],
+    ) -> dict[str, Attachment]:
+        """Load the attachment of each message in a page, in one query."""
+        if not message_ids:
+            return {}
+        rows = await self._db.scalars(
+            select(Attachment).where(Attachment.message_id.in_(message_ids))
+        )
+        return {row.message_id: row for row in rows.all() if row.message_id}
+
+    async def _require_own_message(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+    ) -> tuple[Message, tuple[str, ...]]:
+        member_ids = await self._require_membership(
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        message = await self._db.get(Message, message_id)
+        # A message id from another conversation must read as missing rather
+        # than as forbidden, or the error tells the caller it exists.
+        if message is None or message.conversation_id != conversation_id:
+            raise MessageNotFoundError(message_id)
+        if message.sender_id != user_id:
+            raise MessageOwnershipError(message_id, user_id)
+        return message, tuple(
+            member_id for member_id in member_ids if member_id != user_id
         )
 
     async def submit_translation_feedback(

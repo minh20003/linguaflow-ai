@@ -3,15 +3,26 @@
 import mimetypes
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.websocket import get_connection_manager
 from src.config import get_settings
 from src.core.deps import get_current_user
 from src.core.security import (
@@ -23,6 +34,7 @@ from src.core.security import (
 )
 from src.database import get_db
 from src.database.models import (
+    Attachment,
     Conversation,
     Feedback,
     PasswordResetToken,
@@ -42,25 +54,36 @@ from src.schemas.auth import (
     ResetPasswordRequest,
     UpdateLanguageRequest,
     UserResponse,
-    normalize_email,
 )
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
+    ConversationMemberSummary,
     ConversationResponse,
+    EditMessageRequest,
     FeedbackRequest,
     FeedbackResponse,
+    MessageDeletedEvent,
+    MessageReadEvent,
     MessageResponse,
+    MessageUpdatedEvent,
+    ReadReceiptResponse,
     TranslationSummary,
 )
 from src.services.chat import (
     ChatService,
+    ChatServiceError,
     ConversationMembershipError,
     ConversationNotFoundError,
     ConversationValidationError,
+    MessageAlreadyDeletedError,
+    MessageNotFoundError,
+    MessageOwnershipError,
     ReferencedUsersNotFoundError,
     TranslationNotFoundError,
 )
+from src.services.connection_manager import ConnectionManager
+from src.services.translation import schedule_translations
 
 router = APIRouter()
 
@@ -334,21 +357,54 @@ async def list_supported_languages() -> list[str]:
 
 @router.get("/users", response_model=list[UserResponse])
 async def find_users(
-    email: str = Query(..., min_length=3, max_length=255),
+    q: str = Query(..., min_length=2, max_length=255),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[UserResponse]:
-    """Look up an account by exact email, for adding members to a conversation.
+    """Find accounts to start a conversation with (docs/CONTRACT.md §3.1).
+
+    Matches a case-insensitive prefix of the email, the username or the display
+    name. Prefix rather than substring: matching anywhere inside the string turns
+    this into a way to walk the whole user table one letter at a time, while a
+    prefix still finds the person whose name or address the caller is typing.
+
+    `func.lower` rather than `ilike`: SQLite — which the tests run on — applies
+    `LIKE` case-insensitively to ASCII only, so `ilike` would agree with
+    PostgreSQL on the test data and quietly disagree on real names.
+
+    The caller is excluded: offering someone a conversation with themselves is
+    the one result that is never what they meant.
 
     A list rather than a single object: an empty list is an unambiguous "no such
-    account", where a 404 would be confused with a broken route. Exact match
-    only — this is a resolver for a known address, not a directory search.
+    account", where a 404 would be confused with a broken route.
 
     Authentication is required so it is not an anonymous enumeration oracle. It
-    remains one for signed-in users, which is accepted at this stage.
+    remains one for signed-in users, which is accepted at this stage — see the
+    rate-limiting note in docs/DEPLOY.md.
     """
-    user = await db.scalar(select(User).where(User.email == normalize_email(email)))
-    return [UserResponse.model_validate(user)] if user is not None else []
+    # `%` and `_` are LIKE wildcards, so a query of "%" would otherwise list the
+    # whole table — exactly what prefix matching is here to prevent.
+    needle = q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    prefix = f"{needle}%"
+    # A display name is several words, and people search for the one they know:
+    # "An" must find "Nguyễn An". Any word may start the match, but no match
+    # starts inside a word, so the walk-the-table problem above stays closed.
+    word_prefix = f"% {needle}%"
+    users = await db.scalars(
+        select(User)
+        .where(
+            User.id != current_user.id,
+            or_(
+                func.lower(User.email).like(prefix, escape="\\"),
+                func.lower(User.username).like(prefix, escape="\\"),
+                func.lower(User.display_name).like(prefix, escape="\\"),
+                func.lower(User.display_name).like(word_prefix, escape="\\"),
+            ),
+        )
+        .order_by(User.email)
+        .limit(20)
+    )
+    return [UserResponse.model_validate(user) for user in users]
 
 
 # ========================
@@ -359,18 +415,42 @@ async def find_users(
 async def _conversation_response(
     service: ChatService,
     conversation: Conversation,
+    last_message: tuple[str, datetime] | None = None,
+    manager: ConnectionManager | None = None,
+    unread_count: int = 0,
+    members: Sequence[User] | None = None,
 ) -> ConversationResponse:
-    """Build the minimal conversation representation for an authorized user."""
-    member_ids = await service.get_conversation_member_ids(
-        conversation_id=conversation.id,
-    )
+    """Build the minimal conversation representation for an authorized user.
+
+    Args:
+        service: Open chat service.
+        conversation: Conversation being rendered.
+        last_message: Preview text and time, already resolved for the calling
+            account. A conversation with no messages passes None.
+        manager: Live connection registry, for `online_member_ids`.
+        unread_count: Messages this reader has not seen (§3.8).
+        members: Already-loaded members. The list endpoint passes them in from
+            one batched query; a single-conversation caller lets this load them.
+
+    Returns:
+        The conversation as the REST contract defines it (docs/CONTRACT.md §3.5).
+    """
+    if members is None:
+        members = await service.get_conversation_members(conversation_id=conversation.id)
     return ConversationResponse(
         id=conversation.id,
         type=conversation.type,
         title=conversation.title,
         created_by=conversation.created_by,
         created_at=conversation.created_at,
-        member_ids=list(member_ids),
+        member_ids=[member.id for member in members],
+        members=[ConversationMemberSummary.model_validate(member) for member in members],
+        last_message=last_message[0] if last_message else None,
+        last_message_at=last_message[1] if last_message else None,
+        online_member_ids=list(
+            manager.online_user_ids(member.id for member in members)
+        ) if manager else [],
+        unread_count=unread_count,
     )
 
 
@@ -381,13 +461,18 @@ async def _conversation_response(
 )
 async def create_conversation(
     request: ConversationCreateRequest,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationResponse:
-    """Create the minimal direct or group conversation required for chat."""
+    """Create the minimal direct or group conversation required for chat.
+
+    Asking twice for the same direct conversation is answered with `200` and the
+    conversation that already exists, not a second one (docs/CONTRACT.md §3.5).
+    """
     service = ChatService(db)
     try:
-        conversation = await service.create_conversation(
+        result = await service.create_conversation(
             creator_id=current_user.id,
             conversation_type=request.type,
             member_ids=request.member_ids,
@@ -404,19 +489,40 @@ async def create_conversation(
             detail=str(exc),
         ) from exc
 
-    return await _conversation_response(service, conversation)
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
+
+    return await _conversation_response(service, result.conversation)
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
 ) -> list[ConversationResponse]:
     """List conversations that contain the authenticated user."""
     service = ChatService(db)
     conversations = await service.list_conversations(user_id=current_user.id)
+    conversation_ids = [conversation.id for conversation in conversations]
+    last_messages = await service.get_last_messages(
+        conversation_ids=conversation_ids,
+        reader_language=current_user.preferred_language,
+    )
+    unread = await service.get_unread_counts(
+        user_id=current_user.id,
+        conversation_ids=conversation_ids,
+    )
+    members = await service.get_members_by_conversation(conversation_ids=conversation_ids)
     return [
-        await _conversation_response(service, conversation)
+        await _conversation_response(
+            service,
+            conversation,
+            last_messages.get(conversation.id),
+            manager,
+            unread.get(conversation.id, 0),
+            members.get(conversation.id, []),
+        )
         for conversation in conversations
     ]
 
@@ -455,24 +561,170 @@ async def get_conversation_messages(
             detail=str(exc),
         ) from exc
 
+    live_message_ids = [message.id for message in messages if message.deleted_at is None]
     translations = await _translations_by_message(
         db,
-        [message.id for message in messages],
+        live_message_ids,
         reader_id=current_user.id,
     )
+    attachments = await service.get_attachments_by_message(message_ids=live_message_ids)
     return [
         MessageResponse(
             id=message.id,
             client_message_id=message.client_message_id,
             conversation_id=message.conversation_id,
             sender_id=message.sender_id,
-            original_text=message.original_text,
+            # A withdrawn message keeps its row for the measurement data hanging
+            # off it, but its text must not travel anywhere (§3.6).
+            original_text="" if message.deleted_at else message.original_text,
             source_language=message.source_language,
             translations=translations.get(message.id, []),
             created_at=message.created_at,
+            edited_at=message.edited_at,
+            deleted_at=message.deleted_at,
+            attachment=(
+                AttachmentResponse.model_validate(attachments[message.id])
+                if message.id in attachments else None
+            ),
+            reply_to_message_id=message.reply_to_message_id,
         )
         for message in messages
     ]
+
+
+def _message_error(exc: ChatServiceError) -> HTTPException:
+    """Map a message-mutation failure onto its documented status (§3.6)."""
+    if isinstance(exc, MessageNotFoundError | ConversationNotFoundError):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, MessageOwnershipError | ConversationMembershipError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if isinstance(exc, MessageAlreadyDeletedError):
+        return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+@router.post(
+    "/conversations/{conversation_id}/read",
+    response_model=ReadReceiptResponse,
+)
+async def mark_conversation_read(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> ReadReceiptResponse:
+    """Mark everything in a conversation as read by the caller (§3.8).
+
+    Other members are told so their own copy of the thread can show the message
+    as seen rather than merely delivered.
+    """
+    service = ChatService(db)
+    try:
+        read_at = await service.mark_conversation_read(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+        )
+        member_ids = await service.get_conversation_member_ids(
+            conversation_id=conversation_id,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+
+    await manager.send_to_users(
+        tuple(member_id for member_id in member_ids if member_id != current_user.id),
+        MessageReadEvent(
+            conversation_id=conversation_id,
+            user_id=current_user.id,
+            read_at=read_at,
+        ).model_dump(mode="json"),
+    )
+    return ReadReceiptResponse()
+
+
+@router.patch(
+    "/conversations/{conversation_id}/messages/{message_id}",
+    response_model=MessageResponse,
+)
+async def edit_message(
+    conversation_id: str,
+    message_id: str,
+    payload: EditMessageRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> MessageResponse:
+    """Replace the text of a message the caller sent (F-06).
+
+    The previous translations are discarded and the message is translated again
+    in the background, because a translation of retracted text is worse than no
+    translation at all.
+    """
+    service = ChatService(db)
+    try:
+        message, recipient_ids = await service.edit_message(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            text=payload.text,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+
+    await manager.send_to_users(
+        recipient_ids,
+        MessageUpdatedEvent(
+            message_id=message.id,
+            conversation_id=message.conversation_id,
+            original_text=message.original_text,
+            edited_at=message.edited_at,
+        ).model_dump(mode="json"),
+    )
+    schedule_translations(message=message, publisher=manager)
+
+    return MessageResponse(
+        id=message.id,
+        client_message_id=message.client_message_id,
+        conversation_id=message.conversation_id,
+        sender_id=message.sender_id,
+        original_text=message.original_text,
+        source_language=message.source_language,
+        translations=[],
+        created_at=message.created_at,
+        edited_at=message.edited_at,
+        deleted_at=message.deleted_at,
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_message(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> None:
+    """Withdraw a message the caller sent, keeping its row (F-06)."""
+    service = ChatService(db)
+    try:
+        message, recipient_ids = await service.delete_message(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+
+    await manager.send_to_users(
+        recipient_ids,
+        MessageDeletedEvent(
+            message_id=message.id,
+            conversation_id=message.conversation_id,
+            deleted_at=message.deleted_at,
+        ).model_dump(mode="json"),
+    )
 
 
 @router.post(
@@ -637,14 +889,20 @@ async def upload_conversation_attachment(
         await file.close()
 
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
-    return AttachmentResponse(
+    # Persisted so a message can claim it later; until then the row is an
+    # unattached upload, which is a normal state (docs/CONTRACT.md §3.7).
+    attachment = Attachment(
         id=attachment_id,
         conversation_id=conversation_id,
+        uploader_id=current_user.id,
         filename=_safe_filename(file.filename),
         content_type=content_type,
         size=written,
-        download_url=f"/api/v1/conversations/{conversation_id}/attachments/{attachment_id}",
     )
+    db.add(attachment)
+    await db.commit()
+
+    return AttachmentResponse.model_validate(attachment)
 
 
 @router.get("/conversations/{conversation_id}/attachments/{attachment_id}")
