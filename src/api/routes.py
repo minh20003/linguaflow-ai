@@ -1,5 +1,6 @@
 """API routes for the application."""
 
+import logging
 import mimetypes
 import re
 import uuid
@@ -84,6 +85,8 @@ from src.services.chat import (
 )
 from src.services.connection_manager import ConnectionManager
 from src.services.translation import schedule_translations
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -266,10 +269,21 @@ async def forgot_password(
         expires_at=datetime.now(UTC) + timedelta(minutes=get_settings().password_reset_expire_minutes),
     ))
     await db.commit()
-    # Local development has no mail provider. Returning this only in development
-    # keeps the flow testable; production never exposes reset credentials.
-    visible_token = raw_token if get_settings().app_env == "development" else None
-    return ForgotPasswordResponse(message=generic, reset_token=visible_token)
+    # There is no mail provider yet (docs/DEPLOY.md). In development the token
+    # comes back in the response so the flow is testable in one screen; anywhere
+    # else it goes to the server log only, for an administrator to read out to
+    # the person who asked. It is never both — a reset token in an HTTP response
+    # is a password anyone who can reach the endpoint may claim.
+    if get_settings().app_env == "development":
+        return ForgotPasswordResponse(message=generic, reset_token=raw_token)
+
+    logger.warning(
+        "Password reset requested for %s. Reset token: %s (valid %s minutes)",
+        user.email,
+        raw_token,
+        get_settings().password_reset_expire_minutes,
+    )
+    return ForgotPasswordResponse(message=generic)
 
 
 @router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)

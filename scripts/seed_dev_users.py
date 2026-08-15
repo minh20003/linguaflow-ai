@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy import select
 
 from src.core.security import get_password_hash
-from src.database import create_tables, get_async_session_maker
+from src.database import get_async_session_maker
 from src.database.models import User
 
 
@@ -50,9 +50,9 @@ async def seed_users(
         admin_language: ISO 639-1 code the admin reads in
         force: If True, update existing users
     """
-    # Create tables first
-    await create_tables()
-
+    # The schema is Alembic's: run `alembic upgrade head` (or `make migrate`)
+    # before seeding. Creating tables here would build a schema no migration
+    # knows about, and the next `alembic upgrade` would fail on it.
     session_maker = get_async_session_maker()
     async with session_maker() as session:
         users_to_create = [

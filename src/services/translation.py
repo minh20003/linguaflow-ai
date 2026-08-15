@@ -276,7 +276,29 @@ async def _translate_into(
             await record("empty", result=result)
             return
 
-        await _store_detected_source(session, snapshot["message_id"], detected_source)
+        message = await _store_detected_source(
+            session, snapshot["message_id"], detected_source
+        )
+
+        # Between the graph starting and finishing — around 1.5 seconds — the
+        # sender may have edited or withdrawn the message. Persisting now would
+        # store a translation of text that no longer exists, and because the
+        # unique constraint makes the retranslation's insert lose to this row,
+        # that stale text would be what every recipient reads (F-06).
+        superseded = (
+            message is None
+            or message.deleted_at is not None
+            or message.original_text != snapshot["original_text"]
+        )
+        if superseded:
+            # The attempt is still recorded under its real outcome — the model
+            # ran and the tokens were spent, and ADR-16 counts that — but the
+            # text is neither stored nor delivered. Reusing the real outcome
+            # avoids adding a value to the `outcome` check constraint, which
+            # could not be changed without rebuilding the database.
+            await record(str(result.get("telemetry", {}).get("outcome") or "llm"), result=result)
+            return
+
         translation = await _persist_translation(
             session,
             message_id=snapshot["message_id"],
@@ -387,13 +409,18 @@ async def _store_detected_source(
     session: AsyncSession,
     message_id: str,
     detected_source: str,
-) -> None:
-    """Replace the provisional source_language with what detection found."""
+) -> Message | None:
+    """Replace the provisional source_language with what detection found.
+
+    Returns the message so the caller can tell whether it still says what this
+    translation was made from, without paying for a second read of the same row.
+    """
     message = await session.get(Message, message_id)
     if message is None or message.source_language == detected_source:
-        return
+        return message
     message.source_language = detected_source
     await session.commit()
+    return message
 
 
 async def _persist_translation(

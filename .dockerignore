@@ -14,3 +14,18 @@ eval/
 .dockerignore
 Dockerfile
 docker-compose.yml
+
+# The backend image runs `COPY . .`, so anything not excluded here ships with it.
+# The Next.js frontend is deployed separately (see docs/DEPLOY.md) and its
+# node_modules alone is larger than the rest of the image.
+frontend/
+node_modules/
+# Local database and uploaded files — the deployed instance keeps its own on a
+# mounted volume, and baking a dev copy in would overwrite nothing but confuse
+# everything.
+data/
+.ai-log/
+tests/
+.github/
+.agents/
+.claude/

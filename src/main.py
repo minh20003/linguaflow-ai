@@ -16,7 +16,6 @@ from src.api.metrics import router as metrics_router
 from src.api.routes import router
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
-from src.database import create_tables
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +30,10 @@ async def lifespan(app: FastAPI):
     # Blocking, so it runs once here rather than on any request path.
     verify_langfuse_credentials()
 
-    # create_all adds missing tables but never alters existing ones — a schema
-    # change needs the database recreated (see ADR-06, `make reset-db`).
-    await create_tables()
-    logger.info("Database tables ready")
-
+    # The schema is not created here. Alembic owns it (ADR-06), and the
+    # container runs `alembic upgrade head` before this process starts, so an
+    # application that also created tables would let the two disagree in silence
+    # — `create_all` adds missing tables but never alters an existing one.
     yield
 
     logger.info("Shutting down")
@@ -51,7 +49,8 @@ app = FastAPI(
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=settings.cors_origin_list,
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
