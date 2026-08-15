@@ -207,7 +207,7 @@ erDiagram
 
 **Ghi chú triển khai:**
 
-1. Toàn bộ bảy bảng đã được hiện thực hoá tại `src/database/models.py`. Không có công cụ migration: thay đổi schema ở môi trường phát triển áp dụng bằng `make reset-db` (xem ADR-06). Riêng `translation_attempts` là bảng **mới**, nên `create_all` tạo được nó mà không cần xoá dữ liệu sẵn có — chỉ cần khởi động lại server một lần.
+1. Toàn bộ các bảng đã được hiện thực hoá tại `src/database/models.py`. Từ 15/08 schema do **Alembic** quản lý: đổi model thì sinh migration (`make revision m="..."`) rồi `make migrate`, chứ không xoá và tạo lại cơ sở dữ liệu nữa (xem ADR-06).
 2. Hệ thống không có bảng riêng lưu ngữ cảnh. Ngữ cảnh được truy vấn trực tiếp từ bảng `messages` (xem §2).
 3. Cột `confidence` đã được loại khỏi `translation_results` do không có bước nào trong Agent Flow sinh ra giá trị này. Cột sẽ được bổ sung khi hệ thống có node đánh giá độ tin cậy.
 4. `conversation_members` dùng khoá chính tổ hợp `(conversation_id, user_id)` và **không có cột `role`** — không tính năng nào trong F-01..F-06 dùng tới vai trò trong hội thoại. `users.role` (quyền hệ thống) vẫn giữ nguyên.
