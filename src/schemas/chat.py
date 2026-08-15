@@ -1,11 +1,38 @@
 """Pydantic schemas for the durable chat and WebSocket contracts."""
 
-from datetime import datetime
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+
+from src.schemas.auth import fallback_profile_names
 
 ConversationType = Literal["direct", "group"]
+
+
+def _utc_isoformat(value: datetime) -> str:
+    """Render a timestamp as UTC with an explicit designator.
+
+    SQLite hands back naive datetimes even though the columns declare
+    `timezone=True`, and a naive string is read by `new Date()` in the browser as
+    *local* time — which silently backdated every timestamp by the reader's UTC
+    offset and made a message just sent read as "7 giờ" ago. The contract has
+    always specified the `Z` form (docs/CONTRACT.md §3.2); this enforces it.
+    """
+    moment = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return moment.isoformat().replace("+00:00", "Z")
+
+
+# Every timestamp crossing the API boundary, so no caller has to guess a zone.
+UtcDatetime = Annotated[datetime, PlainSerializer(_utc_isoformat, return_type=str)]
 
 
 class ConversationCreateRequest(BaseModel):
@@ -26,6 +53,29 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class ConversationMemberSummary(BaseModel):
+    """Enough about a member to render them and to know what they read."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    # Carried so a conversation can be labelled with a person's name. Without
+    # them the client can only cut the email at the `@`, which stops being a
+    # name the moment two accounts share a local part.
+    username: str | None = None
+    display_name: str | None = None
+    preferred_language: str
+
+    @model_validator(mode="after")
+    def fill_legacy_profile_names(self) -> "ConversationMemberSummary":
+        """Apply the same fallback as UserDTO, so one member never renders blank."""
+        self.username, self.display_name = fallback_profile_names(
+            self.email, self.username, self.display_name
+        )
+        return self
+
+
 class ConversationResponse(BaseModel):
     """Conversation metadata returned to an authenticated member."""
 
@@ -33,8 +83,62 @@ class ConversationResponse(BaseModel):
     type: ConversationType
     title: str | None
     created_by: str
-    created_at: datetime
+    created_at: UtcDatetime
     member_ids: list[str]
+    # `member_ids` alone leaves a direct conversation with no name to show and
+    # every incoming message unattributed. Both are kept: the id list is what
+    # existing clients read.
+    members: list[ConversationMemberSummary] = []
+    # The newest message, in the calling account's own language where a
+    # translation exists — a preview nobody can read identifies nothing
+    # (docs/CONTRACT.md §3.5). Null until the conversation has a message.
+    last_message: str | None = None
+    last_message_at: UtcDatetime | None = None
+    # Members holding a live socket right now, read from the in-process
+    # connection registry rather than from storage (docs/CONTRACT.md §3.5).
+    online_member_ids: list[str] = []
+    # Messages from other people newer than this reader's last_read_at (§3.8).
+    unread_count: int = 0
+
+
+class TranslationSummary(BaseModel):
+    """One rendered translation attached to a message in REST history."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    translation_id: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
+    # The requesting account's own feedback, so a vote survives a page reload.
+    # Per-caller data: never shared between accounts (docs/CONTRACT.md §3.2).
+    my_rating: int | None = None
+    my_correction: str | None = None
+
+
+class AttachmentResponse(BaseModel):
+    """Metadata for a stored conversation file (docs/CONTRACT.md §3.7)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    conversation_id: str
+    filename: str
+    content_type: str
+    size: int
+
+    @computed_field
+    @property
+    def download_url(self) -> str:
+        """Where to fetch the bytes.
+
+        Derived rather than stored so every caller spells the path the same way;
+        the REST layer and the socket layer would otherwise each build their own,
+        and only one of them could stay right.
+        """
+        return f"/api/v1/conversations/{self.conversation_id}/attachments/{self.id}"
 
 
 class MessageResponse(BaseModel):
@@ -47,7 +151,82 @@ class MessageResponse(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
-    created_at: datetime
+    source_language: str
+    # Carrying translations here is what makes a socket that dropped mid
+    # translation a non-event: the client recovers them on reconnect rather
+    # than waiting for a `translation_completed` that was already sent.
+    translations: list[TranslationSummary] = []
+    created_at: UtcDatetime
+    # Null until the sender edits or removes the message (docs/CONTRACT.md §3.6).
+    edited_at: UtcDatetime | None = None
+    deleted_at: UtcDatetime | None = None
+    # The file this message carries, and the message it answers (§3.7).
+    attachment: AttachmentResponse | None = None
+    reply_to_message_id: str | None = None
+
+
+class EditMessageRequest(BaseModel):
+    """New text for a message its sender is correcting (F-06)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(cls, value: str) -> str:
+        """Reject a whitespace-only edit rather than blanking the message.
+
+        Clearing a message is what DELETE is for, and it records `deleted_at`
+        so the thread can say the message was withdrawn.
+        """
+        if not value.strip():
+            raise ValueError("text must not be blank")
+        return value
+
+
+class FeedbackRequest(BaseModel):
+    """A reader's verdict on one translation (F-05).
+
+    The UI offers a thumbs pair rather than five stars, so it sends the extremes
+    of the range the `feedbacks` table already constrains: 5 for up, 1 for down.
+    Keeping the column as-is is what lets this ship without a schema migration.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rating: int = Field(ge=1, le=5)
+    correction: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("correction")
+    @classmethod
+    def correction_must_not_be_blank(cls, value: str | None) -> str | None:
+        """Store a missing correction as null rather than as whitespace."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class FeedbackResponse(BaseModel):
+    """Identifier of the stored feedback row."""
+
+    feedback_id: str
+
+
+class ReadReceiptResponse(BaseModel):
+    """State after marking a conversation read (docs/CONTRACT.md §3.8)."""
+
+    unread_count: int = 0
+
+
+class MessageReadEvent(BaseModel):
+    """WebSocket event telling senders their message has been seen."""
+
+    type: Literal["message_read"] = "message_read"
+    conversation_id: str
+    user_id: str
+    read_at: UtcDatetime
 
 
 class RealtimeMessage(BaseModel):
@@ -59,7 +238,11 @@ class RealtimeMessage(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
-    created_at: datetime
+    created_at: UtcDatetime
+    # Carried live so a recipient renders the quote and the file without
+    # refetching history (docs/CONTRACT.md §3.7).
+    reply_to_message_id: str | None = None
+    attachment: AttachmentResponse | None = None
 
 
 class AuthEvent(BaseModel):
@@ -80,6 +263,9 @@ class SendMessageEvent(BaseModel):
     client_message_id: str = Field(min_length=1, max_length=128)
     conversation_id: str = Field(min_length=1, max_length=36)
     text: str = Field(min_length=1, max_length=5000)
+    # Both optional: a plain message carries neither (docs/CONTRACT.md §4.1).
+    attachment_id: str | None = Field(default=None, max_length=255)
+    reply_to_message_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("client_message_id", "conversation_id")
     @classmethod
@@ -96,6 +282,25 @@ class SendMessageEvent(BaseModel):
         if not value.strip():
             raise ValueError("text must not be blank")
         return value
+
+
+class TypingEvent(BaseModel):
+    """Client-side notice that someone started or stopped composing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["typing"]
+    conversation_id: str = Field(min_length=1, max_length=36)
+    is_typing: bool
+
+
+class TypingNotificationEvent(BaseModel):
+    """Server-side relay of `typing` to the other members of a conversation."""
+
+    type: Literal["typing"] = "typing"
+    conversation_id: str
+    user_id: str
+    is_typing: bool
 
 
 class AuthOkEvent(BaseModel):
@@ -118,6 +323,53 @@ class MessageReceivedEvent(BaseModel):
 
     type: Literal["message_received"] = "message_received"
     message: RealtimeMessage
+
+
+class TranslationCompletedEvent(BaseModel):
+    """WebSocket delivery event for a finished translation.
+
+    Sent only to members whose `preferred_language` equals `target_language`;
+    the socket is per-user, so the filtering happens at fan-out rather than at
+    the client (docs/CONTRACT.md section 4.4).
+
+    `conversation_id` is carried explicitly because a per-user socket gives the
+    client no other way to route this event to the right thread.
+    """
+
+    type: Literal["translation_completed"] = "translation_completed"
+    message_id: str
+    conversation_id: str
+    translation_id: str
+    source_language: str
+    target_language: str
+    translated_text: str
+    model: str
+    latency_ms: int
+    is_fallback: bool
+
+
+class MessageUpdatedEvent(BaseModel):
+    """WebSocket event for a message whose sender changed its text (F-06).
+
+    Carries only what changed. The retranslation that follows arrives as an
+    ordinary `translation_completed`, so clients need no second code path
+    (docs/CONTRACT.md §4.2).
+    """
+
+    type: Literal["message_updated"] = "message_updated"
+    message_id: str
+    conversation_id: str
+    original_text: str
+    edited_at: UtcDatetime
+
+
+class MessageDeletedEvent(BaseModel):
+    """WebSocket event for a message its sender withdrew (F-06)."""
+
+    type: Literal["message_deleted"] = "message_deleted"
+    message_id: str
+    conversation_id: str
+    deleted_at: UtcDatetime
 
 
 class ErrorEvent(BaseModel):

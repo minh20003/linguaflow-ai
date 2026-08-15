@@ -1,0 +1,212 @@
+# TRIỂN KHAI LINGUAFLOW
+
+Tài liệu vận hành: đưa hệ thống lên chạy công khai, và xử lý khi có sự cố.
+Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-18.
+
+**Hình dạng bản triển khai**
+
+| Thành phần | Nơi chạy | Ghi chú |
+|---|---|---|
+| Backend + Agent | Railway, dựng từ `Dockerfile` | **Đúng 1 bản sao**, không autoscale |
+| Cơ sở dữ liệu | PostgreSQL (plugin của Railway) | Supabase thay được, xem §6 |
+| Tệp đính kèm | Volume gắn vào `/app/data` của container backend | Không có object storage |
+| Frontend | Vercel, thư mục gốc `frontend/` | Biến môi trường nhúng lúc build |
+
+> **Chỉ được chạy một bản sao.** `ConnectionManager` giữ danh sách socket trong bộ
+> nhớ tiến trình. Bản sao thứ hai sẽ nhận một nửa số kết nối và **âm thầm đánh rơi**
+> tin nhắn phát cho nửa còn lại. Không đặt `--workers`, không bật autoscale, không
+> tăng số replica cho tới khi có backplane dùng chung (ADR-08).
+
+---
+
+## 1. Chuẩn bị
+
+Cần có: tài khoản GitHub (đã đẩy nhánh), tài khoản Railway, tài khoản Vercel, và
+một khoá API của LLM provider (Groq là mặc định, miễn phí).
+
+Sinh khoá ký JWT — **không dùng lại giá trị mẫu trong `.env.example`**, ứng dụng
+sẽ từ chối khởi động ở production nếu gặp nó:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+## 2. Backend trên Railway
+
+1. **New Project → Deploy from GitHub repo**, chọn kho này. Railway nhận ra
+   `Dockerfile` ở thư mục gốc và dùng nó.
+2. **Add → Database → PostgreSQL** trong cùng project.
+3. Ở dịch vụ backend, mở **Variables** và đặt:
+
+   | Biến | Giá trị |
+   |---|---|
+   | `APP_ENV` | `production` |
+   | `JWT_SECRET` | chuỗi vừa sinh ở §1 |
+   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (tham chiếu của Railway) |
+   | `CORS_ORIGINS` | `https://<ten-app>.vercel.app` |
+   | `UPLOAD_DIR` | `/app/data/uploads` |
+   | `LLM_PROVIDER` | `groq` |
+   | `GROQ_API_KEY` | khoá của bạn |
+
+   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `LANGFUSE_*` để
+   bật tracing, `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
+   nhắn sang endpoint Google Translate không chính thức (ADR-07, ADR-15).
+
+   Không cần đặt `PORT`: Railway tự tiêm, và `CMD` trong `Dockerfile` đọc nó.
+
+4. **Settings → Volumes → Add volume**, mount path `/app/data`.
+   Bỏ bước này thì **mọi tệp đính kèm biến mất sau mỗi lần triển khai lại**.
+5. **Settings → Networking → Generate Domain** để lấy tên miền công khai.
+6. Kiểm tra: `curl https://<backend>/health` phải trả `{"status":"ok","env":"production"}`.
+
+Migration chạy tự động: `CMD` là `alembic upgrade head && uvicorn …`, nên container
+**không khởi động** nếu schema không nâng cấp được — đó là hành vi mong muốn, hơn
+là phục vụ trên một cơ sở dữ liệu sai hình dạng.
+
+## 3. Frontend trên Vercel
+
+1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend`.
+2. Environment Variables: `NEXT_PUBLIC_API_URL = https://<backend>.up.railway.app`
+   (không có dấu `/` ở cuối).
+3. Deploy. Sau đó quay lại Railway đặt `CORS_ORIGINS` đúng bằng tên miền Vercel
+   vừa nhận được.
+
+**Đổi `NEXT_PUBLIC_API_URL` thì phải build lại.** Biến `NEXT_PUBLIC_*` được nhúng
+vào mã JavaScript lúc build; sửa giá trị mà không redeploy thì trang vẫn gọi địa
+chỉ cũ. Địa chỉ WebSocket suy ra từ chính biến này (`https` → `wss`).
+
+## 4. Chạy thử tại chỗ trước khi đẩy lên
+
+```bash
+docker compose up --build      # backend + PostgreSQL, giống production
+cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
+```
+
+Không có Docker thì chạy trực tiếp trên SQLite:
+
+```bash
+make migrate      # bắt buộc: ứng dụng không còn tự tạo bảng
+make reset-db     # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
+make run
+```
+
+**Nếu bạn đã có `data/app.db` từ trước ngày 15/08**, tệp đó do `create_all` tạo ra
+nên không có dấu phiên bản của Alembic, và `make migrate` sẽ báo lỗi "table already
+exists". Đánh dấu nó là đã ở phiên bản mới nhất — giữ nguyên dữ liệu — bằng:
+
+```bash
+alembic stamp head
+alembic check     # "No new upgrade operations detected" là đúng
+```
+
+## 5. Biến môi trường
+
+Nguồn sự thật là `src/config.py`; `.env.example` là bản chép có chú thích.
+Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng ngay lúc khởi động.
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `APP_ENV` | `development` | `production` bật kiểm tra `JWT_SECRET` và tắt việc trả mã đặt lại mật khẩu trong phản hồi |
+| `JWT_SECRET` | — | **Bắt buộc.** Ở production: không được là giá trị mẫu, tối thiểu 32 ký tự |
+| `DATABASE_URL` | SQLite trong `./data` | `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
+| `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | 5 / 10 | Chỉ dùng cho PostgreSQL. Mỗi WebSocket giữ một phiên suốt thời gian mở |
+| `CORS_ORIGINS` | `http://localhost:3000` | Danh sách ngăn cách bằng dấu phẩy. Cũng là danh sách kiểm tra `Origin` của WebSocket |
+| `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |
+| `UPLOAD_DIR` | `./data/uploads` | Trỏ vào volume khi chạy trong container |
+| `MAX_UPLOAD_SIZE_BYTES` | 20 MiB | |
+| `LLM_PROVIDER` + khoá tương ứng | `groq` | `groq` \| `deepseek` \| `gemini` \| `openai` |
+| `JWT_EXPIRE_MINUTES` | 1440 | Access token **không thu hồi được** trước khi hết hạn |
+| `REFRESH_EXPIRE_DAYS` | 30 | |
+| `PASSWORD_RESET_EXPIRE_MINUTES` | 30 | |
+| `FALLBACK_TRANSLATOR_ENABLED` | `true` | Xem cảnh báo quyền riêng tư ở ADR-15 |
+| `LANGFUSE_*` | rỗng | Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
+
+### 5.1. Khoá bí mật — cần cấp những gì
+
+| Khoá | Bắt buộc? | Hậu quả nếu thiếu |
+|---|---|---|
+| `JWT_SECRET` | **Có** | Tiến trình dừng ngay lúc khởi động |
+| `GROQ_API_KEY` (hoặc khoá của provider đang chọn) | **Có, trên thực tế** | Server vẫn chạy, nhưng mọi tin nhắn rơi xuống đường dự phòng rồi trả nguyên bản |
+| `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
+| `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
+| `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
+
+**Nguyên tắc:** `.env` chứa giá trị thật và **không bao giờ được commit**;
+`.env.example` là bản mẫu **được commit** nên mọi giá trị trong đó là công khai
+với cả tổ chức. Từ 15/08 `.gitignore` bắt `.env*` (trừ `.env.example`) và bắt
+`**/.ai-log/*.jsonl` ở mọi cấp thư mục, chứ không chỉ ở thư mục gốc.
+
+Kiểm tra nhanh trước khi push — không được có kết quả nào:
+
+```bash
+git grep -nIE "(gsk_|sk-ant-|sk-proj-|AIza|sk-lf-|pk-lf-)[A-Za-z0-9_-]{15,}"
+```
+
+## 6. Dùng Supabase thay cho PostgreSQL của Railway
+
+Không phải sửa dòng mã nào, chỉ đổi `DATABASE_URL`. Hai điều dễ vấp:
+
+- **Cổng 6543 là pooler ở chế độ transaction**, không dùng được prepared statement
+  của `asyncpg`. Hoặc dùng kết nối trực tiếp cổng **5432**, hoặc thêm
+  `?prepared_statement_cache_size=0` vào cuối URL.
+- Chuỗi Supabase cấp bắt đầu bằng `postgresql://`; ứng dụng tự đổi sang
+  `postgresql+asyncpg://` nên dán nguyên cũng chạy.
+
+## 7. Quên mật khẩu — cách làm hiện tại
+
+Chưa gắn dịch vụ gửi email. Ở `APP_ENV=production`, `POST /auth/password/forgot`
+**không** trả mã trong phản hồi mà ghi vào log máy chủ ở mức `WARNING`:
+
+```
+WARNING src.api.routes: Password reset requested for an@example.com. Reset token: ... (valid 30 minutes)
+```
+
+Quản trị viên mở log của Railway, tìm dòng đó, đọc mã cho người dùng; người dùng
+dán vào ô **"Mã đặt lại"** ở màn hình khôi phục rồi đặt mật khẩu mới. Mã dùng một
+lần và hết hạn sau 30 phút.
+
+Đây là giải pháp tạm và không mở rộng được. Bước tiếp theo là cấu hình SMTP (hoặc
+Resend) và gửi liên kết đặt lại — khi đó bỏ hẳn phần ghi log này.
+
+## 8. Sao lưu
+
+```bash
+pg_dump "$DATABASE_URL" > backup-$(date +%F).sql   # cơ sở dữ liệu
+```
+
+Tệp đính kèm nằm trên volume, không nằm trong bản dump ở trên — sao lưu riêng
+bằng cách tải thư mục `/app/data/uploads` từ shell của Railway.
+
+## 9. Giới hạn đã biết
+
+Ghi ra để người vận hành biết, không phải để bỏ qua:
+
+1. **Một bản sao duy nhất.** Xem cảnh báo đầu tài liệu.
+2. **Không có giới hạn tần suất** ở `/auth/login`, `/auth/password/forgot` và
+   `/users`. Đăng nhập có thể bị dò mật khẩu, và người đã đăng nhập có thể dò xem
+   một địa chỉ email có tài khoản hay không. Ưu tiên số một cho vòng sau.
+3. **Không xoá được tài khoản.** Bốn khoá ngoại đang là `ON DELETE RESTRICT`, nên
+   trên PostgreSQL lệnh xoá sẽ báo lỗi thay vì âm thầm thành công như trên SQLite.
+   Khi làm chức năng này thì phải là xoá mềm.
+4. **Access token không thu hồi được** cho tới khi hết hạn (mặc định 24 giờ). Đăng
+   xuất chỉ huỷ refresh token.
+5. **Không phân trang lịch sử tin nhắn**: mỗi hội thoại tải tối đa 100 tin gần nhất.
+6. **Không quản trị nhóm**: không đổi tên, không thêm/xoá thành viên, không rời nhóm.
+7. **Dữ liệu SQLite cũ không mang sang PostgreSQL được.** `DateTime(timezone=True)`
+   trả về giá trị *naive* trên SQLite và *aware* trên PostgreSQL, chép thẳng là sai
+   múi giờ. Bản triển khai bắt đầu từ cơ sở dữ liệu rỗng.
+
+## 10. Sự cố thường gặp
+
+| Triệu chứng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| Trang gọi `http://localhost:8000` dù đã đặt biến | `NEXT_PUBLIC_API_URL` nhúng lúc build | Redeploy frontend sau khi đổi biến |
+| Trình duyệt báo lỗi CORS | Tên miền Vercel chưa có trong `CORS_ORIGINS` | Thêm vào rồi khởi động lại backend |
+| WebSocket đóng ngay với mã `4403` | `Origin` không khớp danh sách CORS | Như trên — WebSocket dùng chung danh sách đó |
+| WebSocket đóng với mã `4401` | Token sai, hết hạn, hoặc không gửi khung `auth` trong 10 giây | Đăng nhập lại |
+| Container dừng ngay khi khởi động, log nói `asyncio extension requires an async driver` | `DATABASE_URL` trỏ driver đồng bộ | Hiếm — ứng dụng tự đổi tiền tố; kiểm tra xem URL có ghi rõ `+psycopg` không |
+| Container dừng, log nói `JWT_SECRET` | Thiếu, hoặc còn là giá trị mẫu ở production | Sinh khoá mới theo §1 |
+| Tệp đính kèm biến mất sau khi deploy | Chưa gắn volume, hoặc `UPLOAD_DIR` không trỏ vào volume | Xem §2 bước 4 |
+| Tin nhắn gửi được nhưng người kia không nhận | Đang chạy nhiều hơn một bản sao | Đặt lại về 1 replica |
+| Tin nhắn không được dịch, cờ `is_fallback` bật | Hết hạn mức LLM hoặc khoá sai | Kiểm tra khoá, `make metrics` xem tỷ lệ fallback |

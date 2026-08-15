@@ -22,10 +22,21 @@ def _get_settings():
 def _get_engine():
     """Get or create async engine."""
     settings = _get_settings()
+    # SQLite is served by a pool that takes no size — passing one raises — and
+    # sizing it would mean nothing anyway for a file opened by one process.
+    pool_options = (
+        {}
+        if settings.database_url.startswith("sqlite")
+        else {
+            "pool_size": settings.database_pool_size,
+            "max_overflow": settings.database_max_overflow,
+        }
+    )
     return create_async_engine(
         settings.database_url,
         echo=settings.app_env == "development",
         pool_pre_ping=True,
+        **pool_options,
     )
 
 
@@ -65,12 +76,3 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
-
-
-async def create_tables() -> None:
-    """Create all tables. Called on app startup."""
-    from src.database.models import Base  # noqa: F401
-
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)

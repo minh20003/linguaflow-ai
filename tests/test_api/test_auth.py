@@ -4,6 +4,121 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_register_persists_account_and_returns_session(client):
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "new_user",
+            "email": "new@example.com",
+            "password": "securepass123",
+            "display_name": "New User",
+            "preferred_language": "vi",
+        },
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["user"]["username"] == "new_user"
+    assert data["user"]["display_name"] == "New User"
+    assert data["user"]["email"] == "new@example.com"
+    assert data["access_token"]
+    assert data["refresh_token"]
+
+    login_response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "new@example.com", "password": "securepass123", "remember": True},
+    )
+    assert login_response.status_code == 200
+    assert login_response.json()["user"]["username"] == "new_user"
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_duplicate_email_and_username(client):
+    payload = {
+        "username": "unique_user",
+        "email": "unique@example.com",
+        "password": "securepass123",
+        "preferred_language": "en",
+    }
+    assert (await client.post("/api/v1/auth/register", json=payload)).status_code == 201
+    duplicate_email = {**payload, "username": "another_user"}
+    duplicate_username = {**payload, "email": "another@example.com"}
+    assert (await client.post("/api/v1/auth/register", json=duplicate_email)).status_code == 409
+    assert (await client.post("/api/v1/auth/register", json=duplicate_username)).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_refresh_rotates_token_and_logout_revokes_session(client):
+    registered = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "session_user",
+            "email": "session@example.com",
+            "password": "securepass123",
+            "preferred_language": "en",
+        },
+    )
+    first_refresh = registered.json()["refresh_token"]
+    refreshed = await client.post("/api/v1/auth/refresh", json={"refresh_token": first_refresh})
+    assert refreshed.status_code == 200
+    second_refresh = refreshed.json()["refresh_token"]
+    assert second_refresh != first_refresh
+    assert (await client.post("/api/v1/auth/refresh", json={"refresh_token": first_refresh})).status_code == 401
+
+    logout = await client.post("/api/v1/auth/logout", json={"refresh_token": second_refresh})
+    assert logout.status_code == 204
+    assert (await client.post("/api/v1/auth/refresh", json={"refresh_token": second_refresh})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_password_reset_changes_password_and_revokes_sessions(client):
+    registered = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "reset_user",
+            "email": "reset@example.com",
+            "password": "oldpassword123",
+            "preferred_language": "vi",
+        },
+    )
+    old_refresh = registered.json()["refresh_token"]
+    forgot = await client.post(
+        "/api/v1/auth/password/forgot", json={"email": "reset@example.com"}
+    )
+    assert forgot.status_code == 200
+    reset_token = forgot.json()["reset_token"]
+    assert reset_token
+
+    reset = await client.post(
+        "/api/v1/auth/password/reset",
+        json={"token": reset_token, "new_password": "newpassword456"},
+    )
+    assert reset.status_code == 204
+    assert (await client.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})).status_code == 401
+    assert (await client.post(
+        "/api/v1/auth/login",
+        json={"email": "reset@example.com", "password": "oldpassword123"},
+    )).status_code == 401
+    assert (await client.post(
+        "/api/v1/auth/login",
+        json={"email": "reset@example.com", "password": "newpassword456"},
+    )).status_code == 200
+    assert (await client.post(
+        "/api/v1/auth/password/reset",
+        json={"token": reset_token, "new_password": "anotherpassword789"},
+    )).status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_forgot_password_does_not_reveal_unknown_email(client):
+    response = await client.post(
+        "/api/v1/auth/password/forgot", json={"email": "missing@example.com"}
+    )
+    assert response.status_code == 200
+    assert response.json()["reset_token"] is None
+
+
+@pytest.mark.asyncio
 async def test_login_success(client, test_user):
     """Test successful login with valid credentials."""
     response = await client.post(

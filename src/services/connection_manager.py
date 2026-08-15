@@ -41,6 +41,14 @@ class ConnectionManager:
         if not sockets:
             del self._connections[user_id]
 
+    def is_online(self, user_id: str) -> bool:
+        """Whether ``user_id`` currently holds at least one live socket."""
+        return bool(self._connections.get(user_id))
+
+    def online_user_ids(self, candidates: Iterable[str]) -> tuple[str, ...]:
+        """Filter ``candidates`` down to those with a live socket, order kept."""
+        return tuple(user_id for user_id in candidates if self.is_online(user_id))
+
     async def send_to_user(self, user_id: str, event: Mapping[str, Any]) -> None:
         """Deliver an event to every live socket for one user.
 

@@ -63,10 +63,23 @@ class AgentState(TypedDict, total=False):
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05
     is_valid: bool                # Kết quả của node validate_output
-    is_fallback: bool             # True khi trả về bản gốc do lỗi hoặc timeout
-    model: str                    # Ví dụ: "llama-3.3-70b-versatile"
+    is_fallback: bool             # True khi kết quả không đến từ LLM đã cấu hình:
+                                  # provider dự phòng dịch thay, hoặc trả về bản gốc
+    model: str                    # Ví dụ: "llama-3.3-70b-versatile";
+                                  # "deep-translator:google" khi do provider dự phòng dịch
     latency_ms: int
     error: str
+    telemetry: dict               # Chỉ phục vụ đo lường — xem cảnh báo bên dưới
+```
+
+**`telemetry` nằm ngoài hợp đồng.** Trường này *thuộc* hợp đồng, nhưng **các khoá bên trong thì không**. Node ghi vào đó những gì đo được (tầng nhận diện đã dùng, số lượt gọi LLM, token, thời gian từng bước, mã lý do fallback), `record_attempt` đọc ra và ghi xuống bảng `translation_attempts`. Không thành phần nào khác được phụ thuộc vào khoá cụ thể trong đây, và không sự kiện WebSocket hay REST response nào được trả nó ra.
+
+Lý do gộp thành một trường thay vì tám trường rời: chỉ số đo lường thay đổi nhanh hơn hợp đồng sản phẩm. Nếu mỗi chỉ số mới là một trường mới thì mỗi lần muốn đo thêm một thứ đều phải sửa tài liệu, báo nhóm và chờ merge — chi phí đó khiến việc đo bị bỏ qua, đúng thứ NFR-03 cần tránh.
+
+Node cập nhật bằng cách trộn nông, vì trường này không có reducer của LangGraph nên trả về thẳng sẽ ghi đè toàn bộ:
+
+```python
+return {"telemetry": {**state.get("telemetry", {}), "detect_method": "langdetect"}}
 ```
 
 ## 3. REST API
@@ -78,11 +91,26 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 
 | Method | Path | Request Body | Response | Trạng thái |
 |---|---|---|---|---|
-| `POST` | `/auth/login` | `{"email": str, "password": str}` | `{"access_token": str, "token_type": "bearer"}` | Đã hiện thực |
+| `POST` | `/auth/register` | `{"email": str, "password": str, "username": str \| null, "display_name": str \| null, "preferred_language": str}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
+| `POST` | `/auth/login` | `{"email": str, "password": str, "remember": bool}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
+| `POST` | `/auth/refresh` | `{"refresh_token": str}` | Như `/auth/login` | Đã hiện thực |
+| `POST` | `/auth/logout` | `{"refresh_token": str}` | `204 No Content` | Đã hiện thực |
+| `POST` | `/auth/password/forgot` | `{"email": str}` | `{"reset_token": str \| null}`, xem §3.9 | Đã hiện thực |
+| `POST` | `/auth/password/reset` | `{"token": str, "password": str}` | `204 No Content` | Đã hiện thực |
 | `GET` | `/auth/me` | — | `UserDTO` | Đã hiện thực |
 | `PUT` | `/auth/me/language` | `{"preferred_language": str}` | `UserDTO` | Đã hiện thực |
+| `GET` | `/languages` | — | `[str]` | Đã hiện thực |
+| `GET` | `/users?q=` | — | `[UserDTO]`, xem §3.1 | Đã hiện thực |
+| `POST` | `/conversations` | `{"type": "direct" \| "group", "member_ids": [uuid], "title": str \| null}` | `ConversationDTO`, `201` khi tạo mới và `200` khi dùng lại — xem §3.5 | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `{"messages": [MessageDTO]}` | Chưa hiện thực |
-| `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Chưa hiện thực |
+| `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Đã hiện thực |
+| `PATCH` | `/conversations/{conversation_id}/messages/{message_id}` | `{"text": str}` | `MessageDTO`, xem §3.6 | Đã hiện thực |
+| `DELETE` | `/conversations/{conversation_id}/messages/{message_id}` | — | `204 No Content` | Đã hiện thực |
+| `POST` | `/conversations/{conversation_id}/attachments` | `multipart/form-data`, trường `file` | `AttachmentDTO`, xem §3.7 | Đã hiện thực |
+| `GET` | `/conversations/{conversation_id}/attachments/{attachment_id}` | — | Nội dung tệp | Đã hiện thực |
+| `POST` | `/conversations/{conversation_id}/read` | — | `{"unread_count": 0}` | Đã hiện thực |
+| `GET` | `/conversations` | — | `[ConversationDTO]`, xem §3.5 | Đã hiện thực |
+| `GET` | `/stats?days=` | — | Xem §3.4 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -93,11 +121,19 @@ Tương ứng lớp `UserResponse` trong `src/schemas/auth.py`.
 {
   "id": "uuid",
   "email": "user@example.com",
+  "username": "an",
+  "display_name": "Nguyễn An",
   "role": "member",
   "preferred_language": "vi",
   "created_at": "2026-08-10T09:00:00Z"
 }
 ```
+
+Hai trường `username` và `display_name` **không bao giờ null trong phản hồi**: tài khoản tạo trước khi có hai trường này được lấp bằng phần trước dấu `@` của email, nên client luôn có thứ để hiển thị.
+
+**Tìm người dùng — `GET /users?q=`.** Tham số `q` tối thiểu 2 ký tự, khớp **tiền tố, không phân biệt hoa thường** trên `email`, `username` và `display_name`; riêng `display_name` khớp tiền tố của **bất kỳ từ nào** (gõ `an` tìm ra `Nguyễn An`). Trả về tối đa 20 kết quả, sắp xếp theo `email`, và **không bao giờ chứa chính người gọi**. Không tìm thấy ai là mảng rỗng chứ không phải `404` — `404` sẽ lẫn với lỗi sai đường dẫn.
+
+Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗi biến endpoint này thành công cụ quét danh bạ (gõ `a` ra gần như mọi tài khoản). Endpoint yêu cầu đăng nhập, nhưng người đã đăng nhập vẫn dò được sự tồn tại của một địa chỉ — chấp nhận ở giai đoạn này vì chưa có giới hạn tần suất; xem `docs/DEPLOY.md`.
 
 ### 3.2. MessageDTO
 
@@ -116,7 +152,9 @@ Tương ứng lớp `UserResponse` trong `src/schemas/auth.py`.
       "translated_text": "string",
       "model": "llama-3.3-70b-versatile",
       "latency_ms": 420,
-      "is_fallback": false
+      "is_fallback": false,
+      "my_rating": 5,
+      "my_correction": null
     }
   ]
 }
@@ -124,13 +162,124 @@ Tương ứng lớp `UserResponse` trong `src/schemas/auth.py`.
 
 Trường `translation_id` là bắt buộc trong mỗi phần tử của mảng `translations`. Frontend sử dụng giá trị này để gọi endpoint gửi phản hồi (F-05).
 
+Hai trường `my_rating` và `my_correction` là phản hồi **của chính tài khoản đang gọi** cho bản dịch đó, `null` khi tài khoản chưa đánh giá. Chúng tồn tại để nút đánh giá giữ nguyên trạng thái sau khi tải lại trang — không có chúng, người dùng không phân biệt được "chưa bình chọn" với "đã bình chọn nhưng giao diện quên mất". Đây là dữ liệu riêng theo người gọi: hai thành viên khác nhau đọc cùng một `translation_id` sẽ nhận hai giá trị khác nhau, nên tuyệt đối không cache chung giữa các tài khoản.
+
 ### 3.3. Endpoint kế thừa
 
 Hai endpoint `POST /api/v1/chat` và `GET /api/v1/status` là mã nguồn kế thừa từ template, không thuộc phạm vi đặc tả này. Hai endpoint sẽ được loại bỏ đồng thời với việc thay thế `src/agents/` bằng Agent dịch thuật. Không phát triển tính năng mới dựa trên hai endpoint này.
 
+### 3.4. `GET /stats`
+
+Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không bắt buộc, nhận 1..365, bỏ trống thì tính toàn bộ dữ liệu.
+
+```json
+{
+  "window_days": 7,
+  "total_attempts": 128,
+  "outcomes": {"llm": 96, "passthrough": 24, "secondary": 6, "timeout": 2},
+  "fallback_rate": 0.0547,
+  "detect_methods": {"langdetect": 100, "llm": 28},
+  "fallback_reasons": {"llm_error": 6, "wrong_language": 2},
+  "models_served": {"llama-3.3-70b-versatile": 104, "(none)": 24},
+  "language_pairs": {"vi->en": {"count": 60, "p50_ms": 780, "p95_ms": 1430}},
+  "input_tokens": 24800,
+  "output_tokens": 1960,
+  "total_ms_p50": 810,
+  "total_ms_p95": 1520
+}
+```
+
+Endpoint **yêu cầu xác thực**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Mọi thành viên đã đăng nhập đều đọc được.
+
+`fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
+
+### 3.5. ConversationDTO
+
+Tương ứng lớp `ConversationResponse` trong `src/schemas/chat.py`, trả về bởi `GET /conversations` và `POST /conversations`.
+
+```json
+{
+  "id": "uuid",
+  "type": "group",
+  "title": "Nhóm dự án",
+  "created_by": "uuid",
+  "created_at": "2026-08-10T09:00:00Z",
+  "member_ids": ["uuid"],
+  "members": [{"id": "uuid", "email": "user@example.com", "username": "an", "display_name": "Nguyễn An", "preferred_language": "vi"}],
+  "last_message": "Deploy xong chưa anh?",
+  "last_message_at": "2026-08-14T10:12:00Z",
+  "online_member_ids": ["uuid"]
+}
+```
+
+`online_member_ids` liệt kê những thành viên **đang giữ socket** tại thời điểm gọi, đọc từ sổ kết nối trong tiến trình chứ không từ cơ sở dữ liệu, nên không tốn thêm truy vấn nào. Đây là ảnh chụp tại thời điểm gọi: trạng thái online **không** được đẩy tiếp qua WebSocket, client muốn cập nhật thì gọi lại `GET /conversations`.
+
+Lý do không đẩy qua socket: xác định "ai cần biết" đòi hỏi một truy vấn ngay lúc socket vừa mở hoặc vừa đóng, mà phiên cơ sở dữ liệu lại có vòng đời gắn với chính socket đó — truy vấn tại hai thời điểm ấy chạy đua với việc dọn phiên và làm hỏng kết nối một cách không ổn định. Đổi lại, trạng thái online chỉ mới đến mức lần gọi gần nhất.
+
+Hai trường `last_message` và `last_message_at` mô tả tin nhắn mới nhất của hội thoại, `null` khi hội thoại chưa có tin nào. Chúng tồn tại để danh sách hội thoại hiển thị được dòng xem trước và thời gian mà không phải gọi thêm một request cho mỗi hội thoại.
+
+`last_message` là **dữ liệu riêng theo người gọi**, cùng nguyên tắc với `my_rating` ở §3.2: nếu tin nhắn đó đã có bản dịch sang `preferred_language` của tài khoản đang gọi thì trả về bản dịch, không thì trả về `original_text`. Lý do: danh sách hội thoại mà hiển thị thứ tiếng người đọc không hiểu thì không dùng để nhận ra hội thoại được. Vì vậy tuyệt đối không cache chung giá trị này giữa các tài khoản.
+
+`POST /conversations` luôn trả về hai trường này bằng `null` — hội thoại vừa tạo chưa có tin nhắn nào.
+
+Mỗi phần tử của `members` mang `username` và `display_name` theo đúng quy tắc lấp giá trị ở §3.1, để client hiển thị được tên người thay vì phải tự cắt email.
+
+**Hội thoại 1-1 là duy nhất theo cặp người.** `POST /conversations` với `type: "direct"` mà giữa hai người đã có một hội thoại `direct` thì trả lại đúng hội thoại đó kèm mã **`200 OK`**; chỉ khi thật sự tạo mới mới trả `201 Created`. Không có quy tắc này thì mỗi lần bấm "nhắn tin" lại sinh thêm một hội thoại rỗng và lịch sử trò chuyện bị chẻ ra nhiều nơi. Client nên gộp kết quả vào danh sách theo `id` thay vì nối thêm.
+
+Quy tắc này **không áp dụng cho `type: "group"`**: hai nhóm cùng thành viên vẫn là hai nhóm khác nhau, vì nhóm được phân biệt bằng mục đích chứ không bằng danh sách người.
+
+### 3.6. Sửa và gỡ tin nhắn (F-06)
+
+`PATCH .../messages/{message_id}` đổi `original_text`, ghi `edited_at`, rồi **dịch lại** tin nhắn cho các thành viên còn lại — bản dịch cũ không còn đúng với nội dung mới. `DELETE .../messages/{message_id}` là **xoá mềm**: giữ nguyên dòng, ghi `deleted_at`, và từ đó API trả `original_text` rỗng cùng mảng `translations` rỗng.
+
+Xoá mềm chứ không xoá cứng vì `translation_results` và `translation_attempts` trỏ vào `messages` — xoá cứng sẽ kéo theo toàn bộ bằng chứng đo lường mà ADR-16 dựng ra để giữ, tức là gỡ một tin nhắn sẽ âm thầm làm sai số liệu `fallback_rate` ở §3.4.
+
+Phân quyền: **chỉ người gửi** mới sửa hoặc gỡ được tin của mình (`403` nếu không phải). Tin đã gỡ không sửa được nữa (`409`). Cả hai endpoint trả `404` khi tin nhắn không tồn tại hoặc không thuộc hội thoại đã nêu, và `403` khi người gọi không phải thành viên hội thoại.
+
+Hai trường `edited_at` và `deleted_at` có mặt trong mọi `MessageDTO`, `null` khi tin nhắn chưa bị sửa hoặc chưa bị gỡ.
+
+### 3.7. Đính kèm tệp và trả lời
+
+**AttachmentDTO**
+
+```json
+{
+  "id": "string",
+  "conversation_id": "uuid",
+  "filename": "bao-cao.pdf",
+  "content_type": "application/pdf",
+  "size": 184320,
+  "download_url": "/api/v1/conversations/{conversation_id}/attachments/{attachment_id}"
+}
+```
+
+Tệp được tải lên **trước**, sau đó mới gửi tin nhắn kèm `attachment_id` trong sự kiện `send_message` (§4.1). Vì vậy một bản ghi đính kèm có thể tồn tại mà chưa gắn với tin nhắn nào — đó là tệp người dùng đã chọn rồi đổi ý, không phải lỗi. Tệp nằm ngoài thư mục tĩnh công khai; tải xuống vẫn phải qua kiểm tra tư cách thành viên, nên biết URL không đồng nghĩa với có quyền đọc.
+
+`MessageDTO` mang thêm `attachment` (AttachmentDTO hoặc `null`) và `reply_to_message_id` (uuid hoặc `null`).
+
+`reply_to_message_id` dùng `ON DELETE SET NULL`: gỡ tin nhắn gốc **không** kéo theo các tin trả lời nó — đó là lời của người khác. Client thấy `reply_to_message_id` trỏ tới tin đã bị gỡ thì hiển thị trích dẫn rỗng chứ không ẩn cả tin trả lời.
+
+### 3.8. Đếm chưa đọc
+
+`ConversationDTO` mang thêm `unread_count`: số tin nhắn **của người khác** tạo sau mốc `conversation_members.last_read_at` của tài khoản đang gọi. Tin do chính mình gửi không bao giờ được tính là chưa đọc, và tin đã gỡ cũng vậy.
+
+`POST /conversations/{id}/read` đặt mốc đó về thời điểm hiện tại và trả về `{"unread_count": 0}`. Server phát tiếp sự kiện `message_read` (§4.2) để phía người gửi đổi dấu đã gửi thành đã xem.
+
+### 3.9. Đặt lại mật khẩu
+
+`POST /auth/password/forgot` **luôn** trả `200` kèm cùng một câu trả lời chung, dù địa chỉ có tồn tại hay không — trả `404` cho địa chỉ lạ sẽ biến endpoint này thành công cụ dò tài khoản không cần đăng nhập.
+
+Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=development`, để lập trình viên chạy trọn luồng trên một màn hình. **Ở mọi môi trường khác, trường này là `null` và mã đặt lại chỉ được ghi vào log của server** (mức `WARNING`), do dự án chưa gắn dịch vụ gửi email — xem `docs/DEPLOY.md`. Client vì thế phải cho người dùng **nhập tay mã đặt lại** khi phản hồi không kèm token, chứ không được coi đó là lỗi.
+
+`POST /auth/password/reset` tiêu thụ mã đó, đổi mật khẩu và **thu hồi toàn bộ phiên** của tài khoản. Mã dùng một lần và hết hạn sau `PASSWORD_RESET_EXPIRE_MINUTES` phút.
+
 ## 4. WebSocket Protocol
 
-**Endpoint:** `ws://<host>/ws/conversations/{conversation_id}?token=<jwt>`
+**Endpoint:** `ws(s)://<host>/api/v1/ws` — một kênh duy nhất cho mọi hội thoại, không phải một kênh cho mỗi hội thoại.
+
+**Xác thực:** token **không** nằm trong query string (query string bị ghi vào log của proxy). Khung đầu tiên client gửi phải là `{"type": "auth", "token": "<access_token>"}`, trong vòng 10 giây, nếu không server đóng kết nối với mã `4401`. Xác thực xong server trả `auth_ok`.
+
+Server còn kiểm tra header `Origin` **trước khi** bắt tay: nguồn không nằm trong `CORS_ORIGINS` (hoặc `CORS_ORIGIN_REGEX`) bị từ chối với mã `4403`. Middleware CORS không áp dụng cho WebSocket, nên nếu thiếu bước này thì bất kỳ trang web nào cũng mở được socket trong trình duyệt của người đang đăng nhập.
 
 Mọi thông điệp trên kênh WebSocket bắt buộc chứa trường `type` để xác định loại sự kiện.
 
@@ -139,6 +288,8 @@ Mọi thông điệp trên kênh WebSocket bắt buộc chứa trường `type` 
 | `type` | Payload | Ý nghĩa |
 |---|---|---|
 | `user.message` | `{"type": "user.message", "text": "string"}` | Gửi tin nhắn mới |
+| `typing` | `{"type": "typing", "conversation_id": uuid, "is_typing": bool}` | Người dùng bắt đầu hoặc ngừng soạn tin. Server kiểm tra tư cách thành viên rồi mới phát tiếp |
+| `send_message` | thêm hai trường tuỳ chọn `attachment_id` và `reply_to_message_id` | Gửi tin kèm tệp đã tải lên trước đó (§3.7) hoặc trả lời một tin cụ thể |
 
 ### 4.2. Chiều Server đến Client
 
@@ -149,7 +300,13 @@ Trình tự sự kiện khi cần dịch: `message.received` (trạng thái `str
 | `message.received` | `{"type": "message.received", "message_id", "sender_id", "original_text", "source_language", "translation_status": "not_required" \| "streaming", "created_at"}` | Ngay sau khi Chat Service lưu xong tin nhắn gốc. Phát tới toàn bộ thành viên trong cuộc hội thoại, bao gồm người gửi |
 | `translation.chunk` | `{"type": "translation.chunk", "message_id", "target_language", "chunk": "string"}` | Mỗi đoạn bản dịch nhận được từ LLM ở chế độ streaming |
 | `translation.completed` | `{"type": "translation.completed", "message_id", "translation_id", "target_language", "source_language", "translated_text", "model", "latency_ms", "is_fallback"}` | Khi Agent hoàn tất xử lý, bao gồm cả trường hợp fallback |
+| `typing` | `{"type": "typing", "conversation_id", "user_id", "is_typing"}` | Chuyển tiếp sự kiện soạn tin tới **các thành viên khác**, không gửi lại cho chính người gõ |
+| `message_updated` | `{"type": "message_updated", "message_id", "conversation_id", "original_text", "edited_at"}` | Sau khi người gửi sửa tin nhắn (§3.6). Phát tới các thành viên khác; bản dịch mới đến sau bằng `translation_completed` như tin nhắn thường |
+| `message_deleted` | `{"type": "message_deleted", "message_id", "conversation_id", "deleted_at"}` | Sau khi người gửi gỡ tin nhắn (§3.6). Phát tới các thành viên khác |
+| `message_read` | `{"type": "message_read", "conversation_id", "user_id", "read_at"}` | Khi một thành viên đánh dấu đã đọc (§3.8). Phát tới các thành viên khác để họ đổi dấu ✓ thành ✓✓ |
 | `error` | `{"type": "error", "code": "string", "message": "string"}` | Khi phát sinh lỗi kết nối hoặc xác thực (xem §6) |
+
+Hai sự kiện `message_updated` và `message_deleted` đặt tên `snake_case` theo đúng quy ước trong `CLAUDE.md` và theo tên các sự kiện đã hiện thực trong `src/schemas/chat.py`. Các dòng viết dạng chấm phía trên là bản nháp trước khi hiện thực, chưa được đồng bộ lại với mã nguồn.
 
 **Quy định xử lý phía Frontend:**
 
@@ -164,7 +321,11 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 
 1. Khi `INSERT`: gán `messages.source_language` bằng `preferred_language` của người gửi. Đây là giá trị tạm, chưa xác nhận.
 2. Sự kiện `message.received` phát kèm giá trị tạm này.
-3. Sau khi Agent hoàn tất detect: nếu kết quả khác giá trị tạm, thực hiện `UPDATE messages.source_language` và phát giá trị đã xác nhận trong `translation.completed`.
+3. Agent xác định ngôn ngữ nguồn theo chiến lược hai tầng (ADR-11):
+   - Văn bản dưới 5 ký tự hoặc không chứa chữ cái: giữ giá trị tạm, không detect.
+   - `langdetect` (cục bộ, khoảng 2ms) trùng giá trị tạm: dùng kết quả này, không gọi LLM.
+   - `langdetect` mâu thuẫn với giá trị tạm hoặc thất bại: gọi LLM phân xử. `langdetect` kém tin cậy với câu ngắn nên kết quả của nó không được dùng khi có mâu thuẫn.
+4. Sau khi hoàn tất detect: nếu kết quả khác giá trị tạm, thực hiện `UPDATE messages.source_language` và phát giá trị đã xác nhận trong `translation.completed`.
 4. Nếu ngôn ngữ nguồn đã xác nhận trùng `target_language` của một người nhận, người nhận đó chỉ nhận `message.received` với `translation_status = "not_required"`, không nhận `translation.chunk` và `translation.completed`.
 
 ### 4.4. Quy tắc định tuyến chat nhóm (F-02, US-010)
@@ -184,16 +345,27 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | Bảng | Các trường |
 |---|---|
 | `users` | `id`, `email`, `password_hash`, `role`, `preferred_language`, `created_at` |
-| `conversations` | `id`, `title`, `created_at` |
-| `conversation_members` | `id`, `conversation_id`, `user_id`, `role`, `joined_at` |
-| `messages` | `id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at` |
-| `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `created_at` |
+| `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
+| `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
+| `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at`, `edited_at`, `deleted_at` |
+| `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
+| `translation_attempts` | `id`, `message_id`, `target_language`, `source_language_declared`, `source_language_detected`, `outcome`, `provider`, `model_configured`, `model_served`, `detect_method`, `llm_calls`, `input_tokens`, `output_tokens`, `finish_reason`, `detect_ms`, `context_ms`, `translate_ms`, `fallback_ms`, `total_ms`, `context_lines`, `fallback_reason`, `translation_id`, `created_at` |
 
 **Ghi chú:**
 
-1. Hai cột `role` có ngữ nghĩa khác nhau: `users.role` là quyền ở cấp hệ thống (`member` hoặc `admin`); `conversation_members.role` là vai trò trong một cuộc hội thoại cụ thể.
-2. Tại thời điểm cập nhật tài liệu, chỉ bảng `users` đã được hiện thực hoá. Các bảng còn lại khi tạo phải tuân thủ đúng tên bảng và kiểu dữ liệu quy định tại đây.
+1. `users.role` là quyền ở cấp hệ thống (`member` hoặc `admin`). Bảng `conversation_members` **không có cột `role`**: không tính năng nào trong F-01..F-06 dùng tới vai trò trong hội thoại, nên cột này đã được gỡ khỏi hợp đồng thay vì thêm một cột chết vào mã nguồn.
+2. `conversation_members` dùng **khoá chính tổ hợp** `(conversation_id, user_id)`, không có cột `id` riêng. Một người chỉ thuộc một hội thoại đúng một lần, nên tổ hợp này vừa là định danh vừa là ràng buộc.
+3. `conversations.type` nhận `direct` hoặc `group`, có `CheckConstraint` ở mức cơ sở dữ liệu.
+4. `messages.client_message_id` do client sinh ra, cùng `sender_id` và `conversation_id` tạo thành ràng buộc duy nhất. Đây là cơ chế cho phép gửi lại an toàn khi mất kết nối — xem `docs/RECONNECT_CONTRACT.md`.
+5. `messages.source_language` khi ghi là **giá trị tạm** (`preferred_language` của người gửi); node `detect_language` của Agent ghi đè bằng kết quả nhận diện thật (§4.3).
+6. `translation_results` có ràng buộc duy nhất `(message_id, target_language)`. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại.
+7. `translation_results.is_fallback` đúng khi văn bản **không** đến từ LLM đã cấu hình, bao gồm cả trường hợp provider dự phòng dịch thành công. `model` để rỗng khi không tầng nào dịch được và hệ thống trả nguyên bản (`ARCHITECTURE.md` §5.1).
+8. **Alembic là nơi duy nhất định nghĩa schema** (sửa 15/08). Ứng dụng không còn tạo bảng lúc khởi động; container chạy `alembic upgrade head` trước `uvicorn`, còn trên máy phát triển là `make migrate`. Đổi schema nghĩa là sinh migration (`make revision m="..."`) rồi đọc lại bản sinh ra. `make reset-db` vẫn còn nhưng nay là `downgrade base` + `upgrade head` và **xoá sạch dữ liệu cục bộ**. Xem ADR-06.
+9. `translation_attempts` là **nhật ký đo lường**, không phải trạng thái ứng dụng (ADR-16). Mỗi cặp (tin nhắn × ngôn ngữ đích) được thử ghi một dòng, **kể cả khi không sinh ra bản dịch nào**. Khác `translation_results` ở ba điểm có chủ đích: không có ràng buộc duy nhất (chạy lại là một lượt thử mới, đáng đếm riêng), `translation_id` cho phép `NULL` với `ON DELETE SET NULL` (xoá bản dịch không được xoá bằng chứng rằng đã dịch), và các cột được tự do thay đổi theo nhu cầu đo — **không** thành phần nào ngoài `src/services/metrics.py` và `scripts/report_metrics.py` được đọc bảng này.
+10. `translation_attempts.outcome` nhận đúng bảy giá trị, có `CheckConstraint` ở mức cơ sở dữ liệu: `llm`, `secondary`, `original` (ba trường hợp có dòng trong `translation_results`), và `passthrough`, `timeout`, `error`, `empty` (bốn trường hợp không có). Bốn giá trị sau chính là mẫu số còn thiếu: mọi tỷ lệ fallback tính riêng trên các lượt thành công đều không phải là một tỷ lệ.
+11. `translation_attempts.source_language_detected` để `NULL` khi nhận diện bị bỏ qua hoặc thất bại. Không được ghi giá trị khai báo vào đây: hai cột sẽ khớp nhau do cách xây dựng, và tỷ lệ đồng thuận của ADR-11 sẽ luôn đọc ra 100% bất kể nhận diện hoạt động thế nào.
+12. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
 
 ## 6. Đặc tả lỗi
 
