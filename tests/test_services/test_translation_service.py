@@ -307,3 +307,106 @@ async def test_rerunning_reuses_the_existing_translation_row(
 
     ids = {p["translation_id"] for p in publisher.events_for("en")}
     assert len(ids) == 1
+
+
+def mutating_graph_factory(result: dict, mutate):
+    """A graph that changes the message while it is "translating".
+
+    Stands in for the real gap between the graph starting and finishing — about
+    1.5 seconds — during which the sender can edit or withdraw the message.
+    """
+
+    def factory(_session, message_id):
+        class FakeGraph:
+            async def ainvoke(self, state, config=None):
+                async with session_factory_for_tests()() as session:
+                    message = await session.get(Message, message_id)
+                    mutate(message)
+                    await session.commit()
+                return {**state, **result}
+
+        return FakeGraph()
+
+    return factory
+
+
+ENGLISH_RESULT = {
+    "source_language": "vi",
+    "translated_text": "Have you finished deploying?",
+    "model": "mock-model",
+    "latency_ms": 900,
+    "is_fallback": False,
+}
+
+
+@pytest.mark.asyncio
+async def test_translation_of_edited_text_is_neither_stored_nor_sent(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """An edit mid-translation must not leave the old wording on screen.
+
+    The unique constraint on (message_id, target_language) means this row would
+    beat the retranslation's insert, so recipients would keep reading a
+    translation of text the sender already replaced (F-06).
+    """
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Deploy xong chua anh?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    def edit(row):
+        row.original_text = "Deploy xong chua chi?"
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=mutating_graph_factory(ENGLISH_RESULT, edit),
+    )
+
+    assert publisher.events_for("en") == []
+    stored = (
+        await test_db.scalars(
+            select(TranslationResult).where(TranslationResult.message_id == message.id)
+        )
+    ).all()
+    assert stored == []
+
+
+@pytest.mark.asyncio
+async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """Contract §3.6 says a withdrawn message's text must not travel."""
+    from datetime import UTC, datetime
+
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Deploy xong chua anh?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    def withdraw(row):
+        row.deleted_at = datetime.now(UTC)
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=mutating_graph_factory(ENGLISH_RESULT, withdraw),
+    )
+
+    assert publisher.events_for("en") == []
+    stored = (
+        await test_db.scalars(
+            select(TranslationResult).where(TranslationResult.message_id == message.id)
+        )
+    ).all()
+    assert stored == []
