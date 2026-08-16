@@ -410,3 +410,100 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
         )
     ).all()
     assert stored == []
+
+
+@pytest.mark.asyncio
+async def test_direct_sender_also_receives_the_translation_of_their_own_message(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """The one-to-one sender needs the translation their reader got (§4.4 rule 3).
+
+    test_user_two reads vi and writes in vi, so grouping by reading language
+    alone would send the English translation only to test_user. Without this the
+    sender has nothing to toggle, rate or edit under their own bubble until the
+    page is reloaded.
+    """
+    conversation = await conversation_factory(test_user_two, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user_two.id,
+        text="Chieu nay hop luc may gio?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=make_graph_factory(
+            {
+                "en": {
+                    "source_language": "vi",
+                    "translated_text": "What time is the meeting this afternoon?",
+                    "model": "mock-model",
+                    "latency_ms": 700,
+                    "is_fallback": False,
+                }
+            }
+        ),
+    )
+
+    english_recipients = [
+        recipients for recipients, payload in publisher.sent
+        if payload.get("target_language") == "en"
+    ]
+    assert len(english_recipients) == 1
+    assert set(english_recipients[0]) == {test_user.id, test_user_two.id}
+
+
+@pytest.mark.asyncio
+async def test_group_sender_is_left_out_of_a_language_they_do_not_read(
+    test_db, test_user, test_user_two, test_user_three, conversation_factory
+):
+    """Groups keep the old routing: no controls there, so nothing extra to send.
+
+    A group message has one translation per language and no single one belongs
+    to the sender's bubble, so §3.10 shows them no controls and §4.4 rule 3
+    stays as it was.
+    """
+    conversation = await conversation_factory(
+        test_user_two,
+        [test_user, test_user_two, test_user_three],
+        conversation_type="group",
+    )
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user_two.id,
+        text="Chieu nay hop luc may gio?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=make_graph_factory(
+            {
+                "en": {
+                    "source_language": "vi",
+                    "translated_text": "What time is the meeting this afternoon?",
+                    "model": "mock-model",
+                    "latency_ms": 700,
+                    "is_fallback": False,
+                },
+                "ja": {
+                    "source_language": "vi",
+                    "translated_text": "今日の午後の会議は何時ですか?",
+                    "model": "mock-model",
+                    "latency_ms": 800,
+                    "is_fallback": False,
+                },
+            }
+        ),
+    )
+
+    for recipients, payload in publisher.sent:
+        if payload.get("target_language") in {"en", "ja"}:
+            assert test_user_two.id not in recipients

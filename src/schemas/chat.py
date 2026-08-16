@@ -101,6 +101,20 @@ class ConversationResponse(BaseModel):
     unread_count: int = 0
 
 
+class TranslationEditSummary(BaseModel):
+    """The caller's newest wording for one translation (docs/CONTRACT.md §3.10).
+
+    Carries no editor field: an account only ever reads its own edits, so the
+    author is always whoever asked.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    edit_id: str
+    edited_text: str
+    edited_at: UtcDatetime
+
+
 class TranslationSummary(BaseModel):
     """One rendered translation attached to a message in REST history."""
 
@@ -116,6 +130,7 @@ class TranslationSummary(BaseModel):
     # Per-caller data: never shared between accounts (docs/CONTRACT.md §3.2).
     my_rating: int | None = None
     my_correction: str | None = None
+    my_edit: TranslationEditSummary | None = None
 
 
 class AttachmentResponse(BaseModel):
@@ -212,6 +227,39 @@ class FeedbackResponse(BaseModel):
     """Identifier of the stored feedback row."""
 
     feedback_id: str
+
+
+class TranslationEditRequest(BaseModel):
+    """A better wording for one translation (F-05, docs/CONTRACT.md §3.10).
+
+    Deliberately not a patch of `translation_results.translated_text`: the
+    machine's output stays where it is so the two can be compared later, and
+    this text is stored beside it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    edited_text: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("edited_text")
+    @classmethod
+    def edited_text_must_not_be_blank(cls, value: str) -> str:
+        """Reject whitespace, which would read as "cleared" but store as set."""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("edited_text must not be blank")
+        return cleaned
+
+
+class TranslationEditResponse(BaseModel):
+    """The stored edit, echoed back so the client can show it immediately."""
+
+    edit_id: str
+    translation_id: str
+    message_id: str
+    target_language: str
+    edited_text: str
+    edited_at: UtcDatetime
 
 
 class ReadReceiptResponse(BaseModel):
