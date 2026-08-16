@@ -57,6 +57,9 @@ out/
 *.pyc
 *.pyo
 
+# Local Windows deployment helpers
+*.bat
+
 # AI logs — tracked structure, ignored content. The `**/` matters: a pattern
 # containing a slash is anchored to this file's directory, so `.ai-log/*.jsonl`
 # alone left `frontend/.ai-log/session.jsonl` — written whenever a tool ran with
