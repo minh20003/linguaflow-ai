@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Be_Vietnam_Pro, IBM_Plex_Mono } from "next/font/google";
+import { Be_Vietnam_Pro, IBM_Plex_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
 /* Be Vietnam Pro thay Inter: dấu thanh tiếng Việt không chồng lên chữ hoa
@@ -19,6 +19,12 @@ const plexMono = IBM_Plex_Mono({
   display: "swap",
 });
 
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin", "latin-ext", "vietnamese"],
+  variable: "--font-plus-jakarta",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "LinguaChat",
   description:
@@ -31,7 +37,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className={`${beVietnam.variable} ${plexMono.variable}`}>
+    <html lang="vi" className={`${beVietnam.variable} ${plexMono.variable} ${plusJakarta.variable}`}>
       <body>{children}</body>
     </html>
   );

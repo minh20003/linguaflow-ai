@@ -1,12 +1,19 @@
-import type { Metadata } from "next";
-import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
-import MessagingApp from "@/components/chat/MessagingApp";
+import type { Metadata, Viewport } from "next";
+import { AppShell } from "@/features/chat/components/AppShell";
+import "@/features/chat/styles/chat.css";
 
 export const metadata: Metadata = {
   title: "Tin nhắn — LinguaChat",
   description: "Trò chuyện và dịch tin nhắn theo thời gian thực.",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export default function ChatPage() {
-  return <MessagingApp />;
+  return <AppShell />;
 }

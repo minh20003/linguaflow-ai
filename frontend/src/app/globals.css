@@ -1,11 +1,12 @@
 /* LinguaChat — hệ token toàn cục.
-   Vật neo: nhãn sản phẩm in trên giấy không tẩy trắng. Xem docs/design.md.
+   Vật neo: nhãn sản phẩm in trên giấy không tẩy trắng.
    Ràng buộc cứng: không gradient, không bóng mờ, không animation vô hạn,
    cỡ chữ trần 26px, bo góc trần 4px, chuyển động trần 160ms. */
 
-*,
-*::before,
-*::after {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)),
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::before,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -149,7 +150,7 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) {
   font-family: var(--font-body);
   font-size: var(--fs-body);
   line-height: 1.55;
@@ -159,18 +160,18 @@ body {
   min-height: 100svh;
 }
 
-a {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) a {
   color: var(--indigo);
   text-decoration: none;
   border-bottom: 1px solid var(--rule-strong);
   transition: border-color var(--dur-hover) linear;
 }
 
-a:hover {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) a:hover {
   border-bottom-color: var(--indigo);
 }
 
-button {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) button {
   cursor: pointer;
   border: none;
   background: none;
@@ -179,9 +180,9 @@ button {
   font-size: inherit;
 }
 
-input,
-textarea,
-select {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) input,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) textarea,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) select {
   font-family: inherit;
   font-size: inherit;
   outline: none;
@@ -189,24 +190,24 @@ select {
 
 /* Focus ring bắt buộc ở mọi phần tử tương tác (§11).
    :focus-visible — không phải :focus — để chuột không kéo ring theo. */
-:focus-visible {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) :focus-visible {
   outline: 2px solid var(--indigo);
   outline-offset: 2px;
 }
 
 /* ─── Chữ đa ngữ (§9) ───────────────────────────────────── */
-[lang="ja"],
-[lang="zh"],
-[lang="ko"] {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ja"],
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="zh"],
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ko"] {
   font-family: var(--font-cjk);
   line-height: 1.75;
 }
 
-[lang="ko"] {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ko"] {
   word-break: keep-all;
 }
 
-[lang="th"] {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="th"] {
   font-family: var(--font-thai);
   line-height: 1.75;
 }
@@ -240,9 +241,9 @@ select {
 
 /* ─── Giảm chuyển động (§6) ─────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *,
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::before,
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
