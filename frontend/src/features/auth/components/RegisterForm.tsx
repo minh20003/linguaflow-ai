@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import Button from "@/shared/ui/Button";
 import Input from "@/shared/ui/Input";
-import { listLanguages, register } from "@/shared/lib/api";
+import { register } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
+import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/shared/lib/constants";
 import { mainLabel } from "@/shared/lib/i18n";
+import { formatUiText, uiText } from "@/shared/lib/ui-text";
 import {
   MIN_PASSWORD_LENGTH,
   MIN_USERNAME_LENGTH,
@@ -14,19 +16,15 @@ import {
   isValidUsername,
   suggestUsername,
 } from "@/shared/lib/form-messages";
-import LanguagePicker from "@/shared/ui/LanguagePicker";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
 type Strength = "weak" | "medium" | "strong";
-
-const STRENGTH_TEXT: Record<Strength, string> = {
-  weak: "Yếu",
-  medium: "Trung bình",
-  strong: "Mạnh",
-};
+type ErrorState = { lang: LanguageCode; message: string };
+type FieldErrors = Record<string, string | undefined>;
+type FieldErrorState = { lang: LanguageCode; fields: FieldErrors };
 
 function getPasswordStrength(pw: string): Strength | null {
   if (!pw) return null;
@@ -42,21 +40,10 @@ function getPasswordStrength(pw: string): Strength | null {
 }
 
 export default function RegisterForm() {
-  /* Ngôn ngữ lấy từ dải bên trái — nó chính là preferred_language, nên form
-     không dựng thêm bảng chọn thứ hai. */
-  const { lang, setLang } = useLanguage();
-  // The allowlist belongs to the backend (CONTRACT section 1). It also supplies
-  // the count in the headline, which was hardcoded as "Mười" and had been wrong
-  // ever since a language was added.
-  const [codes, setCodes] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    listLanguages()
-      .then((list) => !cancelled && setCodes(list))
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, []);
+  /* The shared AuthCardHead picker controls the interface. Registration uses
+     that one first-run selection to initialize the separate reading preference,
+     so this form deliberately has no second language control. */
+  const { lang } = useLanguage();
 
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -65,13 +52,15 @@ export default function RegisterForm() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [agree, setAgree] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [errors, setErrors] = useState<Record<string, string | undefined>>({});
+  const [error, setError] = useState<ErrorState | null>(null);
+  const [errors, setErrors] = useState<FieldErrorState | null>(null);
+  const visibleError = error?.lang === lang ? error.message : "";
+  const visibleErrors = errors?.lang === lang ? errors.fields : {};
 
   const strength = getPasswordStrength(password);
 
   function validate(): boolean {
-    const e: Record<string, string> = {};
+    const e: FieldErrors = {};
 
     const normalizedFullName = fullName.trim();
     const normalizedUsername = username.trim();
@@ -112,13 +101,13 @@ export default function RegisterForm() {
 
     if (!agree) e.agree = formMessage(lang, "agreeRequired");
 
-    setErrors(e);
+    setErrors({ lang, fields: e });
     return Object.keys(e).length === 0;
   }
 
   async function handleSubmit(ev: React.FormEvent) {
     ev.preventDefault();
-    setError("");
+    setError(null);
     if (!validate()) return;
 
     setLoading(true);
@@ -134,31 +123,33 @@ export default function RegisterForm() {
       });
       saveSession(result, true);
       window.location.href = "/chat";
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : formMessage(lang, "registerFailed"));
+    } catch {
+      setError({ lang, message: formMessage(lang, "registerFailed") });
     } finally {
       setLoading(false);
     }
   }
 
   const clearError = (field: string) =>
-    setErrors((p) => ({ ...p, [field]: undefined }));
+    setErrors((previous) => previous?.lang === lang
+      ? { ...previous, fields: { ...previous.fields, [field]: undefined } }
+      : previous);
 
   return (
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <h1 className={styles.lede}>
-        <span>Một tài khoản.</span>
-        <span>{codes.length ? `${codes.length} ngôn ngữ` : "Nhiều ngôn ngữ"} đọc được.</span>
+        <span>{uiText(lang, "auth.register.oneAccount")}</span>
+        <span>{formatUiText(lang, "auth.register.languagesReadable", { count: SUPPORTED_LANGUAGES.length })}</span>
       </h1>
 
       <hr className={styles.divider} />
 
-      {error && (
+      {visibleError && (
         <div className={styles.formError} role="alert">
           <span className={styles.errorMark} aria-hidden="true">
             !
           </span>
-          {error}
+          {visibleError}
         </div>
       )}
 
@@ -166,7 +157,7 @@ export default function RegisterForm() {
         <Input
           id="register-full-name"
           autoComplete="name"
-          placeholder="Nguyễn Văn An"
+          placeholder={uiText(lang, "auth.fullNamePlaceholder")}
           label={mainLabel("fullName", lang)}
           value={fullName}
           required
@@ -176,13 +167,13 @@ export default function RegisterForm() {
             clearError("fullName");
           }}
           onBlur={() => setFullName((value) => value.trim())}
-          error={errors.fullName}
+          error={visibleErrors.fullName}
         />
 
         <Input
           id="register-username"
           autoComplete="username"
-          placeholder="thuan"
+          placeholder={uiText(lang, "auth.usernamePlaceholder")}
           label={mainLabel("username", lang)}
           value={username}
           required
@@ -193,21 +184,21 @@ export default function RegisterForm() {
             clearError("username");
           }}
           onBlur={() => setUsername((value) => value.trim())}
-          error={errors.username}
+          error={visibleErrors.username}
         />
 
         <Input
           id="register-email"
           type="email"
           autoComplete="email"
-          placeholder="ban@vidu.com"
+          placeholder={uiText(lang, "auth.emailPlaceholder")}
           label={mainLabel("email", lang)}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
             clearError("email");
           }}
-          error={errors.email}
+          error={visibleErrors.email}
         />
 
         <Input
@@ -223,7 +214,7 @@ export default function RegisterForm() {
             setPassword(e.target.value);
             clearError("password");
           }}
-          error={errors.password}
+          error={visibleErrors.password}
         />
 
         {strength && (
@@ -232,7 +223,7 @@ export default function RegisterForm() {
               <span className={`${styles.strengthFill} ${styles[strength]}`} />
             </span>
             <span className={styles.strengthLabel}>
-              {STRENGTH_TEXT[strength]}
+              {uiText(lang, `auth.strength.${strength}`)}
             </span>
           </div>
         )}
@@ -250,18 +241,7 @@ export default function RegisterForm() {
             setConfirmPassword(e.target.value);
             clearError("confirmPassword");
           }}
-          error={errors.confirmPassword}
-        />
-      </div>
-
-      <div className={styles.languageField}>
-        <label htmlFor="register-language">Ngôn ngữ</label>
-        <LanguagePicker
-          id="register-language"
-          value={lang}
-          onChange={(code) => setLang(code as typeof lang)}
-          label="Ngôn ngữ bạn muốn đọc"
-          codes={codes}
+          error={visibleErrors.confirmPassword}
         />
       </div>
 
@@ -274,15 +254,17 @@ export default function RegisterForm() {
               setAgree(e.target.checked);
               clearError("agree");
             }}
-            aria-invalid={errors.agree ? true : undefined}
-            aria-describedby={errors.agree ? "register-agree-error" : undefined}
+            aria-invalid={visibleErrors.agree ? true : undefined}
+            aria-describedby={visibleErrors.agree ? "register-agree-error" : undefined}
           />
           <span>
-            Tôi đồng ý với <Link href="/terms" target="_blank">{mainLabel("terms", lang)}</Link> và{" "}
-            <Link href="/privacy" target="_blank">Chính sách riêng tư</Link>
+            {uiText(lang, "auth.agreePrefix")}{" "}
+            <Link href="/terms" target="_blank">{mainLabel("terms", lang)}</Link>{" "}
+            {uiText(lang, "auth.and")}{" "}
+            <Link href="/privacy" target="_blank">{uiText(lang, "auth.privacyPolicy")}</Link>
           </span>
         </label>
-        {errors.agree && (
+        {visibleErrors.agree && (
           <p
             id="register-agree-error"
             className={styles.formError}
@@ -291,17 +273,17 @@ export default function RegisterForm() {
             <span className={styles.errorMark} aria-hidden="true">
               !
             </span>
-            {errors.agree}
+            {visibleErrors.agree}
           </p>
         )}
       </div>
 
       <Button type="submit" size="lg" fullWidth loading={loading}>
-        <span className={styles.actionMain}>Tạo tài khoản</span>
+        <span className={styles.actionMain}>{mainLabel("createAccount", lang)}</span>
       </Button>
 
       <p className={styles.footer}>
-        Đã có tài khoản? <Link href="/login">Đăng nhập</Link>
+        {uiText(lang, "auth.alreadyHaveAccount")} <Link href="/login">{mainLabel("signIn", lang)}</Link>
       </p>
     </form>
   );

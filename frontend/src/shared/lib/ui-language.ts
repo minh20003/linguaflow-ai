@@ -18,7 +18,7 @@
 
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, type LanguageCode } from "./constants";
 
-const STORAGE_KEY = "interface_language";
+export const INTERFACE_LANGUAGE_STORAGE_KEY = "interface_language";
 
 const listeners = new Set<() => void>();
 
@@ -29,8 +29,12 @@ function isSupported(code: string | null): code is LanguageCode {
 /** The language the interface should be drawn in right now. */
 export function readInterfaceLanguage(): LanguageCode {
   if (typeof window === "undefined") return DEFAULT_LANGUAGE;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
+  const stored = window.localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY);
   return isSupported(stored) ? stored : DEFAULT_LANGUAGE;
+}
+
+function syncDocumentLanguage(code: LanguageCode): void {
+  document.documentElement.lang = code;
 }
 
 /**
@@ -42,24 +46,32 @@ export function readInterfaceLanguage(): LanguageCode {
 export function setInterfaceLanguage(code: string): void {
   if (typeof window === "undefined") return;
   if (!isSupported(code)) return;
-  if (window.localStorage.getItem(STORAGE_KEY) === code) return;
-  window.localStorage.setItem(STORAGE_KEY, code);
+  syncDocumentLanguage(code);
+  if (window.localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY) === code) return;
+  window.localStorage.setItem(INTERFACE_LANGUAGE_STORAGE_KEY, code);
   for (const notify of listeners) notify();
 }
 
 /** Forget the choice, so the next visitor starts from English again. */
 export function clearInterfaceLanguage(): void {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.removeItem(INTERFACE_LANGUAGE_STORAGE_KEY);
+  syncDocumentLanguage(DEFAULT_LANGUAGE);
   for (const notify of listeners) notify();
 }
 
 export function subscribeToInterfaceLanguage(onStoreChange: () => void): () => void {
   listeners.add(onStoreChange);
   // Another tab of the same account changing the setting counts too.
-  window.addEventListener("storage", onStoreChange);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === INTERFACE_LANGUAGE_STORAGE_KEY) {
+      syncDocumentLanguage(isSupported(event.newValue) ? event.newValue : DEFAULT_LANGUAGE);
+    }
+    onStoreChange();
+  };
+  window.addEventListener("storage", onStorage);
   return () => {
     listeners.delete(onStoreChange);
-    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener("storage", onStorage);
   };
 }

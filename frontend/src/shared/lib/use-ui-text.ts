@@ -2,6 +2,7 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 
+import type { LanguageCode } from "./constants";
 import { readInterfaceLanguage, subscribeToInterfaceLanguage } from "./ui-language";
 import { uiText, type UiTextKey } from "./ui-text";
 
@@ -15,11 +16,15 @@ import { uiText, type UiTextKey } from "./ui-text";
  * The server snapshot is `en`: it is what a first render with no stored choice
  * shows, so the markup React hydrates against matches what the server sent.
  */
-export function useUiText(): (key: UiTextKey) => string {
-  const lang = useSyncExternalStore(
+export function useInterfaceLanguage(): LanguageCode {
+  return useSyncExternalStore(
     subscribeToInterfaceLanguage,
     readInterfaceLanguage,
     () => "en" as const,
   );
+}
+
+export function useUiText(): (key: UiTextKey) => string {
+  const lang = useInterfaceLanguage();
   return useCallback((key: UiTextKey) => uiText(lang, key), [lang]);
 }

@@ -7,16 +7,20 @@
  * màn hình được chuyển sang.
  *
  * Phủ đủ **14 mã** mà `GET /languages` trả về, đúng yêu cầu ở §1.2: đã cho chọn
- * thì phải có nhãn. `uiText` vẫn lùi về `en` cho từng khoá còn thiếu, để thêm
- * một nhãn mới không làm vỡ 13 ngôn ngữ còn lại trong lúc chờ dịch.
+ * thì phải có nhãn. Các bảng được gõ tổng quát theo allowlist để tiếng Anh
+ * không trở thành đường lùi bình thường của một giao diện đã chọn ngôn ngữ khác.
  *
  * CHƯA QUA SOÁT BẢN NGỮ. Nhãn sai ở một sản phẩm dịch thuật là lỗi đắt hơn bình
  * thường — ưu tiên soát ja, ko, th, ar, hi.
  */
 
 import type { LanguageCode } from "./constants";
+import {
+  FUNCTIONAL_UI_TEXT,
+  type FunctionalUiTextKey,
+} from "./functional-ui-text";
 
-export type UiTextKey =
+export type CoreUiTextKey =
   | "nav.messages"
   | "nav.settings"
   | "nav.main"
@@ -40,11 +44,12 @@ export type UiTextKey =
   | "theme.dark"
   | "theme.system";
 
-type UiTextTable = Partial<Record<LanguageCode, Partial<Record<UiTextKey, string>>>> & {
-  en: Record<UiTextKey, string>;
-};
+export type UiTextKey = CoreUiTextKey | FunctionalUiTextKey;
 
-export const UI_TEXT: UiTextTable = {
+type CoreUiTextTable = Record<LanguageCode, Record<CoreUiTextKey, string>>;
+type UiTextTable = Record<LanguageCode, Record<UiTextKey, string>>;
+
+const CORE_UI_TEXT: CoreUiTextTable = {
   en: {
     "nav.messages": "Messages",
     "nav.settings": "Settings",
@@ -383,13 +388,34 @@ export const UI_TEXT: UiTextTable = {
   },
 };
 
-/**
- * One label in the interface language, falling back to English per key.
- *
- * Per key rather than per table: adding a new string to a screen leaves the
- * other thirteen languages working, with only that one line in English until
- * it is translated.
- */
+/** All interface copy, with each supported language structurally complete. */
+export const UI_TEXT: UiTextTable = {
+  en: { ...CORE_UI_TEXT.en, ...FUNCTIONAL_UI_TEXT.en },
+  vi: { ...CORE_UI_TEXT.vi, ...FUNCTIONAL_UI_TEXT.vi },
+  zh: { ...CORE_UI_TEXT.zh, ...FUNCTIONAL_UI_TEXT.zh },
+  ja: { ...CORE_UI_TEXT.ja, ...FUNCTIONAL_UI_TEXT.ja },
+  ko: { ...CORE_UI_TEXT.ko, ...FUNCTIONAL_UI_TEXT.ko },
+  fr: { ...CORE_UI_TEXT.fr, ...FUNCTIONAL_UI_TEXT.fr },
+  de: { ...CORE_UI_TEXT.de, ...FUNCTIONAL_UI_TEXT.de },
+  es: { ...CORE_UI_TEXT.es, ...FUNCTIONAL_UI_TEXT.es },
+  th: { ...CORE_UI_TEXT.th, ...FUNCTIONAL_UI_TEXT.th },
+  id: { ...CORE_UI_TEXT.id, ...FUNCTIONAL_UI_TEXT.id },
+  pt: { ...CORE_UI_TEXT.pt, ...FUNCTIONAL_UI_TEXT.pt },
+  ru: { ...CORE_UI_TEXT.ru, ...FUNCTIONAL_UI_TEXT.ru },
+  ar: { ...CORE_UI_TEXT.ar, ...FUNCTIONAL_UI_TEXT.ar },
+  hi: { ...CORE_UI_TEXT.hi, ...FUNCTIONAL_UI_TEXT.hi },
+};
+
+/** One label in the currently selected, supported interface language. */
 export function uiText(lang: LanguageCode, key: UiTextKey): string {
-  return UI_TEXT[lang]?.[key] ?? UI_TEXT.en[key];
+  return UI_TEXT[lang][key];
+}
+
+/** Fill the named placeholders used by functional interface copy. */
+export function formatUiText(
+  lang: LanguageCode,
+  key: UiTextKey,
+  values: Record<string, string | number>,
+): string {
+  return uiText(lang, key).replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""));
 }

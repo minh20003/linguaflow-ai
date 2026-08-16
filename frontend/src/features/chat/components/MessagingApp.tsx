@@ -39,7 +39,9 @@ import {
   type ConversationMember,
   type HistoryMessage,
 } from "@/shared/lib/chat-api";
-import { languageLabel } from "@/shared/lib/constants";
+import { DEFAULT_LANGUAGE, languageLabel, type LanguageCode } from "@/shared/lib/constants";
+import { formatUiText, uiText, type UiTextKey } from "@/shared/lib/ui-text";
+import { useInterfaceLanguage } from "@/shared/lib/use-ui-text";
 import { useWebSocket, type MessageDeleted, type MessageUpdated, type MessageRead, type RealtimeMessage, type TranslationCompleted, type TypingNotice } from "@/shared/lib/use-websocket";
 import EmojiPicker from "@/shared/ui/EmojiPicker";
 import Logo from "@/shared/ui/Logo";
@@ -95,7 +97,6 @@ type ChatMessage = {
   myEdit?: { editId: string; editedText: string; editedAt: string } | null;
   /** Set once no translation can still be expected for this reader. */
   translationSettled?: boolean;
-  time: string;
   sentAt?: string;
   delivery?: Delivery;
   edited?: boolean;
@@ -103,22 +104,19 @@ type ChatMessage = {
   reply?: string;
   /** Which message this answers; the quote is resolved from the thread. */
   replyToMessageId?: string;
-  file?: { name: string; meta: string; url?: string };
+  file?: { name: string; size?: number; url?: string };
 };
 
 /** Stands in until the conversation list has loaded, or when there are none. */
 const EMPTY_CONVERSATION: ConversationItem = {
   id: "",
   type: "direct",
-  name: "Chưa có hội thoại",
+  name: "",
   initials: "—",
-  subtitle: "Tạo một nhóm để bắt đầu trò chuyện",
   preview: "",
   members: [],
+  empty: true,
 };
-
-/** What a withdrawn message reads as, everywhere it is still referred to. */
-const WITHDRAWN_TEXT = "Tin nhắn đã được thu hồi";
 
 /**
  * Whether the bubble is currently showing the original rather than a translation.
@@ -145,8 +143,9 @@ type ConversationItem = {
   id: string;
   name: string;
   initials: string;
-  subtitle: string;
   preview: string;
+  previewWithdrawn?: boolean;
+  empty?: boolean;
   /**
    * Raw timestamp of the newest message. Deliberately not stored in display
    * form: "vừa xong" is only true for a minute, so the label is derived at
@@ -181,30 +180,30 @@ function dayKey(value?: string | Date) {
 
 // Messages only exist after a fetch, so locale formatting runs on the client
 // and cannot disagree with server-rendered markup.
-function dateLabel(value?: string) {
+function dateLabel(value: string | undefined, lang: LanguageCode) {
   const date = value ? new Date(value) : new Date();
   const today = new Date();
-  if (dayKey(date) === dayKey(today)) return "Hôm nay";
-  return new Intl.DateTimeFormat("vi-VN", date.getFullYear() === today.getFullYear()
+  if (dayKey(date) === dayKey(today)) return uiText(lang, "chat.today");
+  return new Intl.DateTimeFormat(lang, date.getFullYear() === today.getFullYear()
     ? { weekday: "long", day: "2-digit", month: "2-digit" }
     : { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
-function clockTime(value?: string) {
+function clockTime(value: string | undefined, lang: LanguageCode) {
   const date = value ? new Date(value) : new Date();
-  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-function messageTime(value?: string) {
+function messageTime(value: string | undefined, lang: LanguageCode) {
   if (!value) return "";
   const date = new Date(value);
   const today = new Date();
-  const clock = clockTime(value);
+  const clock = clockTime(value, lang);
   if (dayKey(date) === dayKey(today)) return clock;
   const dateOptions: Intl.DateTimeFormatOptions = date.getFullYear() === today.getFullYear()
     ? { day: "2-digit", month: "2-digit" }
     : { day: "2-digit", month: "2-digit", year: "numeric" };
-  return `${new Intl.DateTimeFormat("vi-VN", dateOptions).format(date)} · ${clock}`;
+  return `${new Intl.DateTimeFormat(lang, dateOptions).format(date)} · ${clock}`;
 }
 
 /**
@@ -213,34 +212,35 @@ function messageTime(value?: string) {
  * The conversation list is scanned, not read, so it gets "5 phút" rather than a
  * timestamp — and falls back to a date once "N ngày" stops being informative.
  */
-function relativeTime(value?: string | null) {
+function relativeTime(value: string | null | undefined, lang: LanguageCode) {
   if (!value) return "";
   const then = new Date(value);
   const elapsedSeconds = Math.max(0, (Date.now() - then.getTime()) / 1000);
-  if (elapsedSeconds < 60) return "vừa xong";
-  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)} phút`;
-  if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)} giờ`;
-  if (elapsedSeconds < 604800) return `${Math.floor(elapsedSeconds / 86400)} ngày`;
-  return new Intl.DateTimeFormat("vi-VN", then.getFullYear() === new Date().getFullYear()
+  if (elapsedSeconds < 60) return uiText(lang, "chat.justNow");
+  if (elapsedSeconds < 3600) return formatUiText(lang, "chat.minutesAgo", { count: Math.floor(elapsedSeconds / 60) });
+  if (elapsedSeconds < 86400) return formatUiText(lang, "chat.hoursAgo", { count: Math.floor(elapsedSeconds / 3600) });
+  if (elapsedSeconds < 604800) return formatUiText(lang, "chat.daysAgo", { count: Math.floor(elapsedSeconds / 86400) });
+  return new Intl.DateTimeFormat(lang, then.getFullYear() === new Date().getFullYear()
     ? { day: "2-digit", month: "2-digit" }
     : { day: "2-digit", month: "2-digit", year: "2-digit" }).format(then);
 }
 
-function deliveryIndicator(delivery?: Delivery) {
-  if (delivery === "sending") return { symbol: "◷", label: "Đang gửi", className: "sending" };
-  if (delivery === "delivered") return { symbol: "✓", label: "Đã gửi", className: "delivered" };
-  if (delivery === "read") return { symbol: "✓✓", label: "Đã xem", className: "read" };
+function deliveryIndicator(delivery: Delivery | undefined, lang: LanguageCode) {
+  if (delivery === "sending") return { symbol: "◷", label: uiText(lang, "chat.sending"), className: "sending" };
+  if (delivery === "delivered") return { symbol: "✓", label: uiText(lang, "chat.delivered"), className: "delivered" };
+  if (delivery === "read") return { symbol: "✓✓", label: uiText(lang, "chat.read"), className: "read" };
   return null;
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} MB`;
+function formatFileSize(bytes: number, lang: LanguageCode) {
+  const formatter = new Intl.NumberFormat(lang, { maximumFractionDigits: bytes < 1024 * 1024 ? 0 : 1 });
+  if (bytes < 1024 * 1024) return `${formatter.format(Math.max(1, Math.round(bytes / 1024)))} KB`;
+  return `${formatter.format(bytes / (1024 * 1024))} MB`;
 }
 
-function fileKind(name: string) {
+function fileKind(name: string, lang: LanguageCode) {
   const extension = name.split(".").pop()?.toUpperCase();
-  return extension && extension.length <= 4 ? extension : "TỆP";
+  return extension && extension.length <= 4 ? extension : uiText(lang, "chat.file");
 }
 
 function highlight(text: string, query: string): ReactNode {
@@ -255,23 +255,18 @@ function highlight(text: string, query: string): ReactNode {
 function toConversationItem(conversation: ApiConversation, myId: string): ConversationItem {
   const others = conversation.members.filter((member) => member.id !== myId);
   const name = conversation.title
-    || others.map((member) => member.display_name || member.email.split("@")[0]).join(", ")
-    || "Ghi chú của tôi";
-  const languages = [...new Set(conversation.members.map((member) => member.preferred_language))];
+    || others.map((member) => member.display_name || member.email.split("@")[0]).join(", ");
   return {
     id: conversation.id,
     name,
     initials: initialsOf(name),
-    subtitle: conversation.type === "group"
-      ? `Nhóm · ${conversation.members.length} thành viên · ${languages.map(languageLabel).join(", ")}`
-      : others.map((member) => languageLabel(member.preferred_language)).join(", "),
     // A withdrawn newest message comes back with empty text (§3.6), which would
     // leave the row with no second line at all. The server cannot supply the
     // wording — it is interface copy and belongs to the reader's language — so
     // the client says it. Text can never be empty otherwise: the send endpoint
     // rejects a blank message, so "" plus a timestamp means withdrawn.
-    preview: conversation.last_message
-      || (conversation.last_message_at ? WITHDRAWN_TEXT : ""),
+    preview: conversation.last_message || "",
+    previewWithdrawn: !conversation.last_message && Boolean(conversation.last_message_at),
     lastActivityAt: conversation.last_message_at,
     unread: conversation.unread_count || undefined,
     // Anyone but me holding a socket makes the row read as active.
@@ -279,6 +274,30 @@ function toConversationItem(conversation: ApiConversation, myId: string): Conver
     type: conversation.type,
     members: conversation.members,
   };
+}
+
+function conversationName(conversation: ConversationItem, lang: LanguageCode): string {
+  if (conversation.empty) return uiText(lang, "chat.emptyConversation");
+  return conversation.name || uiText(lang, "chat.myNotes");
+}
+
+function conversationSubtitle(conversation: ConversationItem, myId: string, lang: LanguageCode): string {
+  if (conversation.empty) return uiText(lang, "chat.emptyConversationHint");
+  const others = conversation.members.filter((member) => member.id !== myId);
+  if (conversation.type !== "group") {
+    return others.map((member) => languageLabel(member.preferred_language)).join(", ");
+  }
+  const languages = [...new Set(conversation.members.map((member) => member.preferred_language))]
+    .map(languageLabel)
+    .join(", ");
+  return formatUiText(lang, "chat.groupSummary", {
+    count: conversation.members.length,
+    language: languages,
+  });
+}
+
+function conversationPreview(conversation: ConversationItem, lang: LanguageCode): string {
+  return conversation.previewWithdrawn ? uiText(lang, "chat.withdrawn") : conversation.preview;
 }
 
 /**
@@ -341,12 +360,11 @@ function toChatMessage(
     file: row.attachment
       ? {
           name: row.attachment.filename,
-          meta: `${fileKind(row.attachment.filename)} · ${formatFileSize(row.attachment.size)}`,
+          size: row.attachment.size,
           url: row.attachment.download_url,
         }
       : undefined,
     sourceLanguage: row.source_language,
-    time: clockTime(row.created_at),
     sentAt: row.created_at,
     delivery: "delivered",
     // History is complete: whatever translations exist are already attached.
@@ -371,6 +389,7 @@ const RATING_DOWN = 1;
 
 type TranslationEditFormProps = {
   message: ChatMessage;
+  lang: LanguageCode;
   onSaveEdit: (message: ChatMessage, editedText: string) => Promise<boolean>;
   onClose: () => void;
 };
@@ -387,7 +406,7 @@ type TranslationEditFormProps = {
  * here is sent to anyone else, so there is no realtime event to wait for and
  * the panel closes as soon as the server confirms.
  */
-function TranslationEditForm({ message, onSaveEdit, onClose }: TranslationEditFormProps) {
+function TranslationEditForm({ message, lang, onSaveEdit, onClose }: TranslationEditFormProps) {
   const saved = message.myEdit?.editedText ?? "";
   const [draft, setDraft] = useState(saved);
   const [error, setError] = useState("");
@@ -402,36 +421,36 @@ function TranslationEditForm({ message, onSaveEdit, onClose }: TranslationEditFo
     const stored = await onSaveEdit(message, editedText);
     setSaving(false);
     if (stored) onClose();
-    else setError("Không lưu được bản sửa.");
+    else setError(uiText(lang, "chat.saveEditFailed"));
   };
 
   return (
     <form className={styles.correctionForm} onSubmit={save}>
-      <label htmlFor={`edit-${message.id}`}>Bản dịch bạn cho là đúng</label>
+      <label htmlFor={`edit-${message.id}`}>{uiText(lang, "chat.correctTranslation")}</label>
       {/* States what the box is for, because "private" is not something a text
           field can show on its own and the reader would otherwise reasonably
           assume they are correcting the message for everyone. */}
       <p className={styles.correctionHint}>
-        Chỉ mình bạn đọc được. Bóng chat vẫn giữ bản dịch của hệ thống.
+        {uiText(lang, "chat.correctTranslationHint")}
       </p>
       <textarea
         id={`edit-${message.id}`}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
-        placeholder="Nhập bản dịch bạn cho là đúng"
+        placeholder={uiText(lang, "chat.correctTranslationPlaceholder")}
         rows={2}
         autoFocus
       />
       {message.myEdit && (
         <p className={styles.correctionHint}>
-          Đã lưu lúc {messageTime(message.myEdit.editedAt)}. Lưu lần nữa sẽ thay bản này.
+          {formatUiText(lang, "chat.savedAt", { time: messageTime(message.myEdit.editedAt, lang) })}
         </p>
       )}
       {error && <p role="alert">{error}</p>}
       <div>
-        <button type="button" onClick={onClose}>Đóng</button>
+        <button type="button" onClick={onClose}>{uiText(lang, "common.close")}</button>
         <button type="submit" disabled={!draft.trim() || draft.trim() === saved || saving}>
-          {saving ? "Đang lưu…" : "Lưu bản sửa"}
+          {saving ? uiText(lang, "chat.saving") : uiText(lang, "chat.saveEdit")}
         </button>
       </div>
     </form>
@@ -442,6 +461,7 @@ type MessageClusterProps = {
   messages: ChatMessage[];
   name: string;
   initials: string;
+  lang: LanguageCode;
   searchQuery: string;
   onReply: (message: ChatMessage) => void;
   onRetry: (id: string) => void;
@@ -461,17 +481,17 @@ type MessageClusterProps = {
   quotes: Record<string, string>;
 };
 
-const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onReply, onRetry, onEdit, onDelete, openMenuId, onToggleMenu, onToggleOriginal, onRate, onSaveEdit, onForward, onDownload, quotes }: MessageClusterProps) {
+const MessageCluster = memo(function MessageCluster({ messages, name, initials, lang, searchQuery, onReply, onRetry, onEdit, onDelete, openMenuId, onToggleMenu, onToggleOriginal, onRate, onSaveEdit, onForward, onDownload, quotes }: MessageClusterProps) {
   const outgoing = messages[0].author === "me";
   // Which bubble has its edit panel open. The pencil is a disclosure
   // toggle, so at most one is open at a time within a cluster.
   const [editingId, setEditingId] = useState<string | null>(null);
   return (
-    <MessageGroup direction={outgoing ? "outgoing" : "incoming"} sender={outgoing ? "Bạn" : name} avatarPosition={outgoing ? "cr" : "cl"}>
+    <MessageGroup direction={outgoing ? "outgoing" : "incoming"} sender={outgoing ? uiText(lang, "chat.you") : name} avatarPosition={outgoing ? "cr" : "cl"}>
       {!outgoing && <Avatar name={name} size="sm"><span className={styles.initialsAvatar}>{initials}</span></Avatar>}
       <MessageGroup.Messages>
         {messages.map((message, index) => {
-          const indicator = deliveryIndicator(message.delivery);
+          const indicator = deliveryIndicator(message.delivery, lang);
           const position = messages.length === 1 ? "single" : index === 0 ? "first" : index === messages.length - 1 ? "last" : "normal";
           const shown = displayText(message);
           const hasTranslation = Boolean(message.translatedText);
@@ -494,32 +514,33 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
           const quoted = message.reply
             ?? (message.replyToMessageId ? quotes[message.replyToMessageId] : undefined);
           return (
-            <Message key={message.id} model={{ message: shown, sender: outgoing ? "Bạn" : name, sentTime: message.time, direction: outgoing ? "outgoing" : "incoming", position }}>
-              <Message.Header><time className={styles.messageTimestamp}>{messageTime(message.sentAt)}{message.edited && !message.deleted && <span className={styles.editedMark}>đã sửa</span>}</time></Message.Header>
+            <Message key={message.id} model={{ message: shown, sender: outgoing ? uiText(lang, "chat.you") : name, sentTime: clockTime(message.sentAt, lang), direction: outgoing ? "outgoing" : "incoming", position }}>
+              <Message.Header><time className={styles.messageTimestamp}>{messageTime(message.sentAt, lang)}{message.edited && !message.deleted && <span className={styles.editedMark}>{uiText(lang, "chat.edited")}</span>}</time></Message.Header>
               <Message.CustomContent>
                 <div className={styles.messageBubble}>
                   <div className={styles.messageContent}>
                   {quoted && <blockquote className={styles.replyPreview}>{quoted}</blockquote>}
-                  <p className={message.deleted ? styles.deletedMessage : undefined}>{message.deleted ? WITHDRAWN_TEXT : highlight(shown, searchQuery)}</p>
-                  {message.file && !message.deleted && <button className={styles.fileCard} type="button" aria-label={`Tải ${message.file.name}`} onClick={() => onDownload(message)}><span>{fileKind(message.file.name)}</span><strong>{message.file.name}<small>{message.file.meta}</small></strong><b aria-hidden="true">↓</b></button>}
+                  <p className={message.deleted ? styles.deletedMessage : undefined}>{message.deleted ? uiText(lang, "chat.withdrawn") : highlight(shown, searchQuery)}</p>
+                  {message.file && !message.deleted && <button className={styles.fileCard} type="button" aria-label={formatUiText(lang, "chat.download", { name: message.file.name })} onClick={() => onDownload(message)}><span>{fileKind(message.file.name, lang)}</span><strong>{message.file.name}<small>{message.file.size === undefined ? fileKind(message.file.name, lang) : `${fileKind(message.file.name, lang)} · ${formatFileSize(message.file.size, lang)}`}</small></strong><b aria-hidden="true">↓</b></button>}
                   </div>
                   {!message.deleted && <>
-                    <div className={styles.messageQuickActions} aria-label="Thao tác với tin nhắn">
-                      <button type="button" aria-label="Mở thao tác với tin nhắn" title="Thao tác" aria-expanded={openMenuId === message.id} aria-haspopup="menu" onClick={() => onToggleMenu(message.id)}>
+                    <div className={styles.messageQuickActions} aria-label={uiText(lang, "chat.messageActions")}>
+                      <button type="button" aria-label={uiText(lang, "chat.openMessageActions")} title={uiText(lang, "chat.actions")} aria-expanded={openMenuId === message.id} aria-haspopup="menu" onClick={() => onToggleMenu(message.id)}>
                         <MoreVertical size={14} strokeWidth={2} aria-hidden="true" />
                       </button>
                     </div>
                     {openMenuId === message.id && <div className={styles.messageMenu} role="menu">
-                      <button type="button" role="menuitem" onClick={() => { onReply(message); onToggleMenu(message.id); }}>Trả lời</button>
-                      {outgoing && <button type="button" role="menuitem" onClick={() => { onEdit(message); onToggleMenu(message.id); }}>Sửa</button>}
-                      <button type="button" role="menuitem" onClick={() => { onForward(message); onToggleMenu(message.id); }}>Chuyển tiếp</button>
+                      <button type="button" role="menuitem" onClick={() => { onReply(message); onToggleMenu(message.id); }}>{uiText(lang, "chat.reply")}</button>
+                      {outgoing && <button type="button" role="menuitem" onClick={() => { onEdit(message); onToggleMenu(message.id); }}>{uiText(lang, "chat.edit")}</button>}
+                      <button type="button" role="menuitem" onClick={() => { onForward(message); onToggleMenu(message.id); }}>{uiText(lang, "chat.forward")}</button>
                       {/* Withdrawal is the sender's alone (docs/CONTRACT.md §3.6);
                           offering it on someone else's message would only 403. */}
-                      {outgoing && <button type="button" role="menuitem" onClick={() => { onDelete(message.id); onToggleMenu(message.id); }}>Gỡ tin nhắn</button>}
+                      {outgoing && <button type="button" role="menuitem" onClick={() => { onDelete(message.id); onToggleMenu(message.id); }}>{uiText(lang, "chat.removeMessage")}</button>}
                     </div>}
                     {editingId === message.id && (
-                      <TranslationEditForm
-                        message={message}
+                        <TranslationEditForm
+                          message={message}
+                          lang={lang}
                         onSaveEdit={onSaveEdit}
                         onClose={() => setEditingId(null)}
                       />
@@ -541,8 +562,8 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                     />
                     <button
                       type="button"
-                      aria-label={ratedUp ? "Bỏ đánh giá bản dịch tốt" : "Bản dịch tốt"}
-                      title={ratedUp ? "Bỏ đánh giá" : "Bản dịch tốt"}
+                      aria-label={ratedUp ? uiText(lang, "chat.removePositiveRating") : uiText(lang, "chat.positiveTranslation")}
+                      title={ratedUp ? uiText(lang, "chat.removePositiveRating") : uiText(lang, "chat.positiveTranslation")}
                       aria-pressed={ratedUp}
                       className={styles.feedbackButton}
                       onClick={() => onRate(message, RATING_UP)}
@@ -551,8 +572,8 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                     </button>
                     <button
                       type="button"
-                      aria-label={ratedDown ? "Bỏ đánh giá bản dịch chưa đạt" : "Bản dịch chưa đạt"}
-                      title={ratedDown ? "Bỏ đánh giá" : "Bản dịch chưa đạt"}
+                      aria-label={ratedDown ? uiText(lang, "chat.removeNegativeRating") : uiText(lang, "chat.negativeTranslation")}
+                      title={ratedDown ? uiText(lang, "chat.removeNegativeRating") : uiText(lang, "chat.negativeTranslation")}
                       aria-pressed={ratedDown}
                       className={styles.feedbackButton}
                       onClick={() => onRate(message, RATING_DOWN)}
@@ -561,8 +582,8 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                     </button>
                     <button
                       type="button"
-                      aria-label={edited ? "Xem bản dịch bạn đã sửa" : "Sửa lại bản dịch cho riêng bạn"}
-                      title={edited ? "Xem bản sửa của bạn" : "Sửa lại bản dịch cho riêng bạn"}
+                      aria-label={edited ? uiText(lang, "chat.viewYourTranslationEdit") : uiText(lang, "chat.editTranslationForYou")}
+                      title={edited ? uiText(lang, "chat.viewYourEdit") : uiText(lang, "chat.editTranslationForYou")}
                       aria-expanded={editingId === message.id}
                       className={styles.feedbackButton}
                       onClick={() => setEditingId((current) => current === message.id ? null : message.id)}
@@ -572,10 +593,10 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                   </span>
                 )}
                 {message.isFallback && (
-                  <span className={styles.deliveryIcon} role="img" aria-label="Bản dịch dự phòng, chất lượng có thể thấp hơn" title="Bản dịch dự phòng, chất lượng có thể thấp hơn">⚠</span>
+                  <span className={styles.deliveryIcon} role="img" aria-label={uiText(lang, "chat.fallbackTranslation")} title={uiText(lang, "chat.fallbackTranslation")}>⚠</span>
                 )}
-                {awaiting && <span className={styles.messageTimestamp}>đang dịch…</span>}
-                {message.delivery === "failed" && <button className={styles.retryButton} type="button" onClick={() => onRetry(message.id)}>Không gửi được · Gửi lại</button>}
+                {awaiting && <span className={styles.messageTimestamp}>{uiText(lang, "chat.translating")}</span>}
+                {message.delivery === "failed" && <button className={styles.retryButton} type="button" onClick={() => onRetry(message.id)}>{uiText(lang, "chat.sendFailedRetry")}</button>}
                 {/* Delivery is only ever about my own messages — a tick under
                     someone else's bubble would claim I had sent it. */}
                 {outgoing && indicator && <span className={`${styles.deliveryIcon} ${styles[indicator.className]}`} role="img" aria-label={indicator.label} title={indicator.label}>{indicator.symbol}</span>}
@@ -590,12 +611,13 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
 
 export default function MessagingApp() {
   const router = useRouter();
+  const lang = useInterfaceLanguage();
 
   // Read once per mount rather than copied into state by an effect: the signed
   // in account cannot change without a navigation.
   const me = useMemo(() => getStoredUser(), []);
   const myId = me?.id ?? "";
-  const myLanguage = me?.preferred_language ?? "vi";
+  const myLanguage = me?.preferred_language ?? DEFAULT_LANGUAGE;
   const accountName = me ? me.display_name || me.username || me.email.split("@")[0] : "";
   const accountEmail = me?.email ?? "";
 
@@ -617,12 +639,12 @@ export default function MessagingApp() {
   const [userResults, setUserResults] = useState<{ query: string; members: ConversationMember[] }>(
     { query: "", members: [] },
   );
-  const [composerError, setComposerError] = useState("");
+  const [composerError, setComposerError] = useState<UiTextKey | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [conversationItems, setConversationItems] = useState<ConversationItem[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [loadedThreads, setLoadedThreads] = useState<Record<string, boolean>>({});
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<UiTextKey | null>(null);
   const [replying, setReplying] = useState<ChatMessage | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   // Only the setter is used: see the ticker effect below.
@@ -672,7 +694,13 @@ export default function MessagingApp() {
       if (item.id !== conversationId) return item;
       const isNewer = !item.lastActivityAt || Date.parse(sentAt) >= Date.parse(item.lastActivityAt);
       if (!isNewer) return item;
-      return { ...item, preview, lastActivityAt: sentAt, lastMessageId: messageId };
+      return {
+        ...item,
+        preview,
+        previewWithdrawn: false,
+        lastActivityAt: sentAt,
+        lastMessageId: messageId,
+      };
     }));
   }, []);
 
@@ -697,7 +725,7 @@ export default function MessagingApp() {
         ? item.lastMessageId === messageId
         : Boolean(sentAt) && Boolean(item.lastActivityAt)
           && Date.parse(sentAt!) >= Date.parse(item.lastActivityAt!);
-      return isPreviewed ? { ...item, preview: WITHDRAWN_TEXT } : item;
+      return isPreviewed ? { ...item, preview: "", previewWithdrawn: true } : item;
     }));
   }, []);
 
@@ -705,7 +733,7 @@ export default function MessagingApp() {
   const retranslatePreview = useCallback((conversationId: string, messageId: string, translated: string) => {
     setConversationItems((items) => items.map((item) =>
       item.id === conversationId && item.lastMessageId === messageId
-        ? { ...item, preview: translated }
+        ? { ...item, preview: translated, previewWithdrawn: false }
         : item,
     ));
   }, []);
@@ -731,7 +759,6 @@ export default function MessagingApp() {
         author,
         senderId: message.sender_id,
         originalText: message.original_text,
-        time: clockTime(message.created_at),
         sentAt: message.created_at,
         delivery: "delivered",
       };
@@ -888,7 +915,7 @@ export default function MessagingApp() {
       withdrawPreview(event.conversation_id, event.message_id, new Date().toISOString());
     }, [withdrawPreview]),
 
-    onError: useCallback((_code: string, message: string) => setNotice(message), []),
+    onError: useCallback(() => setNotice("chat.realtimeError"), []),
     onAuthFailure: useCallback(() => router.replace("/login"), [router]),
   });
 
@@ -943,10 +970,10 @@ export default function MessagingApp() {
         if (cancelled) return;
         const items = conversations.map((conversation) => toConversationItem(conversation, myId));
         setConversationItems(items);
-        setNotice("");
+        setNotice(null);
         setActiveId((current) => current || items[0]?.id || "");
       })
-      .catch((error: Error) => !cancelled && setNotice(error.message));
+      .catch(() => !cancelled && setNotice("chat.loadConversationsFailed"));
     return () => { cancelled = true; };
   }, [myId]);
 
@@ -990,9 +1017,9 @@ export default function MessagingApp() {
           ));
         }
         setLoadedThreads((current) => ({ ...current, [activeId]: true }));
-        setNotice("");
+        setNotice(null);
       })
-      .catch((error: Error) => !cancelled && setNotice(error.message));
+      .catch(() => !cancelled && setNotice("chat.loadMessagesFailed"));
     return () => { cancelled = true; };
     // `conversationItems` changes whenever a preview moves, but the guard above
     // makes every re-run after the first a no-op.
@@ -1004,6 +1031,7 @@ export default function MessagingApp() {
   const active = conversationItems.find((item) => item.id === activeId)
     ?? conversationItems[0]
     ?? EMPTY_CONVERSATION;
+  const activeName = conversationName(active, lang);
 
   const activeMessages = useMemo(() => messages[activeId] ?? [], [activeId, messages]);
 
@@ -1011,9 +1039,9 @@ export default function MessagingApp() {
   const quotes = useMemo(
     () => Object.fromEntries(activeMessages.map((message) => [
       message.id,
-      message.deleted ? WITHDRAWN_TEXT : displayText(message),
+      message.deleted ? uiText(lang, "chat.withdrawn") : displayText(message),
     ])),
-    [activeMessages],
+    [activeMessages, lang],
   );
 
   // Only other people count: the server never echoes a typing notice back to
@@ -1033,12 +1061,12 @@ export default function MessagingApp() {
 
   const visibleConversations = useMemo(() => conversationItems
     .filter((item) => filter === "all" || Boolean(item.unread))
-    .filter((item) => `${item.name} ${item.preview}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+    .filter((item) => `${conversationName(item, lang)} ${conversationPreview(item, lang)}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
     // Newest activity first, the order that makes a preview worth showing at
     // all. Conversations nobody has written in sort last rather than first.
     .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
       || Date.parse(b.lastActivityAt ?? "0") - Date.parse(a.lastActivityAt ?? "0")),
-    [conversationItems, filter, query]);
+    [conversationItems, filter, lang, query]);
 
   // Ask the server, rather than filtering the people already on screen: a new
   // account shares no conversation with anyone, so a local list leaves it with
@@ -1050,9 +1078,9 @@ export default function MessagingApp() {
     const timer = setTimeout(() => {
       searchUsers(needle)
         .then((members) => !cancelled && setUserResults({ query: needle, members }))
-        .catch((error: Error) => {
+        .catch(() => {
           if (cancelled) return;
-          setComposerError(error.message);
+          setComposerError("chat.searchUsersFailed");
           // Recorded as an answer to this query, so the list stops saying it is
           // still searching for something that already failed.
           setUserResults({ query: needle, members: [] });
@@ -1068,9 +1096,9 @@ export default function MessagingApp() {
 
   const memberLabel = useCallback((member: ConversationMember) => ({
     name: member.display_name || member.email.split("@")[0],
-    subtitle: `${member.email} · đọc ${languageLabel(member.preferred_language)}`,
+    subtitle: `${member.email} · ${formatUiText(lang, "chat.readsLanguage", { language: languageLabel(member.preferred_language) })}`,
     initials: initialsOf(member.display_name || member.email),
-  }), []);
+  }), [lang]);
 
   const grouped = useMemo(() => activeMessages.reduce<ChatMessage[][]>((groups, message) => {
     const previous = groups.at(-1)?.[0];
@@ -1084,9 +1112,9 @@ export default function MessagingApp() {
     : 0, [activeMessages, messageQuery]);
 
   useEffect(() => {
-    document.querySelector(".cs-button--attachment")?.setAttribute("aria-label", "Đính kèm tệp");
-    document.querySelector(".cs-button--send")?.setAttribute("aria-label", "Gửi tin nhắn");
-  }, [activeId, offline]);
+    document.querySelector(".cs-button--attachment")?.setAttribute("aria-label", uiText(lang, "chat.attachFile"));
+    document.querySelector(".cs-button--send")?.setAttribute("aria-label", uiText(lang, "chat.sendMessage"));
+  }, [activeId, lang, offline]);
 
 
   const updateActiveThread = useCallback((updater: (thread: ChatMessage[]) => ChatMessage[]) => {
@@ -1112,7 +1140,7 @@ export default function MessagingApp() {
     withdrawPreview(activeId, id, original?.sentAt);
     try {
       await deleteMessage(activeId, id);
-    } catch (error) {
+    } catch {
       // Restore just this message. Putting back a snapshot of the whole thread
       // would silently drop anything that arrived while the request was in
       // flight.
@@ -1126,7 +1154,7 @@ export default function MessagingApp() {
           item.id === activeId ? { ...item, preview: previousPreview } : item,
         ));
       }
-      setNotice((error as Error).message);
+      setNotice("chat.deleteMessageFailed");
     }
   }, [activeId, conversationItems, messages, updateActiveThread, withdrawPreview]);
 
@@ -1164,8 +1192,8 @@ export default function MessagingApp() {
       touchConversation(activeId, message.id, updated.original_text, updated.edited_at ?? new Date().toISOString());
       setEditing(null);
       setDraft("");
-    } catch (error) {
-      setNotice((error as Error).message);
+    } catch {
+      setNotice("chat.editMessageFailed");
     }
   }, [activeId, settleTranslation, touchConversation, updateActiveThread]);
 
@@ -1188,8 +1216,8 @@ export default function MessagingApp() {
         existing.id === message.id ? { ...existing, myRating: rating, myCorrection: correction } : existing,
       ));
       return true;
-    } catch (error) {
-      setNotice((error as Error).message);
+    } catch {
+      setNotice("chat.feedbackFailed");
       return false;
     }
   }, [updateActiveThread]);
@@ -1237,8 +1265,8 @@ export default function MessagingApp() {
           : existing,
       ));
       return true;
-    } catch (error) {
-      setNotice((error as Error).message);
+    } catch {
+      setNotice("chat.saveEditFailed");
       return false;
     }
   }, [updateActiveThread]);
@@ -1286,7 +1314,6 @@ export default function MessagingApp() {
       author: "me",
       senderId: myId,
       originalText: cleanText,
-      time: clockTime(now.toISOString()),
       sentAt: now.toISOString(),
       delivery: accepted ? "sending" : "failed",
       reply: replying ? displayText(replying) : undefined,
@@ -1323,14 +1350,13 @@ export default function MessagingApp() {
         author: "me",
         senderId: myId,
         originalText: forwarding.originalText,
-        time: clockTime(now.toISOString()),
         sentAt: now.toISOString(),
         delivery: accepted ? "sending" : "failed",
       }],
     }));
     touchConversation(conversationId, clientMessageId, forwarding.originalText, now.toISOString());
     setForwarding(null);
-    setNotice(accepted ? "" : "Không chuyển tiếp được khi đang ngoại tuyến.");
+    setNotice(accepted ? null : "chat.forwardOffline");
   }, [forwarding, myId, socket, touchConversation]);
 
   const clearAttachment = useCallback(() => {
@@ -1352,8 +1378,8 @@ export default function MessagingApp() {
     try {
       const stored = await uploadAttachment(activeId, file, setUploadProgress);
       setPendingAttachmentId(stored.id);
-    } catch (error) {
-      setNotice((error as Error).message);
+    } catch {
+      setNotice("chat.uploadFailed");
       setPendingFile(null);
       setPendingAttachmentId(null);
     } finally {
@@ -1377,8 +1403,8 @@ export default function MessagingApp() {
       anchor.download = message.file.name;
       anchor.click();
       URL.revokeObjectURL(objectUrl);
-    } catch (error) {
-      setNotice((error as Error).message);
+    } catch {
+      setNotice("chat.downloadFailed");
     }
   }, []);
 
@@ -1410,10 +1436,9 @@ export default function MessagingApp() {
       author: "me",
       senderId: myId,
       originalText: file.name,
-      time: clockTime(now.toISOString()),
       sentAt: now.toISOString(),
       delivery: accepted ? "sending" : "failed",
-      file: { name: file.name, meta: `${fileKind(file.name)} · ${formatFileSize(file.size)}` },
+      file: { name: file.name, size: file.size },
     }]);
     touchConversation(activeId, clientMessageId, file.name, now.toISOString());
     clearAttachment();
@@ -1441,14 +1466,14 @@ export default function MessagingApp() {
     setSelectedMembers([]);
     setUserQuery("");
     setUserResults({ query: "", members: [] });
-    setComposerError("");
+    setComposerError(null);
   }, []);
 
   const startConversation = useCallback(async () => {
     const name = groupName.trim();
     if (!selectedMembers.length) return;
     if (composerMode === "group" && !name) return;
-    setComposerError("");
+    setComposerError(null);
 
     try {
       const created = await createConversation({
@@ -1469,8 +1494,8 @@ export default function MessagingApp() {
       // History is not seeded here: an existing conversation has messages to
       // fetch, and selecting it is what fetches them.
       selectConversation(created.id);
-    } catch (error) {
-      setComposerError((error as Error).message);
+    } catch {
+      setComposerError("chat.createConversationFailed");
     }
   }, [closeComposer, composerMode, groupName, myId, selectedMembers, selectConversation]);
 
@@ -1487,7 +1512,7 @@ export default function MessagingApp() {
 
   const chooseComposerMode = useCallback((mode: "direct" | "group") => {
     setComposerMode(mode);
-    setComposerError("");
+    setComposerError(null);
     // Switching back to a direct chat keeps the first person picked; the others
     // have nowhere to go in a conversation that holds two people.
     if (mode === "direct") setSelectedMembers((current) => current.slice(0, 1));
@@ -1559,7 +1584,7 @@ export default function MessagingApp() {
 
   return (
     <main className={`${styles.appShell} ${mobileView === "chat" ? styles.mobileChat : styles.mobileList}`}>
-      <nav className={styles.navRail} aria-label="Điều hướng chính">
+      <nav className={styles.navRail} aria-label={uiText(lang, "nav.main")}>
         <span className={styles.navRailLogo}>
           <Logo size={30} title="LinguaFlow" />
         </span>
@@ -1567,16 +1592,16 @@ export default function MessagingApp() {
           className={styles.navRailButton}
           href="/chat"
           aria-current="page"
-          aria-label="Tin nhắn"
-          title="Tin nhắn"
+          aria-label={uiText(lang, "nav.messages")}
+          title={uiText(lang, "nav.messages")}
         >
           <MessagesSquare size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
         <Link
           className={styles.navRailButton}
           href="/settings"
-          aria-label="Cài đặt"
-          title="Cài đặt"
+          aria-label={uiText(lang, "nav.settings")}
+          title={uiText(lang, "nav.settings")}
         >
           <Settings size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
@@ -1588,16 +1613,16 @@ export default function MessagingApp() {
                 <strong>{accountName}</strong>
                 <small>{accountEmail}</small>
               </p>
-              <Link className={styles.accountMenuItem} role="menuitem" href="/settings">Cài đặt</Link>
+              <Link className={styles.accountMenuItem} role="menuitem" href="/settings">{uiText(lang, "nav.settings")}</Link>
               <button className={styles.accountMenuItem} type="button" role="menuitem" onClick={signOut}>
-                Đăng xuất
+                {uiText(lang, "chat.signOut")}
               </button>
             </div>
           )}
           <button
             type="button"
             className={styles.navRailAvatar}
-            aria-label={`Tài khoản ${accountName}`}
+            aria-label={formatUiText(lang, "chat.account", { name: accountName })}
             title={accountName}
             aria-expanded={showAccountMenu}
             aria-haspopup="menu"
@@ -1610,29 +1635,29 @@ export default function MessagingApp() {
       <MainContainer>
         <Sidebar position="left" scrollable={false} className={styles.chatSidebar}>
           <div className={styles.workspaceTop}><div><span className={styles.productMark}><Logo size={22} /></span><span><strong>LinguaFlow</strong></span></div></div>
-          <div className={styles.sidebarTools}><div className={styles.sidebarSearchInline}><Search placeholder="Tìm hội thoại" value={query} onChange={setQuery} onClearClick={() => setQuery("")} /></div><button type="button" title="Cuộc trò chuyện mới" aria-label="Cuộc trò chuyện mới" aria-expanded={showComposer} onClick={() => setShowComposer(true)}><UserRoundPlus size={18} strokeWidth={1.8} aria-hidden="true" /></button></div>
-          <div className={styles.conversationFilters} aria-label="Lọc hội thoại">
-            <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>Tất cả</button>
-            <button type="button" aria-pressed={filter === "unread"} onClick={() => setFilter("unread")}>Chưa đọc</button>
+          <div className={styles.sidebarTools}><div className={styles.sidebarSearchInline}><Search placeholder={uiText(lang, "chat.searchConversations")} value={query} onChange={setQuery} onClearClick={() => setQuery("")} /></div><button type="button" title={uiText(lang, "chat.newConversation")} aria-label={uiText(lang, "chat.newConversation")} aria-expanded={showComposer} onClick={() => setShowComposer(true)}><UserRoundPlus size={18} strokeWidth={1.8} aria-hidden="true" /></button></div>
+          <div className={styles.conversationFilters} aria-label={uiText(lang, "chat.conversationFilters")}>
+            <button type="button" aria-pressed={filter === "all"} onClick={() => setFilter("all")}>{uiText(lang, "chat.all")}</button>
+            <button type="button" aria-pressed={filter === "unread"} onClick={() => setFilter("unread")}>{uiText(lang, "chat.unread")}</button>
           </div>
-          <div className={styles.listTitle}><span>Hội thoại</span><span>{visibleConversations.length}</span></div>
+          <div className={styles.listTitle}><span>{uiText(lang, "chat.conversations")}</span><span>{visibleConversations.length}</span></div>
           <ConversationList className={styles.conversationIndex}>
             {visibleConversations.map((conversation) => (
-              <Conversation key={conversation.id} name={conversation.name} info={conversation.preview} unreadCnt={conversation.unread} unreadDot={conversation.mention} active={conversation.id === activeId} role="button" tabIndex={0}
-                onClick={() => selectConversation(conversation.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectConversation(conversation.id); } }} lastActivityTime={relativeTime(conversation.lastActivityAt)}>
+              <Conversation key={conversation.id} name={conversationName(conversation, lang)} info={conversationPreview(conversation, lang)} unreadCnt={conversation.unread} unreadDot={conversation.mention} active={conversation.id === activeId} role="button" tabIndex={0}
+                onClick={() => selectConversation(conversation.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectConversation(conversation.id); } }} lastActivityTime={relativeTime(conversation.lastActivityAt, lang)}>
                 {/* No Conversation.Content child: chatscope renders its own
                     from the name/info props and drops the child entirely. */}
-                <Avatar name={conversation.name} status={conversation.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{conversation.initials}</span></Avatar>
+                <Avatar name={conversationName(conversation, lang)} status={conversation.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{conversation.initials}</span></Avatar>
               </Conversation>
             ))}
           </ConversationList>
-          {!visibleConversations.length && <div className={styles.noResults}><strong>Không tìm thấy hội thoại</strong><button type="button" onClick={() => { setQuery(""); setFilter("all"); }}>Xóa bộ lọc</button></div>}
+          {!visibleConversations.length && <div className={styles.noResults}><strong>{uiText(lang, "chat.noConversationsFound")}</strong><button type="button" onClick={() => { setQuery(""); setFilter("all"); }}>{uiText(lang, "chat.clearFilters")}</button></div>}
         </Sidebar>
 
         <ChatContainer className={styles.chatWorkspace}>
           <ConversationHeader className={styles.chatHeader}>
-            <ConversationHeader.Back><button type="button" aria-label="Quay lại danh sách hội thoại" onClick={() => setMobileView("list")}>←</button></ConversationHeader.Back>
-            <Avatar name={active.name} status={active.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{active.initials}</span></Avatar>
+            <ConversationHeader.Back><button type="button" aria-label={uiText(lang, "chat.backToList")} onClick={() => setMobileView("list")}>←</button></ConversationHeader.Back>
+            <Avatar name={activeName} status={active.online ? "available" : "unavailable"}><span className={styles.initialsAvatar}>{active.initials}</span></Avatar>
             <ConversationHeader.Content>
               <button
                 className={styles.headerIdentity}
@@ -1640,11 +1665,11 @@ export default function MessagingApp() {
                 aria-expanded={showConversationInfo}
                 onClick={() => setShowConversationInfo((open) => !open)}
               >
-                <strong>{active.name}</strong>
+                <strong>{activeName}</strong>
               </button>
             </ConversationHeader.Content>
             <ConversationHeader.Actions>
-              <button type="button" aria-label="Thông tin hội thoại" title="Thông tin hội thoại" aria-pressed={showConversationInfo} onClick={() => setShowConversationInfo((open) => !open)}>
+              <button type="button" aria-label={uiText(lang, "chat.conversationInfo")} title={uiText(lang, "chat.conversationInfo")} aria-pressed={showConversationInfo} onClick={() => setShowConversationInfo((open) => !open)}>
                 <Info size={18} strokeWidth={1.8} aria-hidden="true" />
               </button>
             </ConversationHeader.Actions>
@@ -1656,15 +1681,15 @@ export default function MessagingApp() {
               exposes only scrollToBottom. The cast follows the runtime. */}
           <MessageList
             ref={messageListRef as unknown as Ref<HTMLDivElement>}
-            typingIndicator={typingHere.length ? <TypingIndicator content={`${active.name} đang nhập`} /> : undefined}
+            typingIndicator={typingHere.length ? <TypingIndicator content={formatUiText(lang, "chat.typing", { name: activeName })} /> : undefined}
             autoScrollToBottom
             autoScrollToBottomOnMount
             scrollBehavior="smooth"
           >
-            {(offline || notice) && <div className={styles.statusBanner} role="status"><strong>{offline ? "Mất kết nối" : "Có lỗi"}</strong><span>{notice || "Đang kết nối lại. Bạn vẫn đọc được các tin nhắn đã tải."}</span></div>}
+            {(offline || notice) && <div className={styles.statusBanner} role="status"><strong>{offline ? uiText(lang, "chat.offline") : uiText(lang, "chat.error")}</strong><span>{notice ? uiText(lang, notice) : uiText(lang, "chat.reconnecting")}</span></div>}
             {activeMessages.length ? <>
-              {grouped.map((cluster, index) => <div key={cluster[0].id} className={styles.messageRow}>{(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}<MessageCluster messages={cluster} name={active.name} initials={active.initials} searchQuery={messageQuery} onReply={beginReply} onRetry={retry} onEdit={beginEdit} onDelete={removeMessage} openMenuId={openMessageMenuId} onToggleMenu={(id) => setOpenMessageMenuId((current) => current === id ? null : id)} onToggleOriginal={toggleOriginal} onRate={rateTranslation} onSaveEdit={saveTranslationEdit} onForward={setForwarding} onDownload={downloadFile} quotes={quotes} /></div>)}
-            </> : <div className={styles.emptyState}><span>✦</span><h2>Bắt đầu cuộc trò chuyện</h2><p>Gửi tin nhắn đầu tiên trong không gian riêng của bạn.</p></div>}
+              {grouped.map((cluster, index) => <div key={cluster[0].id} className={styles.messageRow}>{(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt, lang)} />}<MessageCluster messages={cluster} name={activeName} initials={active.initials} lang={lang} searchQuery={messageQuery} onReply={beginReply} onRetry={retry} onEdit={beginEdit} onDelete={removeMessage} openMenuId={openMessageMenuId} onToggleMenu={(id) => setOpenMessageMenuId((current) => current === id ? null : id)} onToggleOriginal={toggleOriginal} onRate={rateTranslation} onSaveEdit={saveTranslationEdit} onForward={setForwarding} onDownload={downloadFile} quotes={quotes} /></div>)}
+            </> : <div className={styles.emptyState}><span>✦</span><h2>{uiText(lang, "chat.emptyTitle")}</h2><p>{uiText(lang, "chat.emptyDescription")}</p></div>}
           </MessageList>
 
           {/* Wrapped in an InputToolbox for the same reason the reply bar is:
@@ -1673,14 +1698,14 @@ export default function MessagingApp() {
               that says so, and the button that actually sends it, never
               rendered, so a chosen file could never leave the browser. */}
           {pendingFile && <InputToolbox className={styles.fileUploadPreview}>
-            <span className={styles.fileType}>{fileKind(pendingFile.name)}</span>
-            <div><strong>{pendingFile.name}</strong><small>{uploading ? `Đang tải lên · ${uploadProgress}%` : `Sẵn sàng gửi · ${formatFileSize(pendingFile.size)}`}</small>{uploading && <span className={styles.uploadProgress} aria-hidden="true"><span style={{ width: `${uploadProgress}%` }} /></span>}</div>
-            {!uploading && <button className={styles.sendFileAction} type="button" onClick={sendFile}>Gửi tệp</button>}
-            <button className={styles.cancelAction} type="button" onClick={clearAttachment} aria-label="Hủy tệp đính kèm">×</button>
+            <span className={styles.fileType}>{fileKind(pendingFile.name, lang)}</span>
+            <div><strong>{pendingFile.name}</strong><small>{uploading ? formatUiText(lang, "chat.uploading", { progress: uploadProgress }) : formatUiText(lang, "chat.readyToSend", { size: formatFileSize(pendingFile.size, lang) })}</small>{uploading && <span className={styles.uploadProgress} aria-hidden="true"><span style={{ width: `${uploadProgress}%` }} /></span>}</div>
+            {!uploading && <button className={styles.sendFileAction} type="button" onClick={sendFile}>{uiText(lang, "chat.sendFile")}</button>}
+            <button className={styles.cancelAction} type="button" onClick={clearAttachment} aria-label={uiText(lang, "chat.cancelAttachment")}>×</button>
           </InputToolbox>}
 
           {(replying || editing) && <InputToolbox className={`${styles.composerToolbox} ${styles.composerToolboxActive}`}>
-            <span className={styles.composerContext}><strong>{editing ? "Sửa tin nhắn" : `Trả lời ${active.name}`}</strong><small>{editing ? displayText(editing) : replying ? displayText(replying) : ""}</small></span><button className={styles.cancelAction} type="button" aria-label="Hủy thao tác" onClick={() => { setReplying(null); setEditing(null); }}>×</button>
+            <span className={styles.composerContext}><strong>{editing ? uiText(lang, "chat.editMessage") : formatUiText(lang, "chat.replyTo", { name: activeName })}</strong><small>{editing ? displayText(editing) : replying ? displayText(replying) : ""}</small></span><button className={styles.cancelAction} type="button" aria-label={uiText(lang, "chat.cancelAction")} onClick={() => { setReplying(null); setEditing(null); }}>×</button>
           </InputToolbox>}
           <InputToolbox className={styles.composerTools}>
             <EmojiPicker disabled={offline} onSelect={(emoji) => setDraft((current) => current + emoji)} />
@@ -1690,7 +1715,7 @@ export default function MessagingApp() {
             value={draft}
             onChange={(_innerHtml, textContent) => { setDraft(textContent); noteTyping(); }}
             onSend={(_, text) => send(text)}
-            placeholder={offline ? "Đang ngoại tuyến" : editing ? "Nhập nội dung đã sửa" : replying ? `Trả lời ${active.name}` : `Nhắn cho ${active.name}`}
+            placeholder={offline ? uiText(lang, "chat.offline") : editing ? uiText(lang, "chat.editMessagePlaceholder") : replying ? formatUiText(lang, "chat.replyTo", { name: activeName }) : formatUiText(lang, "chat.messageTo", { name: activeName })}
             disabled={offline}
             sendButton
             attachButton
@@ -1714,43 +1739,43 @@ export default function MessagingApp() {
       />
 
       {showConversationInfo && (
-        <aside className={styles.infoPanel} aria-label="Thông tin hội thoại">
+        <aside className={styles.infoPanel} aria-label={uiText(lang, "chat.conversationInfo")}>
           <header>
-            <h2>Thông tin hội thoại</h2>
-            <button type="button" aria-label="Đóng bảng thông tin" onClick={() => setShowConversationInfo(false)}>
+            <h2>{uiText(lang, "chat.conversationInfo")}</h2>
+            <button type="button" aria-label={uiText(lang, "chat.closeInfoPanel")} onClick={() => setShowConversationInfo(false)}>
               <X size={18} strokeWidth={1.8} aria-hidden="true" />
             </button>
           </header>
-          <p className={styles.infoName}>{active.name}</p>
+          <p className={styles.infoName}>{activeName}</p>
           <p className={styles.infoHint}>
-            Tin nhắn của bạn được dịch sang ngôn ngữ mỗi người dưới đây đang đọc.
+            {uiText(lang, "chat.infoDescription")}
           </p>
-          <h3 className={styles.infoSectionTitle}>Tìm trong hội thoại</h3>
+          <h3 className={styles.infoSectionTitle}>{uiText(lang, "chat.searchInConversation")}</h3>
           <div className={styles.panelSearch}>
             <input
               id="message-search"
               value={messageQuery}
               onChange={(event) => setMessageQuery(event.target.value)}
-              placeholder="Nhập nội dung tin nhắn"
-              aria-label="Tìm trong cuộc trò chuyện"
+              placeholder={uiText(lang, "chat.searchMessagesPlaceholder")}
+              aria-label={uiText(lang, "chat.searchConversation")}
             />
             {messageQuery.trim() && (
-              <button type="button" aria-label="Xóa tìm kiếm" onClick={() => setMessageQuery("")}>
+              <button type="button" aria-label={uiText(lang, "chat.clearSearch")} onClick={() => setMessageQuery("")}>
                 <X size={15} strokeWidth={2} aria-hidden="true" />
               </button>
             )}
           </div>
           <p className={styles.infoHint} aria-live="polite">
-            {messageQuery.trim() ? `${searchMatches} kết quả` : "Kết quả khớp được tô sáng trong cuộc trò chuyện."}
+            {messageQuery.trim() ? formatUiText(lang, "chat.searchResults", { count: searchMatches }) : uiText(lang, "chat.searchHighlightHint")}
           </p>
 
-          <h3 className={styles.infoSectionTitle}>Thành viên · {active.members.length}</h3>
+          <h3 className={styles.infoSectionTitle}>{formatUiText(lang, "chat.members", { count: active.members.length })}</h3>
           <ul className={styles.memberList}>
             {active.members.map((member) => (
               <li key={member.id} className={styles.memberRow}>
                 <span className={styles.memberAvatar} aria-hidden="true">{memberLabel(member).initials}</span>
                 <span className={styles.memberCopy}>
-                  <strong>{memberLabel(member).name}{member.id === myId && " (bạn)"}</strong>
+                  <strong>{memberLabel(member).name}{member.id === myId && uiText(lang, "chat.youSuffix")}</strong>
                   <small>{member.email}</small>
                 </span>
                 <span className={styles.memberLanguage}>{languageLabel(member.preferred_language)}</span>
@@ -1758,47 +1783,47 @@ export default function MessagingApp() {
             ))}
           </ul>
           {!active.members.length && (
-            <p className={styles.infoHint}>Chưa tải được danh sách thành viên.</p>
+            <p className={styles.infoHint}>{uiText(lang, "chat.noMembersLoaded")}</p>
           )}
         </aside>
       )}
       {forwarding && <div className={styles.modalBackdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) setForwarding(null); }}>
         <section className={styles.groupModal} role="dialog" aria-modal="true" aria-labelledby="forward-dialog-title">
           <header>
-            <div><span className={styles.groupModalIcon}><Forward size={20} aria-hidden="true" /></span><span><h2 id="forward-dialog-title">Chuyển tiếp tin nhắn</h2><p>Chọn hội thoại nhận tin nhắn này.</p></span></div>
-            <button type="button" aria-label="Đóng" onClick={() => setForwarding(null)}><X size={20} aria-hidden="true" /></button>
+            <div><span className={styles.groupModalIcon}><Forward size={20} aria-hidden="true" /></span><span><h2 id="forward-dialog-title">{uiText(lang, "chat.forwardMessage")}</h2><p>{uiText(lang, "chat.forwardMessageDescription")}</p></span></div>
+            <button type="button" aria-label={uiText(lang, "common.close")} onClick={() => setForwarding(null)}><X size={20} aria-hidden="true" /></button>
           </header>
           <div className={styles.forwardBody}>
             {/* The original is what gets sent and re-translated for the new
                 audience, so previewing this reader's translation would show
                 text nobody there will receive. */}
             <blockquote className={styles.forwardPreview}>{forwarding.originalText}</blockquote>
-            <div className={styles.memberResults} role="group" aria-label="Danh sách hội thoại">
+            <div className={styles.memberResults} role="group" aria-label={uiText(lang, "chat.conversationList")}>
               {conversationItems.filter((item) => item.id !== activeId).map((item) => (
                 <button key={item.id} type="button" className={styles.forwardTarget} onClick={() => forwardTo(item.id)}>
                   <span className={styles.memberAvatar}>{item.initials}</span>
-                  <span><strong>{item.name}</strong><small>{item.subtitle}</small></span>
+                  <span><strong>{conversationName(item, lang)}</strong><small>{conversationSubtitle(item, myId, lang)}</small></span>
                 </button>
               ))}
-              {conversationItems.filter((item) => item.id !== activeId).length === 0 && <p>Chưa có hội thoại nào khác để chuyển tiếp.</p>}
+              {conversationItems.filter((item) => item.id !== activeId).length === 0 && <p>{uiText(lang, "chat.noOtherConversations")}</p>}
             </div>
           </div>
         </section>
       </div>}
       {showComposer && <div className={styles.modalBackdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) closeComposer(); }}>
         <section className={styles.groupModal} role="dialog" aria-modal="true" aria-labelledby="composer-dialog-title">
-          <header><div><span className={styles.groupModalIcon}><UserRoundPlus size={20} aria-hidden="true" /></span><span><h2 id="composer-dialog-title">Cuộc trò chuyện mới</h2><p>Tìm người bằng tên, tên đăng nhập hoặc email.</p></span></div><button type="button" aria-label="Đóng" onClick={closeComposer}><X size={20} aria-hidden="true" /></button></header>
-          <div className={styles.composerTabs} role="tablist" aria-label="Kiểu cuộc trò chuyện">
-            <button type="button" role="tab" aria-selected={composerMode === "direct"} className={composerMode === "direct" ? styles.composerTabActive : undefined} onClick={() => chooseComposerMode("direct")}>Trò chuyện riêng</button>
-            <button type="button" role="tab" aria-selected={composerMode === "group"} className={composerMode === "group" ? styles.composerTabActive : undefined} onClick={() => chooseComposerMode("group")}>Nhóm</button>
+          <header><div><span className={styles.groupModalIcon}><UserRoundPlus size={20} aria-hidden="true" /></span><span><h2 id="composer-dialog-title">{uiText(lang, "chat.newConversation")}</h2><p>{uiText(lang, "chat.newConversationDescription")}</p></span></div><button type="button" aria-label={uiText(lang, "common.close")} onClick={closeComposer}><X size={20} aria-hidden="true" /></button></header>
+          <div className={styles.composerTabs} role="tablist" aria-label={uiText(lang, "chat.conversationType")}>
+            <button type="button" role="tab" aria-selected={composerMode === "direct"} className={composerMode === "direct" ? styles.composerTabActive : undefined} onClick={() => chooseComposerMode("direct")}>{uiText(lang, "chat.directConversation")}</button>
+            <button type="button" role="tab" aria-selected={composerMode === "group"} className={composerMode === "group" ? styles.composerTabActive : undefined} onClick={() => chooseComposerMode("group")}>{uiText(lang, "chat.group")}</button>
           </div>
           <form onSubmit={(event) => { event.preventDefault(); startConversation(); }}>
-            {composerMode === "group" && <><label htmlFor="group-name">Tên nhóm</label><input id="group-name" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Ví dụ: Dự án tháng 8" /></>}
-            <label htmlFor="composer-user-search">{composerMode === "direct" ? "Nhắn cho ai" : "Thêm thành viên"}</label><div className={styles.groupUserSearch}><span aria-hidden="true">⌕</span><input id="composer-user-search" value={userQuery} onChange={(event) => setUserQuery(event.target.value)} placeholder="Tên, tên đăng nhập hoặc email" autoFocus autoComplete="off" /></div>
-            {selectedMembers.length > 0 && <ul className={styles.composerChosen} aria-label="Đã chọn">{selectedMembers.map((member) => <li key={member.id}><span>{memberLabel(member).name}</span><button type="button" aria-label={`Bỏ chọn ${memberLabel(member).name}`} onClick={() => toggleMember(member)}><X size={12} aria-hidden="true" /></button></li>)}</ul>}
-            <div className={styles.memberResults} role="group" aria-label="Kết quả tìm kiếm">{foundUsers.map((member) => { const label = memberLabel(member); return <label key={member.id} className={styles.memberOption}><input type={composerMode === "direct" ? "radio" : "checkbox"} name="composer-member" checked={selectedMembers.some((chosen) => chosen.id === member.id)} onChange={() => toggleMember(member)} /><span className={styles.memberAvatar}>{label.initials}</span><span><strong>{label.name}</strong><small>{label.subtitle}</small></span></label>; })}{!foundUsers.length && <p>{searchNeedle.length < MIN_USER_QUERY_LENGTH ? "Nhập ít nhất 2 ký tự để tìm người." : searchingUsers ? "Đang tìm…" : "Không tìm thấy ai khớp."}</p>}</div>
-            {composerError && <p className={styles.formError} role="alert">{composerError}</p>}
-            <footer><span>{selectedMembers.length} người được chọn</span><button type="button" onClick={closeComposer}>Hủy</button><button type="submit" disabled={!selectedMembers.length || (composerMode === "group" && !groupName.trim())}>{composerMode === "direct" ? "Bắt đầu trò chuyện" : "Tạo nhóm"}</button></footer>
+            {composerMode === "group" && <><label htmlFor="group-name">{uiText(lang, "chat.groupName")}</label><input id="group-name" value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder={uiText(lang, "chat.groupNamePlaceholder")} /></>}
+            <label htmlFor="composer-user-search">{composerMode === "direct" ? uiText(lang, "chat.messageRecipient") : uiText(lang, "chat.addMembers")}</label><div className={styles.groupUserSearch}><span aria-hidden="true">⌕</span><input id="composer-user-search" value={userQuery} onChange={(event) => setUserQuery(event.target.value)} placeholder={uiText(lang, "chat.memberSearchPlaceholder")} autoFocus autoComplete="off" /></div>
+            {selectedMembers.length > 0 && <ul className={styles.composerChosen} aria-label={uiText(lang, "chat.selected")}>{selectedMembers.map((member) => <li key={member.id}><span>{memberLabel(member).name}</span><button type="button" aria-label={formatUiText(lang, "chat.removeSelectedMember", { name: memberLabel(member).name })} onClick={() => toggleMember(member)}><X size={12} aria-hidden="true" /></button></li>)}</ul>}
+            <div className={styles.memberResults} role="group" aria-label={uiText(lang, "chat.searchResultsGroup")}>{foundUsers.map((member) => { const label = memberLabel(member); return <label key={member.id} className={styles.memberOption}><input type={composerMode === "direct" ? "radio" : "checkbox"} name="composer-member" checked={selectedMembers.some((chosen) => chosen.id === member.id)} onChange={() => toggleMember(member)} /><span className={styles.memberAvatar}>{label.initials}</span><span><strong>{label.name}</strong><small>{label.subtitle}</small></span></label>; })}{!foundUsers.length && <p>{searchNeedle.length < MIN_USER_QUERY_LENGTH ? formatUiText(lang, "chat.enterAtLeastCharacters", { count: MIN_USER_QUERY_LENGTH }) : searchingUsers ? uiText(lang, "chat.searching") : uiText(lang, "chat.noSearchResults")}</p>}</div>
+            {composerError && <p className={styles.formError} role="alert">{uiText(lang, composerError)}</p>}
+            <footer><span>{formatUiText(lang, "chat.peopleSelected", { count: selectedMembers.length })}</span><button type="button" onClick={closeComposer}>{uiText(lang, "common.cancel")}</button><button type="submit" disabled={!selectedMembers.length || (composerMode === "group" && !groupName.trim())}>{composerMode === "direct" ? uiText(lang, "chat.startConversation") : uiText(lang, "chat.createGroup")}</button></footer>
           </form>
         </section>
       </div>}

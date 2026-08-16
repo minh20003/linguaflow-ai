@@ -6,11 +6,8 @@
  * chỉ xuất hiện khi có gì đó sai. Một câu báo lỗi người đọc không hiểu còn tệ
  * hơn không báo, nên nó phải theo ngôn ngữ đang chọn.
  *
- * Chỉ `en` là bắt buộc: `formMessage` lùi về đó cho **từng câu** còn thiếu,
- * đúng quy tắc ở docs/CONTRACT.md §1.2 — thiếu một câu tiếng Thái thì chỉ câu
- * đó ra tiếng Anh, phần còn lại vẫn là tiếng Thái. Năm mã chưa có bảng
- * (id, pt, ru, ar, hi) vì thế vẫn chạy được; dịch nốt là việc của vòng i18n
- * toàn giao diện.
+ * Mọi mã backend hỗ trợ đều có đủ thông báo. Một người đã chọn ngôn ngữ giao
+ * diện không nên nhận lỗi biểu mẫu bằng tiếng Anh như đường đi bình thường.
  *
  * CHƯA QUA SOÁT BẢN NGỮ, cùng cảnh báo như `i18n.ts`.
  */
@@ -30,11 +27,13 @@ export type FormMessageKey =
   | "confirmRequired"
   | "confirmMismatch"
   | "agreeRequired"
-  | "registerFailed";
+  | "registerFailed"
+  | "loginFailed"
+  | "resetTokenRequired"
+  | "resetRequestFailed"
+  | "resetPasswordFailed";
 
-type FormMessageTable = Partial<Record<LanguageCode, Record<FormMessageKey, string>>> & {
-  en: Record<FormMessageKey, string>;
-};
+type FormMessageTable = Record<LanguageCode, Record<FormMessageKey, string>>;
 
 export const FORM_MESSAGES: FormMessageTable = {
   vi: {
@@ -51,6 +50,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "Hai lần nhập không khớp nhau.",
     agreeRequired: "Cần đồng ý điều khoản để tạo tài khoản.",
     registerFailed: "Không tạo được tài khoản.",
+    loginFailed: "Chưa thể đăng nhập. Vui lòng thử lại.",
+    resetTokenRequired: "Nhập mã đặt lại bạn nhận được.",
+    resetRequestFailed: "Không thể gửi yêu cầu đặt lại mật khẩu.",
+    resetPasswordFailed: "Không thể đặt lại mật khẩu.",
   },
   en: {
     fullNameRequired: "Enter your full name.",
@@ -66,6 +69,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "The two entries do not match.",
     agreeRequired: "Accept the terms to create an account.",
     registerFailed: "The account could not be created.",
+    loginFailed: "Could not sign in. Please try again.",
+    resetTokenRequired: "Enter the reset code you received.",
+    resetRequestFailed: "Could not send the password reset request.",
+    resetPasswordFailed: "Could not reset the password.",
   },
   zh: {
     fullNameRequired: "请填写姓名。",
@@ -81,6 +88,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "两次输入不一致。",
     agreeRequired: "需同意条款才能创建账户。",
     registerFailed: "无法创建账户。",
+    loginFailed: "暂时无法登录，请重试。",
+    resetTokenRequired: "请输入您收到的重置代码。",
+    resetRequestFailed: "无法发送重置密码请求。",
+    resetPasswordFailed: "无法重置密码。",
   },
   ja: {
     fullNameRequired: "氏名を入力してください。",
@@ -96,6 +107,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "入力した二つが一致しません。",
     agreeRequired: "アカウント作成には規約への同意が必要です。",
     registerFailed: "アカウントを作成できませんでした。",
+    loginFailed: "ログインできませんでした。もう一度お試しください。",
+    resetTokenRequired: "受け取ったリセットコードを入力してください。",
+    resetRequestFailed: "パスワード再設定のリクエストを送信できませんでした。",
+    resetPasswordFailed: "パスワードを再設定できませんでした。",
   },
   ko: {
     fullNameRequired: "이름을 입력하세요.",
@@ -111,6 +126,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "두 번 입력한 값이 다릅니다.",
     agreeRequired: "계정을 만들려면 약관에 동의해야 합니다.",
     registerFailed: "계정을 만들지 못했습니다.",
+    loginFailed: "로그인할 수 없습니다. 다시 시도해 주세요.",
+    resetTokenRequired: "받은 재설정 코드를 입력해 주세요.",
+    resetRequestFailed: "비밀번호 재설정 요청을 보낼 수 없습니다.",
+    resetPasswordFailed: "비밀번호를 재설정할 수 없습니다.",
   },
   fr: {
     fullNameRequired: "Saisissez votre nom complet.",
@@ -126,6 +145,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "Les deux saisies ne correspondent pas.",
     agreeRequired: "Acceptez les conditions pour créer un compte.",
     registerFailed: "Impossible de créer le compte.",
+    loginFailed: "Impossible de vous connecter. Veuillez réessayer.",
+    resetTokenRequired: "Saisissez le code de réinitialisation reçu.",
+    resetRequestFailed: "Impossible d’envoyer la demande de réinitialisation du mot de passe.",
+    resetPasswordFailed: "Impossible de réinitialiser le mot de passe.",
   },
   de: {
     fullNameRequired: "Geben Sie Ihren vollständigen Namen ein.",
@@ -141,6 +164,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "Die beiden Eingaben stimmen nicht überein.",
     agreeRequired: "Stimmen Sie den Bedingungen zu, um ein Konto zu erstellen.",
     registerFailed: "Das Konto konnte nicht erstellt werden.",
+    loginFailed: "Anmeldung nicht möglich. Bitte versuchen Sie es erneut.",
+    resetTokenRequired: "Geben Sie den erhaltenen Zurücksetzungscode ein.",
+    resetRequestFailed: "Die Anfrage zum Zurücksetzen des Passworts konnte nicht gesendet werden.",
+    resetPasswordFailed: "Das Passwort konnte nicht zurückgesetzt werden.",
   },
   es: {
     fullNameRequired: "Escribe tu nombre completo.",
@@ -156,6 +183,10 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "Las dos entradas no coinciden.",
     agreeRequired: "Acepta los términos para crear una cuenta.",
     registerFailed: "No se pudo crear la cuenta.",
+    loginFailed: "No se pudo iniciar sesión. Inténtalo de nuevo.",
+    resetTokenRequired: "Introduce el código de restablecimiento que recibiste.",
+    resetRequestFailed: "No se pudo enviar la solicitud de restablecimiento de contraseña.",
+    resetPasswordFailed: "No se pudo restablecer la contraseña.",
   },
   th: {
     fullNameRequired: "กรุณากรอกชื่อ-นามสกุล",
@@ -171,6 +202,105 @@ export const FORM_MESSAGES: FormMessageTable = {
     confirmMismatch: "ทั้งสองครั้งไม่ตรงกัน",
     agreeRequired: "ต้องยอมรับข้อกำหนดจึงจะสร้างบัญชีได้",
     registerFailed: "สร้างบัญชีไม่สำเร็จ",
+    loginFailed: "ไม่สามารถเข้าสู่ระบบได้ โปรดลองอีกครั้ง",
+    resetTokenRequired: "กรอกรหัสรีเซ็ตที่คุณได้รับ",
+    resetRequestFailed: "ไม่สามารถส่งคำขอรีเซ็ตรหัสผ่านได้",
+    resetPasswordFailed: "ไม่สามารถรีเซ็ตรหัสผ่านได้",
+  },
+  id: {
+    fullNameRequired: "Masukkan nama lengkap Anda.",
+    usernameRequired: "Masukkan nama pengguna.",
+    usernameTooShort: "Nama pengguna harus memiliki setidaknya {n} karakter.",
+    usernameCharset: "Nama pengguna hanya boleh berisi huruf, angka, tanda hubung, dan garis bawah — tanpa spasi.",
+    example: "Contoh: {s}",
+    emailRequired: "Masukkan email Anda.",
+    emailInvalid: "Email ini tidak memiliki tanda @ atau domain.",
+    passwordRequired: "Masukkan kata sandi.",
+    passwordTooShort: "Kata sandi harus memiliki setidaknya {n} karakter.",
+    confirmRequired: "Ulangi kata sandi Anda.",
+    confirmMismatch: "Kedua entri tidak cocok.",
+    agreeRequired: "Setujui ketentuan untuk membuat akun.",
+    registerFailed: "Akun tidak dapat dibuat.",
+    loginFailed: "Tidak dapat masuk. Silakan coba lagi.",
+    resetTokenRequired: "Masukkan kode pengaturan ulang yang Anda terima.",
+    resetRequestFailed: "Tidak dapat mengirim permintaan pengaturan ulang kata sandi.",
+    resetPasswordFailed: "Tidak dapat mengatur ulang kata sandi.",
+  },
+  pt: {
+    fullNameRequired: "Introduza o seu nome completo.",
+    usernameRequired: "Introduza um nome de utilizador.",
+    usernameTooShort: "Um nome de utilizador precisa de pelo menos {n} caracteres.",
+    usernameCharset: "Um nome de utilizador só pode conter letras, números, hífenes e sublinhados — sem espaços.",
+    example: "Por exemplo: {s}",
+    emailRequired: "Introduza o seu e-mail.",
+    emailInvalid: "Falta o @ ou o domínio neste e-mail.",
+    passwordRequired: "Introduza uma palavra-passe.",
+    passwordTooShort: "Uma palavra-passe precisa de pelo menos {n} caracteres.",
+    confirmRequired: "Repita a sua palavra-passe.",
+    confirmMismatch: "As duas entradas não coincidem.",
+    agreeRequired: "Aceite os termos para criar uma conta.",
+    registerFailed: "Não foi possível criar a conta.",
+    loginFailed: "Não foi possível iniciar sessão. Tente novamente.",
+    resetTokenRequired: "Introduza o código de reposição que recebeu.",
+    resetRequestFailed: "Não foi possível enviar o pedido de reposição da palavra-passe.",
+    resetPasswordFailed: "Não foi possível repor a palavra-passe.",
+  },
+  ru: {
+    fullNameRequired: "Введите полное имя.",
+    usernameRequired: "Введите имя пользователя.",
+    usernameTooShort: "Имя пользователя должно содержать не менее {n} символов.",
+    usernameCharset: "Имя пользователя может содержать только буквы, цифры, дефисы и подчёркивания — без пробелов.",
+    example: "Например: {s}",
+    emailRequired: "Введите адрес электронной почты.",
+    emailInvalid: "В этом адресе нет символа @ или домена.",
+    passwordRequired: "Введите пароль.",
+    passwordTooShort: "Пароль должен содержать не менее {n} символов.",
+    confirmRequired: "Повторите пароль.",
+    confirmMismatch: "Введённые значения не совпадают.",
+    agreeRequired: "Примите условия, чтобы создать аккаунт.",
+    registerFailed: "Не удалось создать аккаунт.",
+    loginFailed: "Не удалось войти. Попробуйте ещё раз.",
+    resetTokenRequired: "Введите полученный код сброса.",
+    resetRequestFailed: "Не удалось отправить запрос на сброс пароля.",
+    resetPasswordFailed: "Не удалось сбросить пароль.",
+  },
+  ar: {
+    fullNameRequired: "أدخل اسمك الكامل.",
+    usernameRequired: "أدخل اسم المستخدم.",
+    usernameTooShort: "يجب أن يتكون اسم المستخدم من {n} أحرف على الأقل.",
+    usernameCharset: "يمكن أن يحتوي اسم المستخدم على أحرف وأرقام وشرطات وشرطات سفلية فقط — دون مسافات.",
+    example: "مثال: {s}",
+    emailRequired: "أدخل بريدك الإلكتروني.",
+    emailInvalid: "ينقص هذا البريد الإلكتروني الرمز @ أو اسم النطاق.",
+    passwordRequired: "أدخل كلمة المرور.",
+    passwordTooShort: "يجب أن تتكون كلمة المرور من {n} أحرف على الأقل.",
+    confirmRequired: "أعد إدخال كلمة المرور.",
+    confirmMismatch: "الإدخالان غير متطابقين.",
+    agreeRequired: "وافق على الشروط لإنشاء حساب.",
+    registerFailed: "تعذر إنشاء الحساب.",
+    loginFailed: "تعذر تسجيل الدخول. يرجى المحاولة مرة أخرى.",
+    resetTokenRequired: "أدخل رمز إعادة التعيين الذي تلقيته.",
+    resetRequestFailed: "تعذر إرسال طلب إعادة تعيين كلمة المرور.",
+    resetPasswordFailed: "تعذر إعادة تعيين كلمة المرور.",
+  },
+  hi: {
+    fullNameRequired: "अपना पूरा नाम दर्ज करें।",
+    usernameRequired: "उपयोगकर्ता नाम दर्ज करें।",
+    usernameTooShort: "उपयोगकर्ता नाम में कम से कम {n} वर्ण होने चाहिए।",
+    usernameCharset: "उपयोगकर्ता नाम में केवल अक्षर, अंक, हाइफ़न और अंडरस्कोर हो सकते हैं — रिक्त स्थान नहीं।",
+    example: "उदाहरण: {s}",
+    emailRequired: "अपना ईमेल दर्ज करें।",
+    emailInvalid: "इस ईमेल में @ चिह्न या डोमेन नहीं है।",
+    passwordRequired: "पासवर्ड दर्ज करें।",
+    passwordTooShort: "पासवर्ड में कम से कम {n} वर्ण होने चाहिए।",
+    confirmRequired: "अपना पासवर्ड फिर से दर्ज करें।",
+    confirmMismatch: "दोनों प्रविष्टियाँ मेल नहीं खातीं।",
+    agreeRequired: "खाता बनाने के लिए शर्तों को स्वीकार करें।",
+    registerFailed: "खाता नहीं बनाया जा सका।",
+    loginFailed: "साइन इन नहीं हो सका। कृपया फिर से प्रयास करें।",
+    resetTokenRequired: "आपको मिला रीसेट कोड दर्ज करें।",
+    resetRequestFailed: "पासवर्ड रीसेट का अनुरोध भेजा नहीं जा सका।",
+    resetPasswordFailed: "पासवर्ड रीसेट नहीं किया जा सका।",
   },
 };
 
@@ -180,7 +310,7 @@ export function formMessage(
   key: FormMessageKey,
   values?: { n?: number; s?: string },
 ): string {
-  const template = FORM_MESSAGES[lang]?.[key] ?? FORM_MESSAGES.en[key];
+  const template = FORM_MESSAGES[lang][key];
   return template
     .replace("{n}", String(values?.n ?? ""))
     .replace("{s}", values?.s ?? "");

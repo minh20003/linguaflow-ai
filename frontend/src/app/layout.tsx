@@ -20,7 +20,7 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "LinguaFlow",
   description:
-    "Nhắn tin bằng tiếng của bạn, người kia đọc bằng tiếng của họ. Dịch tự động 10 ngôn ngữ.",
+    "Nhắn tin bằng tiếng của bạn, người kia đọc bằng tiếng của họ. Dịch tự động 14 ngôn ngữ.",
 };
 
 export default function RootLayout({
@@ -35,7 +35,7 @@ export default function RootLayout({
     // what stops a light flash before the saved theme applies — so the warning
     // it would otherwise raise is suppressed here rather than worked around.
     <html
-      lang="vi"
+      lang="en"
       className={`${plusJakarta.variable} ${plexMono.variable}`}
       suppressHydrationWarning
     >
@@ -45,6 +45,15 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
+                  var interfaceLanguage = localStorage.getItem('interface_language');
+                  var supportedLanguages = [
+                    'en', 'vi', 'ja', 'zh', 'ko', 'fr', 'de', 'es', 'th',
+                    'id', 'pt', 'ru', 'ar', 'hi'
+                  ];
+                  if (supportedLanguages.indexOf(interfaceLanguage) !== -1) {
+                    document.documentElement.lang = interfaceLanguage;
+                  }
+
                   // Only an explicit choice is written. "system" deliberately
                   // leaves the attribute off so the prefers-color-scheme media
                   // query decides, which is exactly what ThemeContext does —

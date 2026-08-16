@@ -3,9 +3,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { restoreSession } from "@/shared/lib/auth-session";
+import { useUiText } from "@/shared/lib/use-ui-text";
 
 export default function RequireAuth({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const t = useUiText();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -19,7 +21,7 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
   }, [router]);
 
   if (!ready) {
-    return <main aria-busy="true" aria-label="Đang kiểm tra phiên đăng nhập" style={{ minHeight: "100vh", background: "#f4f8fc" }} />;
+    return <main aria-busy="true" aria-label={t("auth.loading")} style={{ minHeight: "100vh", background: "#f4f8fc" }} />;
   }
   return children;
 }

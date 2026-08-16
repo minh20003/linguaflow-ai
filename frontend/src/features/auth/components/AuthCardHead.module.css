@@ -17,8 +17,32 @@
   letter-spacing: -0.01em;
 }
 
+.actions {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+}
+
+.languagePicker {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 250px;
+}
+
 @media (max-width: 559px) {
   .head {
     padding-inline: 0;
+    flex-wrap: wrap;
+  }
+
+  .actions {
+    flex-basis: 100%;
+  }
+
+  .languagePicker {
+    max-width: none;
   }
 }
