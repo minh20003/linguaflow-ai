@@ -1,7 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useState } from "react";
-import { DEFAULT_LANGUAGE, type LanguageCode } from "@/shared/lib/constants";
+import React, { createContext, useCallback, useContext, useSyncExternalStore } from "react";
+import { type LanguageCode } from "@/shared/lib/constants";
+import {
+  readInterfaceLanguage,
+  setInterfaceLanguage,
+  subscribeToInterfaceLanguage,
+} from "@/shared/lib/ui-language";
 
 interface LanguageContextValue {
   lang: LanguageCode;
@@ -11,12 +16,23 @@ interface LanguageContextValue {
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
 /**
- * Ngôn ngữ đích đang chọn ở dải bên trái. Dải chọn và các form là anh em trong
- * cây, nên state phải nằm ở layout — đổi ngôn ngữ đổi ngay mọi nhãn phụ, không
- * reload (docs/design.md §7.1).
+ * Ngôn ngữ đang chọn ở màn hình chưa đăng nhập.
+ *
+ * Không còn giữ trong `useState`: lựa chọn ở đây **là** ngôn ngữ giao diện
+ * trước khi có tài khoản, nên nó đọc và ghi thẳng vào store dùng chung
+ * (`ui-language.ts`). Nhờ vậy nó sống qua lần tải trang sau, và khi đăng nhập
+ * xong thì `saveSession` ghi đè bằng giá trị của tài khoản — đúng ba bước ở
+ * docs/CONTRACT.md §1.3.
+ *
+ * Provider vẫn giữ nguyên để không phải sửa mọi nơi đang gọi `useLanguage`.
  */
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [lang, setLang] = useState<LanguageCode>(DEFAULT_LANGUAGE);
+  const lang = useSyncExternalStore(
+    subscribeToInterfaceLanguage,
+    readInterfaceLanguage,
+    () => "en" as const,
+  );
+  const setLang = useCallback((code: LanguageCode) => setInterfaceLanguage(code), []);
   return (
     <LanguageContext.Provider value={{ lang, setLang }}>
       {children}

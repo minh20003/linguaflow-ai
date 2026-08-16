@@ -7,13 +7,18 @@ import Input from "@/shared/ui/Input";
 import { listLanguages, register } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
 import { mainLabel } from "@/shared/lib/i18n";
+import {
+  MIN_PASSWORD_LENGTH,
+  MIN_USERNAME_LENGTH,
+  formMessage,
+  isValidUsername,
+  suggestUsername,
+} from "@/shared/lib/form-messages";
 import LanguagePicker from "@/shared/ui/LanguagePicker";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;
-const MIN_PASSWORD = 8;
-const MIN_USERNAME = 3;
 
 type Strength = "weak" | "medium" | "strong";
 
@@ -26,7 +31,7 @@ const STRENGTH_TEXT: Record<Strength, string> = {
 function getPasswordStrength(pw: string): Strength | null {
   if (!pw) return null;
   let score = 0;
-  if (pw.length >= MIN_PASSWORD) score++;
+  if (pw.length >= MIN_PASSWORD_LENGTH) score++;
   if (pw.length >= 12) score++;
   if (/[A-Z]/.test(pw)) score++;
   if (/[0-9]/.test(pw)) score++;
@@ -53,6 +58,7 @@ export default function RegisterForm() {
     return () => { cancelled = true; };
   }, []);
 
+  const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -67,33 +73,44 @@ export default function RegisterForm() {
   function validate(): boolean {
     const e: Record<string, string> = {};
 
+    const normalizedFullName = fullName.trim();
     const normalizedUsername = username.trim();
 
+    if (!normalizedFullName) e.fullName = formMessage(lang, "fullNameRequired");
+
     if (!normalizedUsername) {
-      e.username = "Chưa nhập tên đăng nhập.";
-    } else if (normalizedUsername.length < MIN_USERNAME) {
-      e.username = `Còn thiếu ${MIN_USERNAME - normalizedUsername.length} ký tự.`;
+      e.username = formMessage(lang, "usernameRequired");
+    } else if (normalizedUsername.length < MIN_USERNAME_LENGTH) {
+      e.username = formMessage(lang, "usernameTooShort", { n: MIN_USERNAME_LENGTH });
+    } else if (!isValidUsername(normalizedUsername)) {
+      // The rule first, then something they can actually type. A name with a
+      // space is the ordinary case here, and the server's own message for it
+      // arrives in English inside a 422 body.
+      const suggestion = suggestUsername(normalizedUsername) || suggestUsername(normalizedFullName);
+      e.username = suggestion
+        ? `${formMessage(lang, "usernameCharset")} ${formMessage(lang, "example", { s: suggestion })}`
+        : formMessage(lang, "usernameCharset");
     }
 
     if (!email) {
-      e.email = "Chưa nhập email.";
+      e.email = formMessage(lang, "emailRequired");
     } else if (!EMAIL_RE.test(email)) {
-      e.email = "Email này thiếu dấu @ hoặc phần tên miền.";
+      e.email = formMessage(lang, "emailInvalid");
     }
 
     if (!password) {
-      e.password = "Chưa nhập mật khẩu.";
-    } else if (password.length < MIN_PASSWORD) {
-      e.password = `Còn thiếu ${MIN_PASSWORD - password.length} ký tự.`;
+      e.password = formMessage(lang, "passwordRequired");
+    } else if (password.length < MIN_PASSWORD_LENGTH) {
+      e.password = formMessage(lang, "passwordTooShort", { n: MIN_PASSWORD_LENGTH });
     }
 
     if (!confirmPassword) {
-      e.confirmPassword = "Chưa nhập lại mật khẩu.";
+      e.confirmPassword = formMessage(lang, "confirmRequired");
     } else if (password !== confirmPassword) {
-      e.confirmPassword = "Hai lần nhập không khớp nhau.";
+      e.confirmPassword = formMessage(lang, "confirmMismatch");
     }
 
-    if (!agree) e.agree = "Cần đồng ý điều khoản để tạo tài khoản.";
+    if (!agree) e.agree = formMessage(lang, "agreeRequired");
 
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -106,10 +123,11 @@ export default function RegisterForm() {
 
     setLoading(true);
     try {
-      const registeredUsername = username.trim();
       const result = await register({
-        username: registeredUsername,
-        display_name: registeredUsername,
+        username: username.trim(),
+        // The name people are called by, kept apart from the handle they sign
+        // in with — one has spaces and diacritics, the other cannot.
+        display_name: fullName.trim(),
         email,
         password,
         preferred_language: lang,
@@ -117,7 +135,7 @@ export default function RegisterForm() {
       saveSession(result, true);
       window.location.href = "/chat";
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Không tạo được tài khoản.");
+      setError(err instanceof Error ? err.message : formMessage(lang, "registerFailed"));
     } finally {
       setLoading(false);
     }
@@ -146,13 +164,30 @@ export default function RegisterForm() {
 
       <div className={styles.fields}>
         <Input
+          id="register-full-name"
+          autoComplete="name"
+          placeholder="Nguyễn Văn An"
+          label={mainLabel("fullName", lang)}
+          value={fullName}
+          required
+          maxLength={100}
+          onChange={(e) => {
+            setFullName(e.target.value);
+            clearError("fullName");
+          }}
+          onBlur={() => setFullName((value) => value.trim())}
+          error={errors.fullName}
+        />
+
+        <Input
           id="register-username"
           autoComplete="username"
           placeholder="thuan"
-          label={mainLabel("username")}
+          label={mainLabel("username", lang)}
           value={username}
           required
-          minLength={MIN_USERNAME}
+          minLength={MIN_USERNAME_LENGTH}
+          maxLength={50}
           onChange={(e) => {
             setUsername(e.target.value);
             clearError("username");
@@ -166,7 +201,7 @@ export default function RegisterForm() {
           type="email"
           autoComplete="email"
           placeholder="ban@vidu.com"
-          label={mainLabel("email")}
+          label={mainLabel("email", lang)}
           value={email}
           onChange={(e) => {
             setEmail(e.target.value);
@@ -180,9 +215,9 @@ export default function RegisterForm() {
           type="password"
           autoComplete="new-password"
           placeholder="••••••••••"
-          label={mainLabel("password")}
-          showText={mainLabel("show")}
-          hideText={mainLabel("hide")}
+          label={mainLabel("password", lang)}
+          showText={mainLabel("show", lang)}
+          hideText={mainLabel("hide", lang)}
           value={password}
           onChange={(e) => {
             setPassword(e.target.value);
@@ -207,9 +242,9 @@ export default function RegisterForm() {
           type="password"
           autoComplete="new-password"
           placeholder="••••••••••"
-          label={mainLabel("passwordConfirm")}
-          showText={mainLabel("show")}
-          hideText={mainLabel("hide")}
+          label={mainLabel("passwordConfirm", lang)}
+          showText={mainLabel("show", lang)}
+          hideText={mainLabel("hide", lang)}
           value={confirmPassword}
           onChange={(e) => {
             setConfirmPassword(e.target.value);
@@ -243,7 +278,7 @@ export default function RegisterForm() {
             aria-describedby={errors.agree ? "register-agree-error" : undefined}
           />
           <span>
-            Tôi đồng ý với <Link href="/terms" target="_blank">{mainLabel("terms")}</Link> và{" "}
+            Tôi đồng ý với <Link href="/terms" target="_blank">{mainLabel("terms", lang)}</Link> và{" "}
             <Link href="/privacy" target="_blank">Chính sách riêng tư</Link>
           </span>
         </label>

@@ -8,6 +8,8 @@ export interface AuthUser {
   email: string;
   display_name: string;
   preferred_language: string;
+  /** The language the interface is drawn in, separate from the one above. */
+  interface_language: string;
 }
 
 export interface LoginResponse {
@@ -35,7 +37,35 @@ export interface AttachmentUpload {
 }
 
 async function responseBody(response: Response) {
-  return response.json().catch(() => null) as Promise<Record<string, string> | null>;
+  return response.json().catch(() => null) as Promise<Record<string, unknown> | null>;
+}
+
+/**
+ * The readable half of an error response, whatever shape FastAPI sent.
+ *
+ * FastAPI answers a rejected body with `detail` as an **array of objects**, not
+ * a string. Passing that straight to `new Error()` stringifies it to
+ * "[object Object]", which is what every caller here used to show: the account
+ * could not be created and the reason was unreadable. A 4xx raised by our own
+ * code sends `detail` as a plain string, so both shapes have to be handled.
+ *
+ * The server writes these in English. They are shown as a last resort, when the
+ * client had no rule of its own to catch the problem first — a localised
+ * message from the form beats anything recovered here.
+ */
+function errorDetail(payload: Record<string, unknown> | null, fallback: string): string {
+  const detail = payload?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (typeof item === "object" && item !== null ? String((item as { msg?: unknown }).msg ?? "") : ""))
+      // Pydantic prefixes its own text with "Value error, "; the reader does
+      // not need to know which validator produced the complaint.
+      .map((message) => message.replace(/^Value error,\s*/u, ""))
+      .filter(Boolean);
+    if (messages.length) return messages.join(" ");
+  }
+  return fallback;
 }
 
 /**
@@ -51,7 +81,7 @@ export async function login(email: string, password: string, remember = false): 
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(payload?.detail || "Email hoặc mật khẩu không đúng.");
+    throw new Error(errorDetail(payload, "Email hoặc mật khẩu không đúng."));
   }
   return payload as unknown as LoginResponse;
 }
@@ -61,7 +91,12 @@ export async function login(email: string, password: string, remember = false): 
  */
 export async function register(data: RegisterData): Promise<LoginResponse> {
   const username = data.username.trim();
-  const registrationData = { ...data, username, display_name: username };
+  // The display name is the caller's to decide. This used to overwrite it with
+  // the username, from when the form had no separate field for it — which
+  // silently discarded whatever the new "Họ và tên" box collected. The username
+  // remains the fallback for callers that send no name at all.
+  const displayName = data.display_name?.trim() || username;
+  const registrationData = { ...data, username, display_name: displayName };
 
   const response = await fetch(`${API_BASE}/api/v1/auth/register`, {
     method: "POST",
@@ -70,7 +105,7 @@ export async function register(data: RegisterData): Promise<LoginResponse> {
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(payload?.detail || "Không thể tạo tài khoản.");
+    throw new Error(errorDetail(payload, "Không thể tạo tài khoản."));
   }
   return payload as unknown as LoginResponse;
 }
@@ -83,7 +118,7 @@ export async function refreshSession(refreshToken: string): Promise<LoginRespons
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(payload?.detail || "Phiên đăng nhập đã hết hạn.");
+    throw new Error(errorDetail(payload, "Phiên đăng nhập đã hết hạn."));
   }
   return payload as unknown as LoginResponse;
 }
@@ -103,10 +138,12 @@ export async function requestPasswordReset(email: string): Promise<{ message: st
     body: JSON.stringify({ email }),
   });
   const payload = await responseBody(response);
-  if (!response.ok) throw new Error(payload?.detail || "Không thể gửi yêu cầu đặt lại mật khẩu.");
+  if (!response.ok) throw new Error(errorDetail(payload, "Không thể gửi yêu cầu đặt lại mật khẩu."));
   return {
-    message: payload?.message || "Đã tiếp nhận yêu cầu.",
-    reset_token: payload?.reset_token || undefined,
+    // Narrowed rather than cast: `responseBody` now says `unknown` per field,
+    // which is the truth — the shape depends on the environment (§3.9).
+    message: typeof payload?.message === "string" ? payload.message : "Đã tiếp nhận yêu cầu.",
+    reset_token: typeof payload?.reset_token === "string" ? payload.reset_token : undefined,
   };
 }
 
@@ -118,7 +155,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
   });
   if (!response.ok) {
     const payload = await responseBody(response);
-    throw new Error(payload?.detail || "Liên kết đặt lại mật khẩu không hợp lệ.");
+    throw new Error(errorDetail(payload, "Liên kết đặt lại mật khẩu không hợp lệ."));
   }
 }
 
@@ -136,7 +173,7 @@ export async function uploadConversationAttachment(
   );
   const payload = await responseBody(response);
   if (!response.ok || !payload?.id) {
-    throw new Error(payload?.detail || "Không thể tải tệp lên.");
+    throw new Error(errorDetail(payload, "Không thể tải tệp lên."));
   }
   return payload as unknown as AttachmentUpload;
 }
@@ -155,8 +192,28 @@ export async function updateLanguage(code: string, accessToken: string): Promise
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.id) {
-    throw new Error(payload?.detail || "Không đổi được ngôn ngữ.");
+    throw new Error(errorDetail(payload, "Không đổi được ngôn ngữ."));
   }
+  return payload as unknown as AuthUser;
+}
+
+/**
+ * Change the language the interface is drawn in (docs/CONTRACT.md §1.2).
+ *
+ * Costs nothing and takes effect immediately, unlike `updateLanguage` above,
+ * which only decides how messages sent from now on are translated.
+ */
+export async function updateInterfaceLanguage(
+  interfaceLanguage: string,
+  token: string,
+): Promise<AuthUser> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/me/interface-language`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ interface_language: interfaceLanguage }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok) throw new Error(errorDetail(payload, "Không đổi được ngôn ngữ giao diện."));
   return payload as unknown as AuthUser;
 }
 

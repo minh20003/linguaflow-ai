@@ -1,8 +1,11 @@
 .switch {
   position: relative;
   display: inline-block;
-  width: 28px;
-  height: 15px;
+  /* The knob is positioned against the track, so the track has to own its own
+     box: sized from a border or padding elsewhere it would sit off centre. */
+  box-sizing: border-box;
+  width: 24px;
+  height: 14px;
   padding: 0;
   border: 0;
   border-radius: var(--r-full);
@@ -26,8 +29,8 @@
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 11px;
-  height: 11px;
+  width: 10px;
+  height: 10px;
   border-radius: var(--r-full);
   background: #fff9f2;
   /* The knob sits at 2.54:1 against the lighter green used in dark mode, so the
@@ -37,7 +40,7 @@
 }
 
 .switch.isOriginal .knob {
-  transform: translateX(13px);
+  transform: translateX(10px);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,4 +1,5 @@
 import { refreshSession, type LoginResponse } from "./api";
+import { setInterfaceLanguage } from "./ui-language";
 
 const ACCESS_KEY = "access_token";
 const REFRESH_KEY = "refresh_token";
@@ -16,6 +17,12 @@ export function saveSession(session: LoginResponse, remember: boolean) {
   storage.setItem(REFRESH_KEY, session.refresh_token);
   storage.setItem(USER_KEY, JSON.stringify(session.user));
   localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0");
+  // The account's own choice outranks whatever was picked before signing in,
+  // and writing it here means the next first paint is already correct rather
+  // than flashing English and then switching (docs/CONTRACT.md §1.3 step 3).
+  if (session.user.interface_language) {
+    setInterfaceLanguage(session.user.interface_language);
+  }
 }
 
 export function clearSession() {

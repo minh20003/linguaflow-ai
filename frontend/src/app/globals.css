@@ -76,6 +76,12 @@
   --danger-weak: #FBEAE7;
   --success-weak: #E8F3E9;
 
+  /* The translation feedback controls under a bubble. They share one colour on
+     purpose: which of them is set is said by a filled glyph, not by a colour
+     each, so the row under a message does not read as a traffic light. Purple
+     on the light ground, the warm off-white on the dark one. */
+  --feedback-ink: var(--primary);
+
   /* Chat bubbles. The sender is told apart by side first and colour second, so
      the thread stays readable without colour vision. Ratios measured against
      WCAG AA for body text (4.5:1). */
@@ -190,6 +196,8 @@
     --danger-weak: #4A2320;
     --success-weak: #24382A;
 
+    --feedback-ink: var(--ink);
+
     --bubble-mine: #A9524D;
     --bubble-mine-ink: #FFFFFF;
     --bubble-other: #6B4A79;       /* --ink -> 6.97:1 */
@@ -255,6 +263,8 @@
 
   --danger-weak: #4A2320;
   --success-weak: #24382A;
+
+  --feedback-ink: var(--ink);
 
   --bubble-mine: #A9524D;
   --bubble-mine-ink: #FFFFFF;
@@ -332,6 +342,12 @@
      reads as ordinary text; the message needs to carry its own colour. */
   --danger-weak: #FBEAE7;
   --success-weak: #E8F3E9;
+
+  /* The translation feedback controls under a bubble. They share one colour on
+     purpose: which of them is set is said by a filled glyph, not by a colour
+     each, so the row under a message does not read as a traffic light. Purple
+     on the light ground, the warm off-white on the dark one. */
+  --feedback-ink: var(--primary);
 
   /* Chat bubbles. The sender is told apart by side first and colour second, so
      the thread stays readable without colour vision. Ratios measured against

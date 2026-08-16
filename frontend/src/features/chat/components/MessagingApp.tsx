@@ -32,6 +32,7 @@ import {
   listConversations,
   markConversationRead,
   searchUsers,
+  submitTranslationEdit,
   submitTranslationFeedback,
   uploadAttachment,
   type Conversation as ApiConversation,
@@ -81,11 +82,17 @@ type ChatMessage = {
   translationId?: string;
   isFallback?: boolean;
   sourceLanguage?: string;
-  /** F-04: per-message override of the default view. */
-  showOriginal?: boolean;
+  /** Which language `translatedText` is in — mine when reading, the other
+   *  person's when this is my own message in a one-to-one chat (§3.10). */
+  translationLanguage?: string;
+  /** F-04: the reader flipped this bubble away from its default view. */
+  flipped?: boolean;
   /** F-05: this account's own verdict on the translation, if it has one. */
   myRating?: number | null;
+  /** Legacy private suggestion; still read from history, no longer written. */
   myCorrection?: string | null;
+  /** F-05 (§3.10): this account's own newest wording, nobody else's. */
+  myEdit?: { editId: string; editedText: string; editedAt: string } | null;
   /** Set once no translation can still be expected for this reader. */
   translationSettled?: boolean;
   time: string;
@@ -102,6 +109,7 @@ type ChatMessage = {
 /** Stands in until the conversation list has loaded, or when there are none. */
 const EMPTY_CONVERSATION: ConversationItem = {
   id: "",
+  type: "direct",
   name: "Chưa có hội thoại",
   initials: "—",
   subtitle: "Tạo một nhóm để bắt đầu trò chuyện",
@@ -109,9 +117,27 @@ const EMPTY_CONVERSATION: ConversationItem = {
   members: [],
 };
 
-/** What the bubble shows: the translation by default, the original on request. */
+/** What a withdrawn message reads as, everywhere it is still referred to. */
+const WITHDRAWN_TEXT = "Tin nhắn đã được thu hồi";
+
+/**
+ * Whether the bubble is currently showing the original rather than a translation.
+ *
+ * The two directions start from opposite defaults, which is the whole subtlety
+ * here: a message I received opens on the translation, because that is the
+ * version I can read, while a message I sent opens on my own words — nobody
+ * wants their own sentence replaced by a language they do not speak a second
+ * after pressing send. One flag with two defaults keeps the switch's own labels
+ * ("đang hiện bản gốc" / "đang hiện bản dịch") true on both sides.
+ */
+function showingOriginal(message: ChatMessage) {
+  const startsOnOriginal = message.author === "me";
+  return message.flipped ? !startsOnOriginal : startsOnOriginal;
+}
+
+/** What the bubble shows, given the direction and any flip. */
 function displayText(message: ChatMessage) {
-  if (message.showOriginal || !message.translatedText) return message.originalText;
+  if (!message.translatedText || showingOriginal(message)) return message.originalText;
   return message.translatedText;
 }
 
@@ -129,6 +155,9 @@ type ConversationItem = {
   lastActivityAt?: string | null;
   /** Which message the preview is showing, so its translation can replace it. */
   lastMessageId?: string;
+  /** Needed beyond display: the F-05 controls on my own bubbles exist only in
+   *  a one-to-one chat (docs/CONTRACT.md §3.10). */
+  type: "direct" | "group";
   members: ConversationMember[];
   unread?: number;
   mention?: boolean;
@@ -236,29 +265,76 @@ function toConversationItem(conversation: ApiConversation, myId: string): Conver
     subtitle: conversation.type === "group"
       ? `Nhóm · ${conversation.members.length} thành viên · ${languages.map(languageLabel).join(", ")}`
       : others.map((member) => languageLabel(member.preferred_language)).join(", "),
-    preview: conversation.last_message ?? "",
+    // A withdrawn newest message comes back with empty text (§3.6), which would
+    // leave the row with no second line at all. The server cannot supply the
+    // wording — it is interface copy and belongs to the reader's language — so
+    // the client says it. Text can never be empty otherwise: the send endpoint
+    // rejects a blank message, so "" plus a timestamp means withdrawn.
+    preview: conversation.last_message
+      || (conversation.last_message_at ? WITHDRAWN_TEXT : ""),
     lastActivityAt: conversation.last_message_at,
     unread: conversation.unread_count || undefined,
     // Anyone but me holding a socket makes the row read as active.
     online: others.some((member) => conversation.online_member_ids.includes(member.id)),
+    type: conversation.type,
     members: conversation.members,
   };
 }
 
-/** Turn a history row into a bubble, picking the translation this account reads. */
-function toChatMessage(row: HistoryMessage, myId: string, myLanguage: string): ChatMessage {
-  const mine = row.translations.find((translation) => translation.target_language === myLanguage);
+/**
+ * The language the other person reads, in a one-to-one chat.
+ *
+ * Undefined for a group, and that absence is load-bearing: it is what stops the
+ * sender's own bubbles from getting a toggle, a rating and an edit box in a
+ * conversation where their message has several translations and no single one
+ * of them is "the" translation (docs/CONTRACT.md §3.10).
+ */
+function counterpartLanguageOf(conversation: ConversationItem, myId: string) {
+  if (conversation.type !== "direct") return undefined;
+  const other = conversation.members.find((member) => member.id !== myId);
+  return other?.preferred_language;
+}
+
+/**
+ * Turn a history row into a bubble, attaching the one translation this bubble's
+ * controls act on.
+ *
+ * For a message I received that is the translation into my own language. For a
+ * message I sent it is the one the other person reads, and only in a
+ * one-to-one chat — `counterpartLanguage` is undefined in a group, where a
+ * message has several translations and none of them belongs to my bubble, so
+ * nothing is attached and no controls appear (docs/CONTRACT.md §3.10).
+ */
+function toChatMessage(
+  row: HistoryMessage,
+  myId: string,
+  myLanguage: string,
+  counterpartLanguage?: string,
+): ChatMessage {
+  const outgoing = row.sender_id === myId;
+  const wanted = outgoing ? counterpartLanguage : myLanguage;
+  const attached = wanted
+    ? row.translations.find((translation) => translation.target_language === wanted)
+    : undefined;
   return {
     id: row.id,
     clientMessageId: row.client_message_id,
-    author: row.sender_id === myId ? "me" : "them",
+    author: outgoing ? "me" : "them",
     senderId: row.sender_id,
     originalText: row.original_text,
-    translatedText: mine?.translated_text,
-    translationId: mine?.translation_id,
-    isFallback: mine?.is_fallback,
-    myRating: mine?.my_rating ?? null,
-    myCorrection: mine?.my_correction ?? null,
+    translatedText: attached?.translated_text,
+    translationId: attached?.translation_id,
+    translationLanguage: attached?.target_language,
+    isFallback: attached?.is_fallback,
+    myRating: attached?.my_rating ?? null,
+    myCorrection: attached?.my_correction ?? null,
+    myEdit: attached?.my_edit
+      ? {
+          editId: attached.my_edit.edit_id,
+          editedText: attached.my_edit.edited_text,
+          editedAt: attached.my_edit.edited_at,
+        }
+      : null,
     edited: Boolean(row.edited_at),
     deleted: Boolean(row.deleted_at),
     replyToMessageId: row.reply_to_message_id ?? undefined,
@@ -293,46 +369,70 @@ const RATING_UP = 5;
 const RATING_NEUTRAL = 3;
 const RATING_DOWN = 1;
 
-type CorrectionFormProps = {
+type TranslationEditFormProps = {
   message: ChatMessage;
-  onCorrect: (message: ChatMessage, correction: string) => Promise<boolean>;
+  onSaveEdit: (message: ChatMessage, editedText: string) => Promise<boolean>;
   onClose: () => void;
 };
 
 /**
- * The box for suggesting a better translation (F-05).
+ * The panel behind the pencil: this account's own wording for a translation.
  *
- * Opens pre-filled with whatever correction this account sent before, so a
- * second visit edits that text instead of starting from an empty field.
+ * Two jobs in one box, which is what the pencil being a toggle asks for — it
+ * shows the wording already saved and lets it be rewritten. Opening it
+ * pre-filled rather than blank is the difference between "read what I wrote
+ * last time" and "start again", and §3.10 says the reader gets the former.
+ *
+ * The bubble above keeps showing the machine's translation throughout. Nothing
+ * here is sent to anyone else, so there is no realtime event to wait for and
+ * the panel closes as soon as the server confirms.
  */
-function CorrectionForm({ message, onCorrect, onClose }: CorrectionFormProps) {
-  const [draft, setDraft] = useState(message.myCorrection ?? "");
+function TranslationEditForm({ message, onSaveEdit, onClose }: TranslationEditFormProps) {
+  const saved = message.myEdit?.editedText ?? "";
+  const [draft, setDraft] = useState(saved);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    const correction = draft.trim();
-    if (!correction) return;
+    const editedText = draft.trim();
+    if (!editedText || saving) return;
     setError("");
-    if (await onCorrect(message, correction)) onClose();
-    else setError("Không gửi được góp ý.");
+    setSaving(true);
+    const stored = await onSaveEdit(message, editedText);
+    setSaving(false);
+    if (stored) onClose();
+    else setError("Không lưu được bản sửa.");
   };
 
   return (
     <form className={styles.correctionForm} onSubmit={save}>
-      <label htmlFor={`correction-${message.id}`}>Bản dịch đúng hơn</label>
+      <label htmlFor={`edit-${message.id}`}>Bản dịch bạn cho là đúng</label>
+      {/* States what the box is for, because "private" is not something a text
+          field can show on its own and the reader would otherwise reasonably
+          assume they are correcting the message for everyone. */}
+      <p className={styles.correctionHint}>
+        Chỉ mình bạn đọc được. Bóng chat vẫn giữ bản dịch của hệ thống.
+      </p>
       <textarea
-        id={`correction-${message.id}`}
+        id={`edit-${message.id}`}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
         placeholder="Nhập bản dịch bạn cho là đúng"
         rows={2}
         autoFocus
       />
+      {message.myEdit && (
+        <p className={styles.correctionHint}>
+          Đã lưu lúc {messageTime(message.myEdit.editedAt)}. Lưu lần nữa sẽ thay bản này.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
       <div>
-        <button type="button" onClick={onClose}>Hủy</button>
-        <button type="submit" disabled={!draft.trim()}>Gửi góp ý</button>
+        <button type="button" onClick={onClose}>Đóng</button>
+        <button type="submit" disabled={!draft.trim() || draft.trim() === saved || saving}>
+          {saving ? "Đang lưu…" : "Lưu bản sửa"}
+        </button>
       </div>
     </form>
   );
@@ -353,16 +453,19 @@ type MessageClusterProps = {
   onToggleOriginal: (id: string) => void;
   /** F-05: rate a received translation, or suggest a better one. */
   onRate: (message: ChatMessage, rating: number) => Promise<boolean>;
-  onCorrect: (message: ChatMessage, correction: string) => Promise<boolean>;
+  /** F-05 (§3.10): store this account's own wording, private to them. */
+  onSaveEdit: (message: ChatMessage, editedText: string) => Promise<boolean>;
   onForward: (message: ChatMessage) => void;
   onDownload: (message: ChatMessage) => void;
   /** Message id to its displayed text, for resolving reply quotes. */
   quotes: Record<string, string>;
 };
 
-const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onReply, onRetry, onEdit, onDelete, openMenuId, onToggleMenu, onToggleOriginal, onRate, onCorrect, onForward, onDownload, quotes }: MessageClusterProps) {
+const MessageCluster = memo(function MessageCluster({ messages, name, initials, searchQuery, onReply, onRetry, onEdit, onDelete, openMenuId, onToggleMenu, onToggleOriginal, onRate, onSaveEdit, onForward, onDownload, quotes }: MessageClusterProps) {
   const outgoing = messages[0].author === "me";
-  const [correctingId, setCorrectingId] = useState<string | null>(null);
+  // Which bubble has its edit panel open. The pencil is a disclosure
+  // toggle, so at most one is open at a time within a cluster.
+  const [editingId, setEditingId] = useState<string | null>(null);
   return (
     <MessageGroup direction={outgoing ? "outgoing" : "incoming"} sender={outgoing ? "Bạn" : name} avatarPosition={outgoing ? "cr" : "cl"}>
       {!outgoing && <Avatar name={name} size="sm"><span className={styles.initialsAvatar}>{initials}</span></Avatar>}
@@ -375,11 +478,17 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
           // Nothing has arrived yet and the deadline has not passed. A message
           // already in this reader's language never gets an event at all, which
           // is why this can only ever be a timeout rather than a completion.
-          const awaiting = !hasTranslation && !message.translationSettled;
-          // A translation exists only when the sender wrote in a language this
-          // account does not read, so this one flag gates the whole translation
-          // group: the toggle, and the rating a reader alone can give.
-          const canTranslate = !outgoing && hasTranslation && Boolean(message.translationId);
+          const awaiting = !outgoing && !hasTranslation && !message.translationSettled;
+          // One flag gates the whole group — toggle, rating, edit box. It needs
+          // no direction test of its own: a translation is attached to a bubble
+          // only when this account may act on it, which for my own messages
+          // happens in a one-to-one chat and never in a group (§3.10).
+          const canTranslate = hasTranslation && Boolean(message.translationId);
+          // Each feedback control is an outline icon until it carries this
+          // account's verdict, at which point it fills in.
+          const ratedUp = message.myRating === RATING_UP;
+          const ratedDown = message.myRating === RATING_DOWN;
+          const edited = Boolean(message.myEdit);
           // `reply` is only set on a message this tab just sent; everything
           // loaded from history resolves its quote through the id instead.
           const quoted = message.reply
@@ -391,7 +500,7 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                 <div className={styles.messageBubble}>
                   <div className={styles.messageContent}>
                   {quoted && <blockquote className={styles.replyPreview}>{quoted}</blockquote>}
-                  <p className={message.deleted ? styles.deletedMessage : undefined}>{message.deleted ? "Tin nhắn đã được thu hồi" : highlight(shown, searchQuery)}</p>
+                  <p className={message.deleted ? styles.deletedMessage : undefined}>{message.deleted ? WITHDRAWN_TEXT : highlight(shown, searchQuery)}</p>
                   {message.file && !message.deleted && <button className={styles.fileCard} type="button" aria-label={`Tải ${message.file.name}`} onClick={() => onDownload(message)}><span>{fileKind(message.file.name)}</span><strong>{message.file.name}<small>{message.file.meta}</small></strong><b aria-hidden="true">↓</b></button>}
                   </div>
                   {!message.deleted && <>
@@ -408,51 +517,57 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                           offering it on someone else's message would only 403. */}
                       {outgoing && <button type="button" role="menuitem" onClick={() => { onDelete(message.id); onToggleMenu(message.id); }}>Gỡ tin nhắn</button>}
                     </div>}
-                    {correctingId === message.id && (
-                      <CorrectionForm message={message} onCorrect={onCorrect} onClose={() => setCorrectingId(null)} />
+                    {editingId === message.id && (
+                      <TranslationEditForm
+                        message={message}
+                        onSaveEdit={onSaveEdit}
+                        onClose={() => setEditingId(null)}
+                      />
                     )}
                   </>}
                 </div>
               </Message.CustomContent>
               <Message.Footer>
                 {/* Everything about the translation lives under the bubble and
-                    only on a message that actually has one — which is exactly
-                    the case where the sender's language differs from mine. */}
+                    only on a message that actually has one. On a message I
+                    received that is the version in my language; on one I sent,
+                    in a one-to-one chat, it is the version my reader got. */}
                 {canTranslate && !message.deleted && (
                   <span className={styles.translationTools}>
                     <TranslationToggleSwitch
-                      showOriginal={Boolean(message.showOriginal)}
+                      className={styles.translationSwitch}
+                      showOriginal={showingOriginal(message)}
                       onToggle={() => onToggleOriginal(message.id)}
                     />
                     <button
                       type="button"
-                      aria-label="Bản dịch tốt"
-                      title="Bản dịch tốt"
-                      aria-pressed={message.myRating === RATING_UP}
-                      className={message.myRating === RATING_UP ? styles.feedbackOn : undefined}
+                      aria-label={ratedUp ? "Bỏ đánh giá bản dịch tốt" : "Bản dịch tốt"}
+                      title={ratedUp ? "Bỏ đánh giá" : "Bản dịch tốt"}
+                      aria-pressed={ratedUp}
+                      className={styles.feedbackButton}
                       onClick={() => onRate(message, RATING_UP)}
                     >
-                      <ThumbsUp size={12} strokeWidth={2} aria-hidden="true" />
+                      <ThumbsUp size={14} strokeWidth={1.75} fill={ratedUp ? "currentColor" : "none"} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
-                      aria-label="Bản dịch chưa đạt"
-                      title="Bản dịch chưa đạt"
-                      aria-pressed={message.myRating === RATING_DOWN}
-                      className={message.myRating === RATING_DOWN ? styles.feedbackOff : undefined}
+                      aria-label={ratedDown ? "Bỏ đánh giá bản dịch chưa đạt" : "Bản dịch chưa đạt"}
+                      title={ratedDown ? "Bỏ đánh giá" : "Bản dịch chưa đạt"}
+                      aria-pressed={ratedDown}
+                      className={styles.feedbackButton}
                       onClick={() => onRate(message, RATING_DOWN)}
                     >
-                      <ThumbsDown size={12} strokeWidth={2} aria-hidden="true" />
+                      <ThumbsDown size={14} strokeWidth={1.75} fill={ratedDown ? "currentColor" : "none"} aria-hidden="true" />
                     </button>
                     <button
                       type="button"
-                      aria-label={message.myCorrection ? "Sửa lại góp ý bản dịch" : "Đề xuất bản dịch tốt hơn"}
-                      title="Đề xuất bản dịch tốt hơn"
-                      aria-expanded={correctingId === message.id}
-                      className={message.myCorrection ? styles.feedbackOn : undefined}
-                      onClick={() => setCorrectingId((current) => current === message.id ? null : message.id)}
+                      aria-label={edited ? "Xem bản dịch bạn đã sửa" : "Sửa lại bản dịch cho riêng bạn"}
+                      title={edited ? "Xem bản sửa của bạn" : "Sửa lại bản dịch cho riêng bạn"}
+                      aria-expanded={editingId === message.id}
+                      className={styles.feedbackButton}
+                      onClick={() => setEditingId((current) => current === message.id ? null : message.id)}
                     >
-                      <PencilLine size={12} strokeWidth={2} aria-hidden="true" />
+                      <PencilLine size={14} strokeWidth={1.75} fill={edited ? "currentColor" : "none"} aria-hidden="true" />
                     </button>
                   </span>
                 )}
@@ -461,7 +576,9 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                 )}
                 {awaiting && <span className={styles.messageTimestamp}>đang dịch…</span>}
                 {message.delivery === "failed" && <button className={styles.retryButton} type="button" onClick={() => onRetry(message.id)}>Không gửi được · Gửi lại</button>}
-                {indicator && <span className={`${styles.deliveryIcon} ${styles[indicator.className]}`} role="img" aria-label={indicator.label} title={indicator.label}>{indicator.symbol}</span>}
+                {/* Delivery is only ever about my own messages — a tick under
+                    someone else's bubble would claim I had sent it. */}
+                {outgoing && indicator && <span className={`${styles.deliveryIcon} ${styles[indicator.className]}`} role="img" aria-label={indicator.label} title={indicator.label}>{indicator.symbol}</span>}
               </Message.Footer>
             </Message>
           );
@@ -559,6 +676,31 @@ export default function MessagingApp() {
     }));
   }, []);
 
+  /**
+   * Replace a conversation's preview when the message it quotes is withdrawn.
+   *
+   * Guarded by `lastMessageId`: withdrawing an older message must not overwrite
+   * a preview that has already moved on to a newer one. Without this the
+   * sidebar kept showing the text of a message that no longer exists anywhere
+   * else in the app — the one place a withdrawal failed to take effect.
+   */
+  const withdrawPreview = useCallback((conversationId: string, messageId: string, sentAt?: string) => {
+    setConversationItems((items) => items.map((item) => {
+      if (item.id !== conversationId) return item;
+      // `lastMessageId` is only known for messages this tab saw arrive:
+      // `GET /conversations` carries the preview text and its timestamp but no
+      // id, so after a reload the id is missing and matching on it alone would
+      // silently do nothing — which is exactly how the first version of this
+      // failed. The timestamp is the fallback: a withdrawal at or after the
+      // conversation's newest activity is the previewed message.
+      const isPreviewed = item.lastMessageId
+        ? item.lastMessageId === messageId
+        : Boolean(sentAt) && Boolean(item.lastActivityAt)
+          && Date.parse(sentAt!) >= Date.parse(item.lastActivityAt!);
+      return isPreviewed ? { ...item, preview: WITHDRAWN_TEXT } : item;
+    }));
+  }, []);
+
   /** Swap a preview for its translation once one arrives for that message. */
   const retranslatePreview = useCallback((conversationId: string, messageId: string, translated: string) => {
     setConversationItems((items) => items.map((item) =>
@@ -633,9 +775,18 @@ export default function MessagingApp() {
     }, [applyIncoming, myId]),
 
     onTranslationCompleted: useCallback((event: TranslationCompleted) => {
-      // The server only sends this to readers of that language, so anything
-      // arriving here is meant for this account.
-      retranslatePreview(event.conversation_id, event.message_id, event.translated_text);
+      // Two kinds of event arrive here since §4.4 rule 3 grew its exception:
+      // the translation into my own language, and — in a one-to-one chat — the
+      // one my reader got for a message I sent. Both are attached to their
+      // bubble, because both are what the F-05 controls act on; which of them a
+      // bubble *shows* is decided by `showingOriginal`, so my own sentence is
+      // not rewritten into a language I do not read.
+      //
+      // The sidebar preview is different: it is one line of text I have to be
+      // able to read at a glance, so only my own language ever reaches it.
+      if (event.target_language === myLanguage) {
+        retranslatePreview(event.conversation_id, event.message_id, event.translated_text);
+      }
       setMessages((current) => {
         const thread = current[event.conversation_id];
         if (!thread) return current;
@@ -647,6 +798,7 @@ export default function MessagingApp() {
                   ...existing,
                   translatedText: event.translated_text,
                   translationId: event.translation_id,
+                  translationLanguage: event.target_language,
                   isFallback: event.is_fallback,
                   sourceLanguage: event.source_language,
                 }
@@ -654,7 +806,7 @@ export default function MessagingApp() {
           ),
         };
       });
-    }, [retranslatePreview]),
+    }, [myLanguage, retranslatePreview]),
 
     onTyping: useCallback((event: TypingNotice) => {
       setTypingBy((current) => {
@@ -680,9 +832,14 @@ export default function MessagingApp() {
                   // server discarded the rating along with it.
                   translatedText: undefined,
                   translationId: undefined,
+                  translationLanguage: undefined,
                   translationSettled: false,
                   myRating: null,
                   myCorrection: null,
+                  // The edit belonged to the translation that just went away, so
+                  // it would otherwise sit behind the pencil as this account's
+                  // wording for a sentence nobody sent.
+                  myEdit: null,
                   edited: true,
                 }
               : existing,
@@ -728,7 +885,8 @@ export default function MessagingApp() {
           ),
         };
       });
-    }, []),
+      withdrawPreview(event.conversation_id, event.message_id, new Date().toISOString());
+    }, [withdrawPreview]),
 
     onError: useCallback((_code: string, message: string) => setNotice(message), []),
     onAuthFailure: useCallback(() => router.replace("/login"), [router]),
@@ -796,19 +954,49 @@ export default function MessagingApp() {
   useEffect(() => {
     if (!activeId || loadedThreads[activeId]) return;
     let cancelled = false;
+    // The list always resolves first — `activeId` is set from it — so the
+    // counterpart's language is known by the time a thread is opened.
+    const conversation = conversationItems.find((item) => item.id === activeId);
+    const counterpart = conversation ? counterpartLanguageOf(conversation, myId) : undefined;
     getMessages(activeId, 50)
       .then((rows) => {
         if (cancelled) return;
-        setMessages((current) => ({
-          ...current,
-          [activeId]: rows.map((row) => toChatMessage(row, myId, myLanguage)),
-        }));
+        setMessages((current) => {
+          const fromServer = rows.map((row) => toChatMessage(row, myId, myLanguage, counterpart));
+          // Replacing the thread outright would drop anything that appeared
+          // while the request was in flight — and the first seconds after a page
+          // opens are exactly when someone types. A message sent in that window
+          // was added optimistically, then wiped by this response before the
+          // socket had even acknowledged it: no bubble, no error, and nothing in
+          // the database either, because the send had also been refused by a
+          // socket that was still connecting.
+          const known = new Set<string>();
+          for (const row of rows) {
+            known.add(row.id);
+            if (row.client_message_id) known.add(row.client_message_id);
+          }
+          const stillPending = (current[activeId] ?? []).filter((message) =>
+            !known.has(message.id)
+            && !(message.clientMessageId && known.has(message.clientMessageId)),
+          );
+          return { ...current, [activeId]: [...fromServer, ...stillPending] };
+        });
+        // The list endpoint cannot say which message the preview quotes, so the
+        // first history load is where that id becomes known.
+        const newest = rows.at(-1);
+        if (newest) {
+          setConversationItems((items) => items.map((item) =>
+            item.id === activeId ? { ...item, lastMessageId: newest.id } : item,
+          ));
+        }
         setLoadedThreads((current) => ({ ...current, [activeId]: true }));
         setNotice("");
       })
       .catch((error: Error) => !cancelled && setNotice(error.message));
     return () => { cancelled = true; };
-  }, [activeId, loadedThreads, myId, myLanguage]);
+    // `conversationItems` changes whenever a preview moves, but the guard above
+    // makes every re-run after the first a no-op.
+  }, [activeId, conversationItems, loadedThreads, myId, myLanguage]);
 
   // The list starts empty and fills after a request, where the mock data it
   // replaced was always present — every `active.*` read below would throw on
@@ -823,7 +1011,7 @@ export default function MessagingApp() {
   const quotes = useMemo(
     () => Object.fromEntries(activeMessages.map((message) => [
       message.id,
-      message.deleted ? "Tin nhắn đã được thu hồi" : displayText(message),
+      message.deleted ? WITHDRAWN_TEXT : displayText(message),
     ])),
     [activeMessages],
   );
@@ -920,6 +1108,8 @@ export default function MessagingApp() {
     const original = (messages[activeId] ?? []).find((message) => message.id === id);
     // Optimistic: the thread reads as withdrawn immediately.
     updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, deleted: true, originalText: "", translatedText: undefined, reply: undefined, file: undefined } : message));
+    const previousPreview = conversationItems.find((item) => item.id === activeId)?.preview;
+    withdrawPreview(activeId, id, original?.sentAt);
     try {
       await deleteMessage(activeId, id);
     } catch (error) {
@@ -929,9 +1119,16 @@ export default function MessagingApp() {
       if (original) {
         updateActiveThread((thread) => thread.map((message) => message.id === id ? original : message));
       }
+      // The preview was changed optimistically alongside the bubble, so a
+      // refused withdrawal has to put both back, not just the bubble.
+      if (previousPreview !== undefined) {
+        setConversationItems((items) => items.map((item) =>
+          item.id === activeId ? { ...item, preview: previousPreview } : item,
+        ));
+      }
       setNotice((error as Error).message);
     }
-  }, [activeId, messages, updateActiveThread]);
+  }, [activeId, conversationItems, messages, updateActiveThread, withdrawPreview]);
 
   /** F-06: replace the text of one of my messages and drop its old translation. */
   const submitEdit = useCallback(async (message: ChatMessage, text: string) => {
@@ -947,11 +1144,14 @@ export default function MessagingApp() {
             // one arrives over the socket.
             translatedText: undefined,
             translationId: undefined,
+            translationLanguage: undefined,
             translationSettled: false,
-            // The server dropped the old translation, and the rating went with
-            // it — keeping them would show a verdict on text that is gone.
+            // The server dropped the old translation, and the rating and edit
+            // went with it — keeping them would show a verdict, and this
+            // account's wording, for text that is gone.
             myRating: null,
             myCorrection: null,
+            myEdit: null,
             edited: true,
           }
         : existing));
@@ -971,7 +1171,7 @@ export default function MessagingApp() {
 
   /** F-04: show one message's original text instead of its translation. */
   const toggleOriginal = useCallback((id: string) => {
-    updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, showOriginal: !message.showOriginal } : message));
+    updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, flipped: !message.flipped } : message));
   }, [updateActiveThread]);
 
   /**
@@ -994,15 +1194,54 @@ export default function MessagingApp() {
     }
   }, [updateActiveThread]);
 
+  /**
+   * F-05: set a thumb, or press the same one again to take it back.
+   *
+   * The endpoint has no way to say "no rating" — `FeedbackRequest.rating` is a
+   * required 1-5 — so withdrawing a verdict sends the middle of the range, the
+   * same value a correction with no thumb already carries. Neither thumb reads
+   * as pressed at 3, which is what the reader asked for by clicking again.
+   */
   const rateTranslation = useCallback(
-    (message: ChatMessage, rating: number) => sendFeedback(message, rating, message.myCorrection ?? null),
+    (message: ChatMessage, rating: number) => sendFeedback(
+      message,
+      message.myRating === rating ? RATING_NEUTRAL : rating,
+      message.myCorrection ?? null,
+    ),
     [sendFeedback],
   );
 
-  const correctTranslation = useCallback(
-    (message: ChatMessage, correction: string) => sendFeedback(message, message.myRating ?? RATING_NEUTRAL, correction),
-    [sendFeedback],
-  );
+  /**
+   * F-05 (§3.10): store this account's own wording for a translation.
+   *
+   * A separate endpoint from the rating above, and deliberately so: a rating
+   * replaces the reader's previous verdict, while an edit is appended, keeping
+   * every attempt for the comparison the feature exists to make. It also writes
+   * nothing to `feedbacks.correction` any more — that column is legacy, read
+   * from history so old suggestions still show, never written to again.
+   */
+  const saveTranslationEdit = useCallback(async (message: ChatMessage, editedText: string) => {
+    if (!message.translationId) return false;
+    try {
+      const stored = await submitTranslationEdit(message.translationId, editedText);
+      updateActiveThread((thread) => thread.map((existing) =>
+        existing.id === message.id
+          ? {
+              ...existing,
+              myEdit: {
+                editId: stored.edit_id,
+                editedText: stored.edited_text,
+                editedAt: stored.edited_at,
+              },
+            }
+          : existing,
+      ));
+      return true;
+    } catch (error) {
+      setNotice((error as Error).message);
+      return false;
+    }
+  }, [updateActiveThread]);
 
   const beginReply = useCallback((message: ChatMessage) => { setEditing(null); setReplying(message); }, []);
   /**
@@ -1424,18 +1663,22 @@ export default function MessagingApp() {
           >
             {(offline || notice) && <div className={styles.statusBanner} role="status"><strong>{offline ? "Mất kết nối" : "Có lỗi"}</strong><span>{notice || "Đang kết nối lại. Bạn vẫn đọc được các tin nhắn đã tải."}</span></div>}
             {activeMessages.length ? <>
-              {grouped.map((cluster, index) => <div key={cluster[0].id} className={styles.messageRow}>{(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}<MessageCluster messages={cluster} name={active.name} initials={active.initials} searchQuery={messageQuery} onReply={beginReply} onRetry={retry} onEdit={beginEdit} onDelete={removeMessage} openMenuId={openMessageMenuId} onToggleMenu={(id) => setOpenMessageMenuId((current) => current === id ? null : id)} onToggleOriginal={toggleOriginal} onRate={rateTranslation} onCorrect={correctTranslation} onForward={setForwarding} onDownload={downloadFile} quotes={quotes} /></div>)}
+              {grouped.map((cluster, index) => <div key={cluster[0].id} className={styles.messageRow}>{(index === 0 || dayKey(cluster[0].sentAt) !== dayKey(grouped[index - 1][0].sentAt)) && <MessageSeparator content={dateLabel(cluster[0].sentAt)} />}<MessageCluster messages={cluster} name={active.name} initials={active.initials} searchQuery={messageQuery} onReply={beginReply} onRetry={retry} onEdit={beginEdit} onDelete={removeMessage} openMenuId={openMessageMenuId} onToggleMenu={(id) => setOpenMessageMenuId((current) => current === id ? null : id)} onToggleOriginal={toggleOriginal} onRate={rateTranslation} onSaveEdit={saveTranslationEdit} onForward={setForwarding} onDownload={downloadFile} quotes={quotes} /></div>)}
             </> : <div className={styles.emptyState}><span>✦</span><h2>Bắt đầu cuộc trò chuyện</h2><p>Gửi tin nhắn đầu tiên trong không gian riêng của bạn.</p></div>}
           </MessageList>
 
-          {pendingFile && <div className={styles.fileUploadPreview} role="status">
+          {/* Wrapped in an InputToolbox for the same reason the reply bar is:
+              ChatContainer keeps only children of its own known types, and a
+              bare <div> here was dropped. The file uploaded fine — the panel
+              that says so, and the button that actually sends it, never
+              rendered, so a chosen file could never leave the browser. */}
+          {pendingFile && <InputToolbox className={styles.fileUploadPreview}>
             <span className={styles.fileType}>{fileKind(pendingFile.name)}</span>
             <div><strong>{pendingFile.name}</strong><small>{uploading ? `Đang tải lên · ${uploadProgress}%` : `Sẵn sàng gửi · ${formatFileSize(pendingFile.size)}`}</small>{uploading && <span className={styles.uploadProgress} aria-hidden="true"><span style={{ width: `${uploadProgress}%` }} /></span>}</div>
             {!uploading && <button className={styles.sendFileAction} type="button" onClick={sendFile}>Gửi tệp</button>}
             <button className={styles.cancelAction} type="button" onClick={clearAttachment} aria-label="Hủy tệp đính kèm">×</button>
-          </div>}
+          </InputToolbox>}
 
-          <input ref={fileInputRef} className={styles.fileInput} type="file" onChange={handleFileSelection} tabIndex={-1} aria-hidden="true" />
           {(replying || editing) && <InputToolbox className={`${styles.composerToolbox} ${styles.composerToolboxActive}`}>
             <span className={styles.composerContext}><strong>{editing ? "Sửa tin nhắn" : `Trả lời ${active.name}`}</strong><small>{editing ? displayText(editing) : replying ? displayText(replying) : ""}</small></span><button className={styles.cancelAction} type="button" aria-label="Hủy thao tác" onClick={() => { setReplying(null); setEditing(null); }}>×</button>
           </InputToolbox>}
@@ -1455,6 +1698,20 @@ export default function MessagingApp() {
           />
         </ChatContainer>
       </MainContainer>
+
+      {/* Outside `MainContainer` on purpose. ChatContainer keeps only children
+          of its own four known types and silently drops the rest, so while this
+          lived in there it never reached the DOM at all: `fileInputRef` stayed
+          null and the paperclip button did nothing, with no error to show for
+          it. Attachments were dead from the button's first click. */}
+      <input
+        ref={fileInputRef}
+        className={styles.fileInput}
+        type="file"
+        onChange={handleFileSelection}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
 
       {showConversationInfo && (
         <aside className={styles.infoPanel} aria-label="Thông tin hội thoại">

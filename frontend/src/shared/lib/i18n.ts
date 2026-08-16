@@ -12,6 +12,7 @@
 import { UI_LANGUAGE, type LanguageCode } from "./constants";
 
 export type LabelKey =
+  | "fullName"
   | "email"
   | "password"
   | "passwordConfirm"
@@ -38,6 +39,7 @@ type LabelTable = Partial<Record<LanguageCode, Record<LabelKey, string>>> & {
 
 export const LABELS: LabelTable = {
   vi: {
+    fullName: "Họ và tên",
     email: "Email",
     password: "Mật khẩu",
     passwordConfirm: "Nhập lại mật khẩu",
@@ -52,6 +54,7 @@ export const LABELS: LabelTable = {
     terms: "Điều khoản dịch vụ",
   },
   en: {
+    fullName: "Full name",
     email: "Email",
     password: "Password",
     passwordConfirm: "Confirm password",
@@ -66,6 +69,7 @@ export const LABELS: LabelTable = {
     terms: "Terms of service",
   },
   zh: {
+    fullName: "姓名",
     email: "邮箱",
     password: "密码",
     passwordConfirm: "确认密码",
@@ -80,6 +84,7 @@ export const LABELS: LabelTable = {
     terms: "服务条款",
   },
   ja: {
+    fullName: "氏名",
     email: "メール",
     password: "パスワード",
     passwordConfirm: "パスワードの確認",
@@ -94,6 +99,7 @@ export const LABELS: LabelTable = {
     terms: "利用規約",
   },
   ko: {
+    fullName: "이름",
     email: "이메일",
     password: "비밀번호",
     passwordConfirm: "비밀번호 확인",
@@ -108,6 +114,7 @@ export const LABELS: LabelTable = {
     terms: "이용약관",
   },
   fr: {
+    fullName: "Nom complet",
     email: "E-mail",
     password: "Mot de passe",
     passwordConfirm: "Confirmer le mot de passe",
@@ -122,6 +129,7 @@ export const LABELS: LabelTable = {
     terms: "Conditions d’utilisation",
   },
   de: {
+    fullName: "Vollständiger Name",
     email: "E-Mail",
     password: "Passwort",
     passwordConfirm: "Passwort bestätigen",
@@ -136,6 +144,7 @@ export const LABELS: LabelTable = {
     terms: "Nutzungsbedingungen",
   },
   es: {
+    fullName: "Nombre completo",
     email: "Correo electrónico",
     password: "Contraseña",
     passwordConfirm: "Confirmar contraseña",
@@ -150,6 +159,7 @@ export const LABELS: LabelTable = {
     terms: "Términos del servicio",
   },
   th: {
+    fullName: "ชื่อ-นามสกุล",
     email: "อีเมล",
     password: "รหัสผ่าน",
     passwordConfirm: "ยืนยันรหัสผ่าน",
@@ -165,9 +175,16 @@ export const LABELS: LabelTable = {
   },
 };
 
-/** Nhãn chính — luôn tiếng Việt. */
-export function mainLabel(key: LabelKey): string {
-  return LABELS[UI_LANGUAGE][key];
+/**
+ * Nhãn chính, theo ngôn ngữ giao diện đang chọn.
+ *
+ * Trước đây hàm này luôn trả tiếng Việt (`LABELS[UI_LANGUAGE]`), nên trang đăng
+ * nhập và đăng ký hiện tiếng Việt kể cả khi người dùng vừa chọn 中文 ngay trên
+ * chính trang đó. Nay nó nhận ngôn ngữ và lùi về `en` cho từng nhãn còn thiếu,
+ * đúng quy tắc docs/CONTRACT.md §1.2.
+ */
+export function mainLabel(key: LabelKey, lang: LanguageCode = UI_LANGUAGE): string {
+  return LABELS[lang]?.[key] ?? LABELS.en[key];
 }
 
 /**

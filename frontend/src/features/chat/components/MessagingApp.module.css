@@ -537,6 +537,12 @@
   color: var(--ink-muted);
   font-size: var(--fs-micro);
 }
+/* Header, bubble and footer are one column, and the bubble is `fit-content`
+   while the column is as wide as its widest row. Without an explicit alignment
+   every row started at the left edge of that column, so the delivery tick of a
+   short outgoing message floated off past the end of its own bubble. */
+.appShell :global(.cs-message__content-wrapper) { max-width: 100%; align-items: flex-start; }
+.appShell :global(.cs-message--outgoing .cs-message__content-wrapper) { align-items: flex-end; }
 .appShell :global(.cs-message__header) { min-height: 14px; margin-bottom: var(--s-1); color: var(--ink-muted); font-family: var(--font-body); font-size: 10px; line-height: 1.2; }
 .appShell :global(.cs-message--outgoing .cs-message__header) { justify-content: flex-end; text-align: right; }
 .appShell :global(.cs-message--outgoing .cs-message__footer) { display: flex; justify-content: flex-end; align-items: center; min-height: 16px; }
@@ -544,7 +550,13 @@
 .appShell :global(.cs-message--outgoing .messageTimestamp) { justify-content: flex-end; width: 100%; }
 .messageContent > p { overflow-wrap: anywhere; white-space: pre-wrap; }
 .messageBubble { position: relative; }
-.deletedMessage { color: var(--ink-muted); font-style: italic; }
+/* Inherits the bubble's own ink instead of the global muted colour, which is
+   the whole fix: `--ink-muted` is a dark purple, and on my own bubble
+   (`--bubble-mine`, a warm red) it measured 1.2:1 in light mode — the notice
+   was all but invisible on exactly the messages I had just withdrawn myself.
+   Opacity carries the "this is not content" signal instead, and it cannot
+   collide with a background because it is relative to whatever ink is there. */
+.deletedMessage { color: inherit; opacity: 0.78; font-style: italic; }
 .match { padding: 0 1px; color: inherit; background: var(--accent-gold); }
 .deliveryIcon { display: inline-flex; min-width: 18px; align-items: center; justify-content: flex-end; margin-left: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: 11px; letter-spacing: -2px; line-height: 1; }
 .sending { color: var(--ink-muted); letter-spacing: 0; }.delivered { color: var(--primary); }.read { color: var(--success); }.editedMark { color: var(--ink-muted); font-size: 10px; }
@@ -577,20 +589,28 @@
 .appShell :global(.cs-message:hover) .translationTools,
 .appShell :global(.cs-message:focus-within) .translationTools { opacity: 1; pointer-events: auto; }
 
-.translationTools button {
+/* The switch is the one control here that is not an icon, so it keeps its own
+   size and only needs to be told not to stretch — and to sit slightly apart, so
+   the three icons read as one group rather than four unrelated controls. */
+.translationTools .translationSwitch { flex: none; margin-right: var(--s-1); }
+
+/* Bare icons rather than boxed buttons: four framed squares under a bubble
+   competed with the bubble itself. All three share --feedback-ink, so what
+   separates a set control from an unset one is the filled glyph the button
+   renders, not a colour of its own. */
+.translationTools .feedbackButton {
   display: grid;
-  width: 22px;
-  height: 22px;
+  padding: var(--s-1);
   place-items: center;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-2);
-  color: var(--ink-muted);
-  background: var(--surface-card);
+  border: 0;
+  border-radius: var(--r-full);
+  color: var(--feedback-ink);
+  background: none;
+  transition: background var(--dur-hover);
 }
 
-.translationTools button:hover, .translationTools button:focus-visible { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
-.translationTools button.feedbackOn { border-color: var(--success); color: var(--success); background: var(--success-weak); }
-.translationTools button.feedbackOff { border-color: var(--danger); color: var(--danger); background: var(--danger-weak); }
+.translationTools .feedbackButton:hover { background: var(--surface-sunken); }
+.translationTools .feedbackButton:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
 
 .correctionForm {
   position: absolute;
@@ -608,6 +628,10 @@
 }
 
 .correctionForm label { color: var(--ink-muted); font-size: var(--fs-micro); font-weight: 600; }
+/* Says who can read this and what the bubble keeps showing. Without it the box
+   reads as "correct the message for everyone", which is the one thing it is
+   not (docs/CONTRACT.md §3.10). */
+.correctionHint { margin: 0; color: var(--ink-muted); font-size: var(--fs-micro); line-height: 1.4; }
 .correctionForm textarea {
   width: 100%;
   padding: var(--s-2);
@@ -690,9 +714,16 @@
 .groupUserSearch input { min-width: 0; height: 38px; border: 0; outline: 0; color: var(--ink); background: transparent; }
 .memberResults { display: grid; max-height: 224px; overflow-y: auto; border-block: 1px solid var(--rule); }
 .memberResults > p { padding: var(--s-4) 0; }
-.memberOption { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: var(--s-3); min-height: 56px; padding: var(--s-2); cursor: pointer; }
+/* The whole row is the target, not just the circle: `padding-inline` pulls the
+   clickable area out to the dialog's edges so a click that lands beside the
+   radio still selects the person. */
+.memberOption { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: var(--s-3); min-height: 56px; padding: var(--s-2) var(--s-3); cursor: pointer; }
 .memberOption:hover { background: var(--surface-sunken); }
-.memberOption input { width: 16px; height: 16px; accent-color: var(--primary); }
+/* 16px sat under the 24px minimum target size, and a near miss reads as a
+   control that simply does not respond — the row does catch the click, but only
+   once the pointer is inside it. Bigger circle, and a margin so the pointer has
+   somewhere to land around it. */
+.memberOption input { width: 20px; height: 20px; margin: 2px; accent-color: var(--primary); cursor: pointer; }
 .memberAvatar { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--rule); border-radius: 50%; color: var(--primary); background: var(--surface-label); font-family: var(--font-body); font-size: 10px; }
 .memberOption strong, .memberOption small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memberOption strong { color: var(--ink); font-size: var(--fs-small); }.memberOption small { color: var(--ink-muted); font-size: var(--fs-micro); }
@@ -948,6 +979,12 @@
 
 .appShell .composerInput :global(.cs-message-input__content-editor-wrapper) {
   order: 1;
+  /* The pill centres what it holds, because the editor inside it does not size
+     itself: react-perfect-scrollbar's .scrollbar-container puts height:100% on
+     it, so one line of text was pinned to the top of the pill instead of
+     sitting on its centre line. */
+  display: flex;
+  align-items: center;
   min-height: 34px;
   padding: 6px var(--s-3);
   font-size: var(--fs-small);
@@ -957,33 +994,72 @@
   transition: border-color var(--dur-hover), background var(--dur-hover);
 }
 
+/* Height back to the text it holds; max-height still caps how far it grows. */
+.appShell .composerInput :global(.cs-message-input__content-editor-container) {
+  width: 100%;
+  height: auto;
+}
+
 .appShell .composerInput:global(.cs-message-input):focus-within :global(.cs-message-input__content-editor-wrapper) {
   border-color: var(--primary);
   background: var(--surface-card);
 }
 
-/* chatscope styles the send button with three classes, so a shorter override
-   loses and the button kept the library's own colour instead of the action
-   accent. White on #FEA837 measures 1.93:1, hence the dark ink. */
+/* Attach and send are icon buttons in their own right, like the emoji trigger
+   beside them — no filled block around the glyph, just a wash on hover.
+
+   `place-content` matters as much as `place-items` here: the single icon forms
+   one grid track, and a track is placed at the start of the box unless the
+   content is centred too. With chatscope's own 0.7em inline padding left in
+   place that track began 13px in, which is how the plane ended up leaning
+   against the right edge of the circle it was meant to sit inside. */
 .appShell .composerInput :global(.cs-button.cs-button--send),
-.appShell :global(.cs-message-input .cs-button--send) {
-  display: inline-grid;
+.appShell .composerInput :global(.cs-button.cs-button--attachment) {
+  display: grid;
   width: 32px;
   height: 32px;
+  /* chatscope bottom-aligns both buttons so they stay level with the last line
+     of a grown input; on a one-line composer that read as 2px too low. */
+  align-self: center;
+  place-content: center;
   place-items: center;
+  margin: 0;
+  padding: 0;
   border-radius: var(--r-full);
-  color: var(--accent-action-ink);
-  background: var(--accent-action);
+  background: transparent;
+  /* Font Awesome sizes its glyph in em, and chatscope asks for 1.2em — which is
+     what made these two icons a different size from the emoji trigger beside
+     them. Stating it here puts all three on one 18px glyph. */
+  font-size: 18px;
   opacity: 1;
+  transition: color var(--dur-hover), background var(--dur-hover);
 }
 
-.appShell .composerInput :global(.cs-button.cs-button--send:hover:not(:disabled)) {
-  background: var(--accent-warm);
-}
+.appShell .composerInput :global(.cs-button.cs-button--send) { color: var(--accent-action); }
+.appShell .composerInput :global(.cs-button.cs-button--attachment) { color: var(--ink-muted); }
 
-.appShell .composerInput :global(.cs-button.cs-button--send:disabled) {
-  color: var(--ink-disabled);
+/* The same wash the emoji trigger uses, so the three controls on this row react
+   alike. Send keeps its accent colour through the hover: it is the one button
+   here that is already the action colour at rest. */
+.appShell .composerInput :global(.cs-button.cs-button--send:hover:not(:disabled)),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:hover:not(:disabled)) {
   background: var(--surface-sunken);
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--attachment:hover:not(:disabled)) {
+  color: var(--accent-warm);
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--send:focus-visible),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--send:disabled),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:disabled) {
+  color: var(--ink-disabled);
+  background: transparent;
 }
 
 /* Raised surfaces carry the rim light as well as the shadow, so they separate
@@ -1001,6 +1077,51 @@
 /* The thread sits a step behind the surfaces floating above it. */
 .appShell :global(.cs-message-list) {
   background-color: transparent;
+}
+
+/* perfect-scrollbar (chatscope's scroller) paints its rail near-white and swells
+   the thumb from 6px to 11px while you drag — a white slab down the side of the
+   thread, worst in dark mode. The rail stays transparent and the width stays
+   put; the shade alone reports the state, the same two tokens the native
+   scrollbars in globals.css already use. */
+.appShell :global(.ps__rail-y),
+.appShell :global(.ps__rail-x),
+.appShell :global(.ps .ps__rail-y:hover),
+.appShell :global(.ps .ps__rail-y:focus),
+.appShell :global(.ps .ps__rail-y.ps--clicking),
+.appShell :global(.ps .ps__rail-x:hover),
+.appShell :global(.ps .ps__rail-x:focus),
+.appShell :global(.ps .ps__rail-x.ps--clicking) {
+  background-color: transparent;
+}
+
+/* The rail still fades in only while the list is in use, but at full strength:
+   its opacity applies to the thumb inside it, and 0.6 washed the colour out. */
+.appShell :global(.ps:hover > .ps__rail-y),
+.appShell :global(.ps--focus > .ps__rail-y),
+.appShell :global(.ps--scrolling-y > .ps__rail-y),
+.appShell :global(.ps .ps__rail-y:hover),
+.appShell :global(.ps .ps__rail-y.ps--clicking) {
+  opacity: 1;
+}
+
+.appShell :global(.ps__thumb-y),
+.appShell :global(.ps__thumb-x) {
+  background-color: var(--rule-strong);
+}
+
+.appShell :global(.ps__rail-y:hover > .ps__thumb-y),
+.appShell :global(.ps__rail-y:focus > .ps__thumb-y),
+.appShell :global(.ps__rail-y.ps--clicking .ps__thumb-y) {
+  width: 6px;
+  background-color: var(--ink-muted);
+}
+
+.appShell :global(.ps__rail-x:hover > .ps__thumb-x),
+.appShell :global(.ps__rail-x:focus > .ps__thumb-x),
+.appShell :global(.ps__rail-x.ps--clicking .ps__thumb-x) {
+  height: 6px;
+  background-color: var(--ink-muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
