@@ -22,7 +22,7 @@ import {
 import Link from "next/link";
 import { Forward, Info, MessagesSquare, MoreVertical, PencilLine, Settings, ThumbsDown, ThumbsUp, UserRoundPlus, X } from "lucide-react";
 import { logoutSession } from "@/shared/lib/api";
-import { clearSession, getStoredRefreshToken, getStoredUser } from "@/shared/lib/auth-session";
+import { clearSession, getStoredRefreshToken, getStoredUser, restoreSession } from "@/shared/lib/auth-session";
 import {
   createConversation,
   deleteMessage,
@@ -73,6 +73,14 @@ const TYPING_PING_MS = 2000;
 const TYPING_IDLE_MS = 3000;
 
 type Delivery = "sending" | "delivered" | "read" | "failed";
+type PendingSend = {
+  clientMessageId: string;
+  conversationId: string;
+  text: string;
+  attachmentId: string | null;
+  replyToMessageId: string | null;
+};
+
 type ChatMessage = {
   /** Server id once persisted; the client id until message_created arrives. */
   id: string;
@@ -104,6 +112,7 @@ type ChatMessage = {
   reply?: string;
   /** Which message this answers; the quote is resolved from the thread. */
   replyToMessageId?: string;
+  attachmentId?: string | null;
   file?: { name: string; size?: number; url?: string };
 };
 
@@ -357,6 +366,7 @@ function toChatMessage(
     edited: Boolean(row.edited_at),
     deleted: Boolean(row.deleted_at),
     replyToMessageId: row.reply_to_message_id ?? undefined,
+    attachmentId: row.attachment?.id ?? null,
     file: row.attachment
       ? {
           name: row.attachment.filename,
@@ -370,6 +380,33 @@ function toChatMessage(
     // History is complete: whatever translations exist are already attached.
     translationSettled: true,
   };
+}
+
+/**
+ * History remains canonical after a reconnect, but any optimistic bubbles that
+ * the server has not persisted yet must survive the replacement. Both ids are
+ * checked because the server row and local bubble deliberately have different
+ * identities until message_created acknowledges the send.
+ */
+function mergeHistory(
+  current: Record<string, ChatMessage[]>,
+  conversationId: string,
+  rows: HistoryMessage[],
+  myId: string,
+  myLanguage: string,
+  counterpartLanguage?: string,
+): Record<string, ChatMessage[]> {
+  const fromServer = rows.map((row) => toChatMessage(row, myId, myLanguage, counterpartLanguage));
+  const known = new Set<string>();
+  for (const row of rows) {
+    known.add(row.id);
+    if (row.client_message_id) known.add(row.client_message_id);
+  }
+  const stillPending = (current[conversationId] ?? []).filter((message) =>
+    !known.has(message.id)
+    && !(message.clientMessageId && known.has(message.clientMessageId)),
+  );
+  return { ...current, [conversationId]: [...fromServer, ...stillPending] };
 }
 
 function initialsOf(value: string) {
@@ -655,6 +692,9 @@ export default function MessagingApp() {
   // Read by socket handlers, which are memoised once and would otherwise close
   // over the conversation that was open when the socket was created.
   const activeIdRef = useRef(activeId);
+  const conversationItemsRef = useRef<ConversationItem[]>([]);
+  const loadedThreadsRef = useRef<Record<string, boolean>>({});
+  const pendingSendsRef = useRef<Map<string, PendingSend>>(new Map());
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [messageQuery, setMessageQuery] = useState("");
   const [draft, setDraft] = useState("");
@@ -766,8 +806,51 @@ export default function MessagingApp() {
     });
   }, [settleTranslation, touchConversation]);
 
+  const recoverConversation = useCallback(async (conversationId: string) => {
+    const conversation = conversationItemsRef.current.find((item) => item.id === conversationId);
+    const counterpart = conversation ? counterpartLanguageOf(conversation, myId) : undefined;
+    try {
+      const rows = await getMessages(conversationId, 50);
+      setMessages((current) => mergeHistory(
+        current,
+        conversationId,
+        rows,
+        myId,
+        myLanguage,
+        counterpart,
+      ));
+      const newest = rows.at(-1);
+      if (newest) {
+        setConversationItems((items) => items.map((item) =>
+          item.id === conversationId ? { ...item, lastMessageId: newest.id } : item,
+        ));
+      }
+      setLoadedThreads((current) => ({ ...current, [conversationId]: true }));
+    } catch {
+      setNotice("chat.loadMessagesFailed");
+    }
+  }, [myId, myLanguage]);
+
+  const recoverAfterReconnect = useCallback(async (resend: (input: PendingSend) => boolean) => {
+    const conversationIds = new Set(Object.keys(loadedThreadsRef.current));
+    if (activeIdRef.current) conversationIds.add(activeIdRef.current);
+    for (const pending of pendingSendsRef.current.values()) {
+      conversationIds.add(pending.conversationId);
+    }
+
+    await Promise.all([...conversationIds].map((conversationId) => recoverConversation(conversationId)));
+
+    // A history response may include a message whose acknowledgement was lost.
+    // Keep it pending until message_created arrives; the same id makes this
+    // resend idempotent on the server.
+    for (const pending of pendingSendsRef.current.values()) {
+      resend(pending);
+    }
+  }, [recoverConversation]);
+
   const socket = useWebSocket({
     onMessageCreated: useCallback((clientMessageId: string, message: RealtimeMessage) => {
+      pendingSendsRef.current.delete(clientMessageId);
       // The sender waits for a translation too — they may read a language other
       // than the one they typed in.
       window.setTimeout(
@@ -916,6 +999,8 @@ export default function MessagingApp() {
     }, [withdrawPreview]),
 
     onError: useCallback(() => setNotice("chat.realtimeError"), []),
+    onCredentialsRefreshNeeded: useCallback(async () => Boolean(await restoreSession()), []),
+    onReconnect: recoverAfterReconnect,
     onAuthFailure: useCallback(() => router.replace("/login"), [router]),
   });
 
@@ -953,6 +1038,14 @@ export default function MessagingApp() {
     activeIdRef.current = activeId;
   }, [activeId]);
 
+  useEffect(() => {
+    conversationItemsRef.current = conversationItems;
+  }, [conversationItems]);
+
+  useEffect(() => {
+    loadedThreadsRef.current = loadedThreads;
+  }, [loadedThreads]);
+
   // "vừa xong" stops being true after a minute, and nothing else re-renders the
   // list while the user simply reads. The state is unread on purpose: the
   // re-render it causes is the whole point, since the time labels are computed
@@ -988,26 +1081,14 @@ export default function MessagingApp() {
     getMessages(activeId, 50)
       .then((rows) => {
         if (cancelled) return;
-        setMessages((current) => {
-          const fromServer = rows.map((row) => toChatMessage(row, myId, myLanguage, counterpart));
-          // Replacing the thread outright would drop anything that appeared
-          // while the request was in flight — and the first seconds after a page
-          // opens are exactly when someone types. A message sent in that window
-          // was added optimistically, then wiped by this response before the
-          // socket had even acknowledged it: no bubble, no error, and nothing in
-          // the database either, because the send had also been refused by a
-          // socket that was still connecting.
-          const known = new Set<string>();
-          for (const row of rows) {
-            known.add(row.id);
-            if (row.client_message_id) known.add(row.client_message_id);
-          }
-          const stillPending = (current[activeId] ?? []).filter((message) =>
-            !known.has(message.id)
-            && !(message.clientMessageId && known.has(message.clientMessageId)),
-          );
-          return { ...current, [activeId]: [...fromServer, ...stillPending] };
-        });
+        setMessages((current) => mergeHistory(
+          current,
+          activeId,
+          rows,
+          myId,
+          myLanguage,
+          counterpart,
+        ));
         // The list endpoint cannot say which message the preview quotes, so the
         // first history load is where that id becomes known.
         const newest = rows.at(-1);
@@ -1127,7 +1208,15 @@ export default function MessagingApp() {
     const failed = thread.find((message) => message.id === id);
     if (!failed) return;
     const clientMessageId = failed.clientMessageId ?? id;
-    if (!socket.sendMessage({ clientMessageId, conversationId: activeId, text: failed.originalText })) return;
+    const pending: PendingSend = {
+      clientMessageId,
+      conversationId: activeId,
+      text: failed.originalText,
+      attachmentId: failed.attachmentId ?? null,
+      replyToMessageId: failed.replyToMessageId ?? null,
+    };
+    if (!socket.sendMessage(pending)) return;
+    pendingSendsRef.current.set(clientMessageId, pending);
     updateActiveThread((thread) => thread.map((message) => message.id === id ? { ...message, delivery: "sending" } : message));
   }, [activeId, messages, socket, updateActiveThread]);
 
@@ -1301,12 +1390,15 @@ export default function MessagingApp() {
     // dropped connection is idempotent (docs/CONTRACT.md section 5).
     const clientMessageId = crypto.randomUUID();
     const now = new Date();
-    const accepted = socket.sendMessage({
+    const pending: PendingSend = {
       clientMessageId,
       conversationId: activeId,
       text: cleanText,
+      attachmentId: null,
       replyToMessageId: replying?.id ?? null,
-    });
+    };
+    const accepted = socket.sendMessage(pending);
+    if (accepted) pendingSendsRef.current.set(clientMessageId, pending);
 
     updateActiveThread((thread) => [...thread, {
       id: clientMessageId,
@@ -1318,6 +1410,7 @@ export default function MessagingApp() {
       delivery: accepted ? "sending" : "failed",
       reply: replying ? displayText(replying) : undefined,
       replyToMessageId: replying?.id,
+      attachmentId: null,
     }]);
     touchConversation(activeId, clientMessageId, cleanText, now.toISOString());
     stopTyping(activeId);
@@ -1336,11 +1429,15 @@ export default function MessagingApp() {
     if (!forwarding) return;
     const clientMessageId = crypto.randomUUID();
     const now = new Date();
-    const accepted = socket.sendMessage({
+    const pending: PendingSend = {
       clientMessageId,
       conversationId,
       text: forwarding.originalText,
-    });
+      attachmentId: null,
+      replyToMessageId: null,
+    };
+    const accepted = socket.sendMessage(pending);
+    if (accepted) pendingSendsRef.current.set(clientMessageId, pending);
 
     setMessages((current) => ({
       ...current,
@@ -1352,6 +1449,7 @@ export default function MessagingApp() {
         originalText: forwarding.originalText,
         sentAt: now.toISOString(),
         delivery: accepted ? "sending" : "failed",
+        attachmentId: null,
       }],
     }));
     touchConversation(conversationId, clientMessageId, forwarding.originalText, now.toISOString());
@@ -1423,12 +1521,15 @@ export default function MessagingApp() {
     const clientMessageId = crypto.randomUUID();
     const now = new Date();
     const file = pendingFile;
-    const accepted = socket.sendMessage({
+    const pending: PendingSend = {
       clientMessageId,
       conversationId: activeId,
       text: file.name,
       attachmentId: pendingAttachmentId,
-    });
+      replyToMessageId: null,
+    };
+    const accepted = socket.sendMessage(pending);
+    if (accepted) pendingSendsRef.current.set(clientMessageId, pending);
 
     updateActiveThread((thread) => [...thread, {
       id: clientMessageId,
@@ -1438,6 +1539,7 @@ export default function MessagingApp() {
       originalText: file.name,
       sentAt: now.toISOString(),
       delivery: accepted ? "sending" : "failed",
+      attachmentId: pendingAttachmentId,
       file: { name: file.name, size: file.size },
     }]);
     touchConversation(activeId, clientMessageId, file.name, now.toISOString());
