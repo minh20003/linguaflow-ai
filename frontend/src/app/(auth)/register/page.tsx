@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import RegisterForm from "@/features/auth/components/RegisterForm";
+import { RegisterScreen } from "@/features/auth/screens/RegisterScreen";
 
 export const metadata: Metadata = {
-  title: "Tạo tài khoản — LinguaFlow",
+  title: "Tạo tài khoản — LinguaChat",
   description:
-    "Tạo tài khoản LinguaFlow và bắt đầu nhắn tin xuyên mười ngôn ngữ.",
+    "Tạo tài khoản LinguaChat và bắt đầu nhắn tin xuyên mười ngôn ngữ.",
 };
 
 export default function RegisterPage() {
-  return <RegisterForm />;
+  return <RegisterScreen />;
 }

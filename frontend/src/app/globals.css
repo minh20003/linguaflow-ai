@@ -1,410 +1,177 @@
-/* LinguaFlow — Global Design System & Token Architecture
-   Palette Formula:
-   - Light Mode: Warm cream white (#FFF9F2) canvas with high-contrast deep purple (#593E67) and berry (#84495F) accents.
-   - Dark Mode: Rich deep plum (#2A1A32 / #593E67) canvas with crisp cream white text (#FFF9F2) and vibrant accents.
-   - Typography: Plus Jakarta Sans / Be Vietnam Pro with comprehensive multi-language fallback stack.
-*/
+/* LinguaChat — hệ token toàn cục.
+   Vật neo: nhãn sản phẩm in trên giấy không tẩy trắng.
+   Ràng buộc cứng: không gradient, không bóng mờ, không animation vô hạn,
+   cỡ chữ trần 26px, bo góc trần 4px, chuyển động trần 160ms. */
 
-*,
-*::before,
-*::after {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)),
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::before,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+/* ─── Token — bảng light định nghĩa ĐỦ ở :root trần ─────────
+   Không token màu nào được định nghĩa lần đầu trong media query. */
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 
-  /* ─── Light Mode Surfaces (Warm Ultra-light Cream #FFF9F2) ─── */
-  --surface-ground: #FFF9F2;
-  --surface-card: #FFFFFF;
-  --surface-label: #F8EFE4;
-  --surface-insert: #FAF3EA;
-  --surface-sunken: #EFE4D4;
+  /* Bề mặt (§3.1) — nền TỐI HƠN thẻ: bìa kraft lộ ra dưới giấy nhãn */
+  --surface-ground: #e8e4da;
+  --surface-label: #f5f2e9;
+  --surface-insert: #fdfcf9;
+  --surface-sunken: #ded9cb;
 
-  /* Header & Navigation */
-  --surface-header: #593E67;
-  --surface-header-berry: #84495F;
-  --text-on-header: #FFF9F2;
+  /* Mực (§4.1) */
+  --ink: #26241f;
+  --ink-hover: #3a372f;
+  --ink-secondary: #57534a;
+  --ink-muted: #6e6759;
+  --ink-disabled: #a09884;
+  --ink-inverse: #f5f2e9;
 
-  /* The navigation rail gets its own tokens rather than sharing the header's.
-     Sharing meant the rail stayed deep purple in both themes while the two
-     columns beside it inverted, so switching the theme looked half-applied.
-     Light: cream surface, ink icons (9.09:1). Dark: deep plum, cream (17.2:1). */
-  --surface-rail: #FFFFFF;
-  --ink-on-rail: #593E67;
-  --rail-border: #EAE0D2;
+  /* Kẻ hairline — công cụ phân vùng duy nhất (§3.3) */
+  --rule: #d9d2c2;
+  --rule-strong: #bfb5a0;
 
-  /* Text & Ink (High Contrast Deep Charcoal-Purple) */
-  --ink: #241829;
-  --ink-hover: #3E294A;
-  --ink-secondary: #593E67;
-  --ink-muted: #6E5C78;
-  --ink-disabled: #B4A6BC;
+  /* Sắc tố có vai (§4.1) */
+  --indigo: #2d4356;
+  --indigo-weak: rgba(45, 67, 86, 0.1);
+  --on-indigo: #fdfcf9;
+  --bengara: #a8503c;
+  --bengara-weak: rgba(168, 80, 60, 0.09);
+  --koke: #4a6741;
 
-  /* Placeholders are pseudo-elements, so the contrast audit that walks text
-     nodes never saw them — chatscope's near-black default survived on a dark
-     surface at 1.92:1. This token is checked against both grounds. */
-  --ink-placeholder: #6E5C78;
-  /* Boundaries are a pair of hairlines, one darker and one lighter, instead of
-     a single rule: the columns share a background, so an edge has to be read
-     as a bevel rather than as a line drawn between two different colours. */
-  --edge-dark: rgba(45, 28, 54, 0.10);
-  --edge-light: rgba(255, 255, 255, 0.9);
-  --ink-inverse: #FFF9F2;
+  /* Vật liệu (§3.2, §3.3) */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.055'/%3E%3C/svg%3E");
+  --shadow-seam: 0 1px 0 rgba(58, 50, 36, 0.05);
 
-  /* Borders & Rules */
-  --rule: #EAE0D2;
-  --rule-strong: #D3C3AF;
+  /* Khoảng cách — cơ sở 5px, tỉ lệ ~1,48 (§5.1) */
+  --s-1: 3px;
+  --s-2: 5px;
+  --s-3: 9px;
+  --s-4: 14px;
+  --s-5: 21px;
+  --s-6: 31px;
+  --s-7: 46px;
+  --s-8: 68px;
 
-  /* Primary Brand & Accents */
-  --primary: #593E67;
-  --primary-hover: #462F52;
-  --primary-light: #F3EBF7;
-  --accent-berry: #84495F;
-  --switch-off: #8C7A96;
-  --accent-berry-hover: #723C50;
-  --accent-coral: #E06D44;
-  --accent-gold: #D89745;
-  --success: #3E7B44;
-  --warning: #D88924;
-  --danger: #C0392B;
-
-  /* Tints for status surfaces. A neutral background under an error message
-     reads as ordinary text; the message needs to carry its own colour. */
-  --danger-weak: #FBEAE7;
-  --success-weak: #E8F3E9;
-
-  /* The translation feedback controls under a bubble. They share one colour on
-     purpose: which of them is set is said by a filled glyph, not by a colour
-     each, so the row under a message does not read as a traffic light. Purple
-     on the light ground, the warm off-white on the dark one. */
-  --feedback-ink: var(--primary);
-
-  /* Chat bubbles. The sender is told apart by side first and colour second, so
-     the thread stays readable without colour vision. Ratios measured against
-     WCAG AA for body text (4.5:1). */
-  --bubble-mine: #A9524D;        /* white text -> 5.25:1 */
-  --bubble-mine-ink: #FFFFFF;
-  --bubble-other: #F1E9DE;       /* --ink -> 14.08:1 */
-  --bubble-other-ink: #241829;
-
-  /* Action accent, deliberately paired with dark ink: white on #FEA837 is
-     1.93:1, below even the large-text threshold. */
-  --accent-action: #FEA837;      /* dark ink -> 8.78:1 */
-  --accent-action-ink: #241829;
-  /* Warm accent for icons and headings 24px and up only — white on it is
-     3.17:1, which fails for body text. */
-  --accent-warm: #DE741C;
-
-  /* Shadows */
-  /* Two layers, not one: a tight shadow seats the surface on what is behind it,
-     a wide soft one gives the distance. A single blur reads as a smudge. */
-  --shadow-sm: 0 1px 2px rgba(45, 28, 54, 0.06);
-  --shadow-md: 0 1px 2px rgba(45, 28, 54, 0.05), 0 6px 16px rgba(45, 28, 54, 0.09);
-  --shadow-lg: 0 2px 4px rgba(45, 28, 54, 0.06), 0 16px 40px rgba(45, 28, 54, 0.14);
-  /* On a light ground a raised surface needs no rim light; the shadow is enough. */
-  --edge-highlight: 0 0 0 0 transparent;
-  --glow-a: rgba(89, 62, 103, 0.05);
-  --glow-b: rgba(254, 168, 55, 0.05);
-
-  /* Spacing */
-  --s-1: 4px;
-  --s-2: 8px;
-  --s-3: 12px;
-  --s-4: 16px;
-  --s-5: 24px;
-  --s-6: 32px;
-  --s-7: 48px;
-  --s-8: 64px;
-
-  /* Typography Sizes */
+  /* Cỡ chữ — trần 26px (§5.2) */
   --fs-micro: 0.6875rem;
   --fs-label: 0.75rem;
   --fs-small: 0.8125rem;
   --fs-body: 0.9375rem;
   --fs-lead: 1.0625rem;
-  --fs-title: 1.25rem;
-  --fs-display: 1.5rem;
+  --fs-title: 1.3125rem;
+  --fs-display: 1.625rem;
 
-  /* Border Radii */
-  --r-1: 4px;
-  --r-2: 8px;
-  --r-3: 12px;
-  --r-4: 16px;
-  --r-full: 9999px;
+  /* Bo góc — trần 4px (§5.3) */
+  --r-1: 2px;
+  --r-2: 3px;
+  --r-3: 4px;
 
-  /* Motion Durations */
+  /* Chuyển động — trần 160ms (§6) */
   --dur-press: 80ms;
   --dur-focus: 100ms;
-  --dur-hover: 150ms;
-  --dur-fade: 200ms;
+  --dur-hover: 120ms;
+  --dur-fade: 140ms;
 
-  /* Font Stacks */
-  --font-body: var(--font-plus-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  /* Font (§9) — biến --font-be-vietnam / --font-plex-mono do next/font đặt */
+  --font-body: var(--font-be-vietnam), "Segoe UI", system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "Cascadia Mono", monospace;
-  --font-cjk: "Hiragino Sans", "Yu Gothic", "Meiryo", "Microsoft YaHei", "Malgun Gothic", "Noto Sans CJK", sans-serif;
+  --font-cjk: "Hiragino Sans", "Yu Gothic", "Meiryo", "Microsoft YaHei",
+    "Malgun Gothic", "Noto Sans CJK", sans-serif;
   --font-thai: "Leelawadee UI", "Noto Sans Thai", "Thonburi", sans-serif;
 }
 
-/* ─── Dark Mode (Deep Plum #2A1A32 & #593E67) ─── */
+/* Dark theme = giấy dưới đèn bàn, không phải giao diện tối chung.
+   Xám ấm, không một sắc xanh-tím nào. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    color-scheme: dark;
+    --surface-ground: #191714;
+    --surface-label: #221f1a;
+    --surface-insert: #2a2620;
+    --surface-sunken: #131110;
 
-    --surface-ground: #2A1A32;
-    --surface-card: #3C2448;
-    --surface-label: #4E315C;
-    --surface-insert: #321C3C;
-    --surface-sunken: #1F1126;
+    --ink: #e8e3d7;
+    --ink-hover: #d6d0c2;
+    --ink-secondary: #b3ab99;
+    --ink-muted: #9c9384;
+    --ink-disabled: #5c564c;
+    --ink-inverse: #191714;
 
-    --surface-header: #1F1126;
-    --surface-header-berry: #84495F;
-    --text-on-header: #FFF9F2;
+    --rule: #39342b;
+    --rule-strong: #4e4739;
 
-    --surface-rail: #1F1126;
-    --ink-on-rail: #FFF9F2;
-    --rail-border: #3C2448;
+    --indigo: #8fb3c9;
+    --indigo-weak: rgba(143, 179, 201, 0.12);
+    --on-indigo: #221f1a;
+    --bengara: #d08a72;
+    --bengara-weak: rgba(208, 138, 114, 0.12);
+    --koke: #93b085;
 
-    --ink: #FFF9F2;
-    --ink-hover: #F0E6F5;
-    --ink-secondary: #E2D0EB;
-    --ink-muted: #BBA9C4;
-    --ink-disabled: #6B5377;
-
-    --ink-placeholder: #B9AAC2;
-    --edge-dark: rgba(0, 0, 0, 0.45);
-    --edge-light: rgba(255, 255, 255, 0.06);
-    --ink-inverse: #241829;
-
-    --rule: #4F355C;
-    --rule-strong: #6D4B7E;
-
-    --primary: #A366B5;
-    --primary-hover: #B97ACC;
-    --primary-light: #4A2E59;
-    --accent-berry: #C86B8A;
-    --switch-off: #8C7A96;
-    --accent-berry-hover: #D77F9C;
-    --accent-coral: #FF8A65;
-    --accent-gold: #E8AF65;
-    --success: #5DB566;
-    --warning: #F5A623;
-    --danger: #E74C3C;
-
-    --danger-weak: #4A2320;
-    --success-weak: #24382A;
-
-    --feedback-ink: var(--ink);
-
-    --bubble-mine: #A9524D;
-    --bubble-mine-ink: #FFFFFF;
-    --bubble-other: #6B4A79;       /* --ink -> 6.97:1 */
-    --bubble-other-ink: #FFF9F2;
-
-    --accent-action: #FEA837;
-    --accent-action-ink: #241829;
-    --accent-warm: #DE741C;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-    --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.45), 0 20px 48px rgba(0, 0, 0, 0.55);
-    /* In the dark a shadow cannot separate two dark surfaces, so the top edge
-       catches a hairline of light instead. */
-    --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 7%);
-    --glow-a: rgba(163, 102, 181, 0.10);
-    --glow-b: rgba(254, 168, 55, 0.06);
+    --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.03'/%3E%3C/svg%3E");
+    --shadow-seam: 0 1px 0 rgba(0, 0, 0, 0.25);
   }
 }
 
+/* Lặp lại y hệt để toggle thắng cả hai chiều */
 :root[data-theme="dark"] {
-  color-scheme: dark;
+  --surface-ground: #191714;
+  --surface-label: #221f1a;
+  --surface-insert: #2a2620;
+  --surface-sunken: #131110;
 
-  --surface-ground: #2A1A32;
-  --surface-card: #3C2448;
-  --surface-label: #4E315C;
-  --surface-insert: #321C3C;
-  --surface-sunken: #1F1126;
+  --ink: #e8e3d7;
+  --ink-hover: #d6d0c2;
+  --ink-secondary: #b3ab99;
+  --ink-muted: #9c9384;
+  --ink-disabled: #5c564c;
+  --ink-inverse: #191714;
 
-  --surface-header: #1F1126;
-  --surface-header-berry: #84495F;
-  --text-on-header: #FFF9F2;
+  --rule: #39342b;
+  --rule-strong: #4e4739;
 
-  --surface-rail: #1F1126;
-  --ink-on-rail: #FFF9F2;
-  --rail-border: #3C2448;
+  --indigo: #8fb3c9;
+  --indigo-weak: rgba(143, 179, 201, 0.12);
+  --on-indigo: #221f1a;
+  --bengara: #d08a72;
+  --bengara-weak: rgba(208, 138, 114, 0.12);
+  --koke: #93b085;
 
-  --ink: #FFF9F2;
-  --ink-hover: #F0E6F5;
-  --ink-secondary: #E2D0EB;
-  --ink-muted: #BBA9C4;
-  --ink-disabled: #6B5377;
-
-  --ink-placeholder: #B9AAC2;
-  --edge-dark: rgba(0, 0, 0, 0.45);
-  --edge-light: rgba(255, 255, 255, 0.06);
-  --ink-inverse: #241829;
-
-  --rule: #4F355C;
-  --rule-strong: #6D4B7E;
-
-  --primary: #A366B5;
-  --primary-hover: #B97ACC;
-  --primary-light: #4A2E59;
-  --accent-berry: #C86B8A;
-  --switch-off: #8C7A96;
-  --accent-berry-hover: #D77F9C;
-  --accent-coral: #FF8A65;
-  --accent-gold: #E8AF65;
-  --success: #5DB566;
-  --warning: #F5A623;
-  --danger: #E74C3C;
-
-  --danger-weak: #4A2320;
-  --success-weak: #24382A;
-
-  --feedback-ink: var(--ink);
-
-  --bubble-mine: #A9524D;
-  --bubble-mine-ink: #FFFFFF;
-  --bubble-other: #6B4A79;       /* --ink -> 6.97:1 */
-  --bubble-other-ink: #FFF9F2;
-
-  --accent-action: #FEA837;
-  --accent-action-ink: #241829;
-  --accent-warm: #DE741C;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.45), 0 20px 48px rgba(0, 0, 0, 0.55);
-  /* In the dark a shadow cannot separate two dark surfaces, so the top edge
-     catches a hairline of light instead. */
-  --edge-highlight: inset 0 1px 0 rgb(255 255 255 / 7%);
-  --glow-a: rgba(163, 102, 181, 0.10);
-  --glow-b: rgba(254, 168, 55, 0.06);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='0.03'/%3E%3C/svg%3E");
+  --shadow-seam: 0 1px 0 rgba(0, 0, 0, 0.25);
 }
 
-:root[data-theme="light"] {
-  color-scheme: light;
-
-  --surface-ground: #FFF9F2;
-  --surface-card: #FFFFFF;
-  --surface-label: #F8EFE4;
-  --surface-insert: #FAF3EA;
-  --surface-sunken: #EFE4D4;
-
-  --surface-header: #593E67;
-  --surface-header-berry: #84495F;
-  --text-on-header: #FFF9F2;
-
-  /* The navigation rail gets its own tokens rather than sharing the header's.
-     Sharing meant the rail stayed deep purple in both themes while the two
-     columns beside it inverted, so switching the theme looked half-applied.
-     Light: cream surface, ink icons (9.09:1). Dark: deep plum, cream (17.2:1). */
-  --surface-rail: #FFFFFF;
-  --ink-on-rail: #593E67;
-  --rail-border: #EAE0D2;
-
-  --ink: #241829;
-  --ink-hover: #3E294A;
-  --ink-secondary: #593E67;
-  --ink-muted: #6E5C78;
-  --ink-disabled: #B4A6BC;
-
-  /* Placeholders are pseudo-elements, so the contrast audit that walks text
-     nodes never saw them — chatscope's near-black default survived on a dark
-     surface at 1.92:1. This token is checked against both grounds. */
-  --ink-placeholder: #6E5C78;
-  /* Boundaries are a pair of hairlines, one darker and one lighter, instead of
-     a single rule: the columns share a background, so an edge has to be read
-     as a bevel rather than as a line drawn between two different colours. */
-  --edge-dark: rgba(45, 28, 54, 0.10);
-  --edge-light: rgba(255, 255, 255, 0.9);
-  --ink-inverse: #FFF9F2;
-
-  --rule: #EAE0D2;
-  --rule-strong: #D3C3AF;
-
-  --primary: #593E67;
-  --primary-hover: #462F52;
-  --primary-light: #F3EBF7;
-  --accent-berry: #84495F;
-  --switch-off: #8C7A96;
-  --accent-berry-hover: #723C50;
-  --accent-coral: #E06D44;
-  --accent-gold: #D89745;
-  --success: #3E7B44;
-  --warning: #D88924;
-  --danger: #C0392B;
-
-  /* Tints for status surfaces. A neutral background under an error message
-     reads as ordinary text; the message needs to carry its own colour. */
-  --danger-weak: #FBEAE7;
-  --success-weak: #E8F3E9;
-
-  /* The translation feedback controls under a bubble. They share one colour on
-     purpose: which of them is set is said by a filled glyph, not by a colour
-     each, so the row under a message does not read as a traffic light. Purple
-     on the light ground, the warm off-white on the dark one. */
-  --feedback-ink: var(--primary);
-
-  /* Chat bubbles. The sender is told apart by side first and colour second, so
-     the thread stays readable without colour vision. Ratios measured against
-     WCAG AA for body text (4.5:1). */
-  --bubble-mine: #A9524D;        /* white text -> 5.25:1 */
-  --bubble-mine-ink: #FFFFFF;
-  --bubble-other: #F1E9DE;       /* --ink -> 14.08:1 */
-  --bubble-other-ink: #241829;
-
-  /* Action accent, deliberately paired with dark ink: white on #FEA837 is
-     1.93:1, below even the large-text threshold. */
-  --accent-action: #FEA837;      /* dark ink -> 8.78:1 */
-  --accent-action-ink: #241829;
-  /* Warm accent for icons and headings 24px and up only — white on it is
-     3.17:1, which fails for body text. */
-  --accent-warm: #DE741C;
-
-  /* Two layers, not one: a tight shadow seats the surface on what is behind it,
-     a wide soft one gives the distance. A single blur reads as a smudge. */
-  --shadow-sm: 0 1px 2px rgba(45, 28, 54, 0.06);
-  --shadow-md: 0 1px 2px rgba(45, 28, 54, 0.05), 0 6px 16px rgba(45, 28, 54, 0.09);
-  --shadow-lg: 0 2px 4px rgba(45, 28, 54, 0.06), 0 16px 40px rgba(45, 28, 54, 0.14);
-  /* On a light ground a raised surface needs no rim light; the shadow is enough. */
-  --edge-highlight: 0 0 0 0 transparent;
-  --glow-a: rgba(89, 62, 103, 0.05);
-  --glow-b: rgba(254, 168, 55, 0.05);
-}
-
-/* ─── Global Base Styles ─── */
+/* ─── Nền ───────────────────────────────────────────────── */
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) {
   font-family: var(--font-body);
   font-size: var(--fs-body);
   line-height: 1.55;
   color: var(--ink);
   background-color: var(--surface-ground);
+  background-image: var(--grain);
   min-height: 100svh;
-  transition: background-color var(--dur-fade) ease, color var(--dur-fade) ease;
 }
 
-a {
-  color: var(--primary);
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) a {
+  color: var(--indigo);
   text-decoration: none;
-  border-bottom: 1px solid var(--rule);
-  transition: border-color var(--dur-hover) ease, color var(--dur-hover) ease;
+  border-bottom: 1px solid var(--rule-strong);
+  transition: border-color var(--dur-hover) linear;
 }
 
-a:hover {
-  border-bottom-color: var(--primary);
-  color: var(--primary-hover);
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) a:hover {
+  border-bottom-color: var(--indigo);
 }
 
-button {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) button {
   cursor: pointer;
   border: none;
   background: none;
@@ -413,40 +180,42 @@ button {
   font-size: inherit;
 }
 
-input,
-textarea,
-select {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) input,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) textarea,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) select {
   font-family: inherit;
   font-size: inherit;
   outline: none;
 }
 
-:focus-visible {
-  outline: 2px solid var(--primary);
+/* Focus ring bắt buộc ở mọi phần tử tương tác (§11).
+   :focus-visible — không phải :focus — để chuột không kéo ring theo. */
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) :focus-visible {
+  outline: 2px solid var(--indigo);
   outline-offset: 2px;
 }
 
-/* Multi-language Typography Support */
-[lang="ja"],
-[lang="zh"],
-[lang="ko"] {
+/* ─── Chữ đa ngữ (§9) ───────────────────────────────────── */
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ja"],
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="zh"],
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ko"] {
   font-family: var(--font-cjk);
   line-height: 1.75;
 }
 
-[lang="ko"] {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="ko"] {
   word-break: keep-all;
 }
 
-[lang="th"] {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) [lang="th"] {
   font-family: var(--font-thai);
   line-height: 1.75;
 }
 
-/* Scrollbars */
+/* ─── Thanh cuộn ────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -455,13 +224,9 @@ select {
 
 ::-webkit-scrollbar-thumb {
   background: var(--rule-strong);
-  border-radius: 4px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--ink-muted);
-}
-
+/* ─── Tiện dụng ─────────────────────────────────────────── */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -474,10 +239,11 @@ select {
   border: 0;
 }
 
+/* ─── Giảm chuyển động (§6) ─────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *,
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::before,
+  body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
