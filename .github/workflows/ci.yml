@@ -4,11 +4,21 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+# Giới hạn quyền của GITHUB_TOKEN ở mức tối thiểu cần thiết
+permissions:
+  contents: read
+
+# Huỷ lần chạy cũ khi có commit mới trên cùng nhánh, tránh tiêu tốn phút chạy
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -23,10 +33,16 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ eval/
 
       - name: Run tests
         run: pytest tests/ -v --tb=short
         env:
           APP_ENV: test
+          # Giá trị giả lập dùng riêng cho CI. Tệp .env không được commit nên
+          # môi trường CI phải khai báo đầy đủ các biến bắt buộc, nếu không
+          # Settings() sẽ raise ValidationError khi khởi tạo.
+          JWT_SECRET: ci-test-secret-do-not-use-in-production
+          # Cố định provider cho CI để không phụ thuộc giá trị mặc định trong config
+          LLM_PROVIDER: openai
           OPENAI_API_KEY: test-key

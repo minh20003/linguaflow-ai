@@ -4,19 +4,40 @@ uvicorn[standard]>=0.34.0
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
+python-multipart>=0.0.9
 
 # AI / LangChain
 langchain>=0.3.0
-langchain-openai>=0.3.0
 langgraph>=0.2.0
+# LLM providers — xem LLM_PROVIDER trong .env (langchain-openai dùng cho cả OpenAI và DeepSeek)
+langchain-openai>=0.3.0
+langchain-groq>=0.2.0
+langchain-google-genai>=2.0.0
+# Observability cho Agent (F-03.4). API CallbackHandler khác nhau giữa các major
+# version — module src/agents/observability.py viết theo v4.
+langfuse>=4.0.0,<5.0.0
+# Nhan dien ngon ngu cuc bo (~1ms), giam so lan goi LLM detect
+langdetect>=1.0.9
+# Provider dich du phong khi LLM loi (ADR-07) — khong can API key
+deep-translator>=1.11.0
 
-# Database (uncomment as needed)
-# sqlalchemy>=2.0.0
-# alembic>=1.14.0
-# psycopg2-binary>=2.9.0
+# Database
+sqlalchemy[asyncio]>=2.0.0
+aiosqlite>=0.20.0
+# Migrations — bat buoc tu khi trien khai that: create_all khong ALTER duoc bang
+# da ton tai, xoa co so du lieu de doi schema la mat du lieu nguoi dung (ADR-06).
+alembic>=1.14.0
+# Driver PostgreSQL bat dong bo. Phai la asyncpg chu khong phai psycopg2:
+# create_async_engine khong mo duoc URL cua driver dong bo.
+asyncpg>=0.30.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
+
+# Authentication
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 
 # Dev tools
 ruff>=0.8.0
