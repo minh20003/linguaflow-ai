@@ -42,6 +42,19 @@ export interface TranslationSummary {
   /** This account's own rating, null until it votes (F-05). */
   my_rating: number | null;
   my_correction: string | null;
+  /**
+   * This account's own newest wording for the translation (§3.10).
+   *
+   * Private like `my_rating`: two members reading the same `translation_id`
+   * receive different values here, so it must never be cached across accounts.
+   */
+  my_edit: TranslationEditSummary | null;
+}
+
+export interface TranslationEditSummary {
+  edit_id: string;
+  edited_text: string;
+  edited_at: string;
 }
 
 export interface HistoryMessage {
@@ -244,6 +257,25 @@ export function submitTranslationFeedback(
     `/translations/${encodeURIComponent(translationId)}/feedback`,
     token,
     { method: "POST", body: JSON.stringify({ rating, correction: correction ?? null }) },
+  );
+}
+
+/**
+ * Store this account's own wording for a translation (F-05, §3.10).
+ *
+ * Appends rather than replaces: the server keeps every attempt and reports the
+ * newest one. Nobody else in the conversation can read the result, so no
+ * WebSocket event follows and the response is the only confirmation.
+ */
+export function submitTranslationEdit(
+  translationId: string,
+  editedText: string,
+  token?: string,
+): Promise<TranslationEditSummary & { translation_id: string; message_id: string; target_language: string }> {
+  return request(
+    `/translations/${encodeURIComponent(translationId)}/edits`,
+    token,
+    { method: "POST", body: JSON.stringify({ edited_text: editedText }) },
   );
 }
 

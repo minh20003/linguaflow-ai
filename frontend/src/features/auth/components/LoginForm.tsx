@@ -8,12 +8,16 @@ import Input from "@/shared/ui/Input";
 import { login } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
 import { mainLabel } from "@/shared/lib/i18n";
+import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;
 
 export default function LoginForm() {
   const router = useRouter();
+  /* The rail's choice drives the labels here too, not just the sub-labels —
+     otherwise picking 中文 leaves the form in Vietnamese (§1.3). */
+  const { lang } = useLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -56,20 +60,20 @@ export default function LoginForm() {
       {error && <div className={styles.formError} role="alert"><span className={styles.errorMark} aria-hidden="true">!</span>{error}</div>}
 
       <div className={styles.fields}>
-        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder="linguachat@vidu.com" label={mainLabel("email")} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => ({ ...previous, email: undefined })); }} error={errors.email} />
-        <Input id="login-password" type="password" autoComplete="current-password" placeholder="Nhập mật khẩu của bạn" label={mainLabel("password")} showText={mainLabel("show")} hideText={mainLabel("hide")} value={password} onChange={(event) => { setPassword(event.target.value); setErrors((previous) => ({ ...previous, password: undefined })); }} error={errors.password} />
+        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder="linguachat@vidu.com" label={mainLabel("email", lang)} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => ({ ...previous, email: undefined })); }} error={errors.email} />
+        <Input id="login-password" type="password" autoComplete="current-password" placeholder="Nhập mật khẩu của bạn" label={mainLabel("password", lang)} showText={mainLabel("show", lang)} hideText={mainLabel("hide", lang)} value={password} onChange={(event) => { setPassword(event.target.value); setErrors((previous) => ({ ...previous, password: undefined })); }} error={errors.password} />
       </div>
 
       <div className={styles.row}>
         <label className={styles.check}>
           <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-          <span>{mainLabel("remember")}</span>
+          <span>{mainLabel("remember", lang)}</span>
         </label>
-        <Link href="/forgot-password" className={styles.quiet}>{mainLabel("forgot")}</Link>
+        <Link href="/forgot-password" className={styles.quiet}>{mainLabel("forgot", lang)}</Link>
       </div>
 
       <Button type="submit" size="lg" fullWidth loading={loading} className={styles.loginButton}>
-        <span className={styles.actionMain}>{mainLabel("signIn")}</span>
+        <span className={styles.actionMain}>{mainLabel("signIn", lang)}</span>
       </Button>
 
       <p className={styles.footer}>Bạn mới đến LinguaFlow? <Link href="/register">Tạo tài khoản miễn phí</Link></p>

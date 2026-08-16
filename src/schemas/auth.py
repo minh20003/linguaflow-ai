@@ -96,7 +96,7 @@ class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     display_name: str | None = Field(default=None, max_length=100)
-    preferred_language: str = Field(default="vi", min_length=2, max_length=10)
+    preferred_language: str = Field(default="en", min_length=2, max_length=10)
 
     @field_validator("username")
     @classmethod
@@ -165,6 +165,7 @@ class UserResponse(BaseModel):
     display_name: str | None = None
     role: str
     preferred_language: str
+    interface_language: str
     created_at: datetime
 
     @model_validator(mode="after")
@@ -197,5 +198,29 @@ class UpdateLanguageRequest(BaseModel):
     @field_validator("preferred_language")
     @classmethod
     def validate_language(cls, v: str) -> str:
+        """Validate that the language code is supported."""
+        return normalize_language(v)
+
+
+class UpdateInterfaceLanguageRequest(BaseModel):
+    """Request schema for updating the language of the interface (§1.2).
+
+    Separate from `UpdateLanguageRequest` because the two settings answer
+    different questions and change different things: this one repaints the
+    screen immediately and costs nothing, while the reading language only
+    affects messages sent from then on and spends LLM quota.
+    """
+
+    interface_language: str = Field(
+        ...,
+        description="ISO 639-1 language code",
+        min_length=2,
+        max_length=10,
+        examples=["en", "vi", "ja"],
+    )
+
+    @field_validator("interface_language")
+    @classmethod
+    def validate_interface_language(cls, v: str) -> str:
         """Validate that the language code is supported."""
         return normalize_language(v)

@@ -55,13 +55,21 @@ async def test_registration_returns_a_session_that_authenticates(client):
     )
     assert profile.status_code == 200
     assert profile.json()["email"] == "new@example.com"
+    # Registered with vi explicitly, and the one choice fills both settings.
     assert profile.json()["preferred_language"] == "vi"
+    assert profile.json()["interface_language"] == "vi"
     assert profile.json()["role"] == "member"
 
 
 @pytest.mark.asyncio
-async def test_registration_defaults_to_vietnamese(client):
-    """The product is Vietnamese-first; an omitted preference means Vietnamese."""
+async def test_registration_defaults_to_english(client):
+    """An omitted preference means English, for both languages.
+
+    Changed on 16/08: the default used to be Vietnamese, from when the product
+    was built for one classroom. English is the language every label table
+    covers in full, so it is what a stranger who has chosen nothing can
+    certainly read (docs/CONTRACT.md §1.3).
+    """
     response = await client.post(
         "/api/v1/auth/register", json=register_body(email="default@example.com")
     )
@@ -70,7 +78,9 @@ async def test_registration_defaults_to_vietnamese(client):
     profile = await client.get(
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
     )
-    assert profile.json()["preferred_language"] == "vi"
+    body = profile.json()
+    assert body["preferred_language"] == "en"
+    assert body["interface_language"] == "en"
 
 
 @pytest.mark.asyncio

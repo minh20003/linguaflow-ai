@@ -3,10 +3,12 @@
   flex: 0 0 auto;
 }
 
+/* Same 32px disc as the attach and send buttons on the same row: the three are
+   one set of icon buttons, so their hover washes have to be one size. */
 .trigger {
   display: grid;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border: 0;
   border-radius: var(--r-full);

@@ -78,7 +78,7 @@ export default function EmojiPicker({ onSelect, disabled = false }: EmojiPickerP
         disabled={disabled}
         onClick={() => setOpen((value) => !value)}
       >
-        <Smile size={20} strokeWidth={1.8} aria-hidden="true" />
+        <Smile size={18} strokeWidth={1.8} aria-hidden="true" />
       </button>
     </div>
   );

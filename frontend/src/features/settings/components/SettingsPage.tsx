@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { MessagesSquare, Settings as SettingsIcon } from "lucide-react";
-import { listLanguages, updateLanguage } from "@/shared/lib/api";
+import { listLanguages, updateInterfaceLanguage, updateLanguage } from "@/shared/lib/api";
 import {
   getStoredAccessToken,
   getStoredRefreshToken,
@@ -12,6 +12,12 @@ import {
   saveSession,
 } from "@/shared/lib/auth-session";
 import { languageLabel } from "@/shared/lib/constants";
+import {
+  readInterfaceLanguage,
+  setInterfaceLanguage,
+  subscribeToInterfaceLanguage,
+} from "@/shared/lib/ui-language";
+import { useUiText } from "@/shared/lib/use-ui-text";
 import LanguagePicker from "@/shared/ui/LanguagePicker";
 import Logo from "@/shared/ui/Logo";
 import ThemeToggle from "@/shared/ui/ThemeToggle";
@@ -48,7 +54,16 @@ function subscribeToActivity(onStoreChange: () => void): () => void {
  */
 export default function SettingsPage() {
   const me = useMemo(() => getStoredUser(), []);
-  const [language, setLanguage] = useState(me?.preferred_language ?? "vi");
+  const [language, setLanguage] = useState(me?.preferred_language ?? "en");
+  // Read through the store rather than copied into state: `saveSession` also
+  // writes it, so a login in another tab has to move this screen too.
+  const uiLang = useSyncExternalStore(
+    subscribeToInterfaceLanguage,
+    readInterfaceLanguage,
+    () => "en" as const,
+  );
+  const t = useUiText();
+  const [savingInterface, setSavingInterface] = useState(false);
   const [codes, setCodes] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -94,6 +109,39 @@ export default function SettingsPage() {
     }
   }, [language]);
 
+  /**
+   * Change the language of the app itself.
+   *
+   * Optimistic on purpose: the store is written first so the screen repaints
+   * under the pointer, and rolled back if the server refuses. Waiting for the
+   * round trip would make the one setting that costs nothing feel slower than
+   * the one that spends LLM quota.
+   */
+  const chooseInterfaceLanguage = useCallback(async (code: string) => {
+    const previous = readInterfaceLanguage();
+    setInterfaceLanguage(code);
+    setError("");
+    setSavingInterface(true);
+    try {
+      const accessToken = getStoredAccessToken() ?? "";
+      const updated = await updateInterfaceLanguage(code, accessToken);
+      saveSession(
+        {
+          access_token: accessToken,
+          refresh_token: getStoredRefreshToken() ?? "",
+          token_type: "bearer",
+          user: updated,
+        },
+        isRememberedSession(),
+      );
+    } catch (caught) {
+      setInterfaceLanguage(previous);
+      setError((caught as Error).message);
+    } finally {
+      setSavingInterface(false);
+    }
+  }, []);
+
   const toggleActivity = useCallback((next: boolean) => {
     localStorage.setItem(ACTIVITY_KEY, next ? "1" : "0");
     activityListeners.forEach((notify) => notify());
@@ -101,17 +149,17 @@ export default function SettingsPage() {
 
   return (
     <main className={styles.shell}>
-      <nav className={styles.navRail} aria-label="Điều hướng chính">
+      <nav className={styles.navRail} aria-label={t("nav.main")}>
         <span className={styles.navRailLogo}><Logo size={30} title="LinguaFlow" /></span>
-        <Link className={styles.navRailButton} href="/chat" aria-label="Tin nhắn" title="Tin nhắn">
+        <Link className={styles.navRailButton} href="/chat" aria-label={t("nav.messages")} title={t("nav.messages")}>
           <MessagesSquare size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
         <Link
           className={styles.navRailButton}
           href="/settings"
           aria-current="page"
-          aria-label="Cài đặt"
-          title="Cài đặt"
+          aria-label={t("nav.settings")}
+          title={t("nav.settings")}
         >
           <SettingsIcon size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
@@ -119,52 +167,59 @@ export default function SettingsPage() {
 
       <div className={styles.content}>
         <header className={styles.head}>
-          <h1>Cài đặt</h1>
-          <p>{me?.email ?? "Chưa đăng nhập"}</p>
+          <h1>{t("settings.title")}</h1>
+          <p>{me?.email ?? t("settings.signedOut")}</p>
         </header>
 
+        {/* The interface language comes first: someone who cannot read this
+            screen needs that control before any other one on it. */}
+        <section className={styles.card} aria-labelledby="settings-interface">
+          <h2 id="settings-interface">{t("settings.interface.title")}</h2>
+          <p className={styles.hint}>{t("settings.interface.hint")}</p>
+          <LanguagePicker
+            id="interface-language"
+            value={uiLang}
+            onChange={chooseInterfaceLanguage}
+            label={t("settings.interface.label")}
+            codes={codes}
+            disabled={savingInterface}
+          />
+        </section>
+
         <section className={styles.card} aria-labelledby="settings-language">
-          <h2 id="settings-language">Ngôn ngữ đọc</h2>
-          <p className={styles.hint}>
-            Mọi tin nhắn người khác gửi sẽ được dịch sang ngôn ngữ này. Bạn vẫn
-            xem được bản gốc trên từng tin.
-          </p>
+          <h2 id="settings-language">{t("settings.reading.title")}</h2>
+          <p className={styles.hint}>{t("settings.reading.hint")}</p>
           <LanguagePicker
             id="reading-language"
             value={language}
             onChange={chooseLanguage}
-            label="Ngôn ngữ bạn muốn đọc"
+            label={t("settings.reading.label")}
             codes={codes}
             disabled={saving}
           />
           <p className={styles.feedback} role="status">
-            {saving ? "Đang lưu…" : status}
+            {saving ? t("settings.saving") : status}
           </p>
           {error && <p className={styles.error} role="alert">{error}</p>}
         </section>
 
         <section className={styles.card} aria-labelledby="settings-activity">
-          <h2 id="settings-activity">Trạng thái hoạt động</h2>
-          <p className={styles.hint}>
-            Hiện chấm báo đang trực tuyến cạnh tên người khác.
-          </p>
+          <h2 id="settings-activity">{t("settings.activity.title")}</h2>
+          <p className={styles.hint}>{t("settings.activity.hint")}</p>
           <label className={styles.switchRow}>
             <input
               type="checkbox"
               checked={showActivity}
               onChange={(event) => toggleActivity(event.target.checked)}
             />
-            <span>Hiển thị trạng thái hoạt động</span>
+            <span>{t("settings.activity.toggle")}</span>
           </label>
-          <p className={styles.hint}>
-            Tuỳ chọn này chỉ áp dụng cho trình duyệt này. Máy chủ chưa phát đi
-            trạng thái trực tuyến, nên nó không đổi những gì người khác thấy về bạn.
-          </p>
+          <p className={styles.hint}>{t("settings.activity.note")}</p>
         </section>
 
         <section className={styles.card} aria-labelledby="settings-theme">
-          <h2 id="settings-theme">Giao diện</h2>
-          <p className={styles.hint}>Chọn nền sáng, nền tối, hoặc theo hệ thống.</p>
+          <h2 id="settings-theme">{t("settings.theme.title")}</h2>
+          <p className={styles.hint}>{t("settings.theme.hint")}</p>
           <ThemeToggle />
         </section>
       </div>

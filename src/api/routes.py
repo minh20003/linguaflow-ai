@@ -53,6 +53,7 @@ from src.schemas.auth import (
     RefreshRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
     UserResponse,
 )
@@ -69,6 +70,9 @@ from src.schemas.chat import (
     MessageResponse,
     MessageUpdatedEvent,
     ReadReceiptResponse,
+    TranslationEditRequest,
+    TranslationEditResponse,
+    TranslationEditSummary,
     TranslationSummary,
 )
 from src.services.chat import (
@@ -159,6 +163,11 @@ async def register(
         display_name=display_name,
         password_hash=get_password_hash(request.password),
         preferred_language=request.preferred_language,
+        # One language question at sign-up, two settings behind it. Someone who
+        # picks Japanese wants to read Japanese *and* see a Japanese menu; the
+        # two only part company later, if they go and change one of them
+        # (docs/CONTRACT.md §1.3).
+        interface_language=request.preferred_language,
     )
     db.add(user)
     try:
@@ -353,6 +362,33 @@ async def update_preferred_language(
         Updated user information
     """
     current_user.preferred_language = request.preferred_language
+    await db.commit()
+    await db.refresh(current_user)
+
+    return UserResponse.model_validate(current_user)
+
+
+@router.put("/auth/me/interface-language", response_model=UserResponse)
+async def update_interface_language(
+    request: UpdateInterfaceLanguageRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Update the language the interface is drawn in (docs/CONTRACT.md §1.2).
+
+    Deliberately does not touch `preferred_language`. The two are set together
+    only once, when the account is created; from then on someone reading
+    Japanese messages behind a Vietnamese menu is a choice the product allows.
+
+    Args:
+        request: New interface language.
+        current_user: The authenticated user from JWT token.
+        db: Database session.
+
+    Returns:
+        Updated user information.
+    """
+    current_user.interface_language = request.interface_language
     await db.commit()
     await db.refresh(current_user)
 
@@ -784,6 +820,58 @@ async def submit_translation_feedback(
     return FeedbackResponse(feedback_id=feedback.id)
 
 
+@router.post(
+    "/translations/{translation_id}/edits",
+    response_model=TranslationEditResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_translation_edit(
+    translation_id: str,
+    payload: TranslationEditRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> TranslationEditResponse:
+    """Store the caller's own wording for a translation (docs/CONTRACT.md §3.10).
+
+    Each call appends, so editing again keeps the earlier attempt. The text is
+    private to its author and no WebSocket event follows: nobody else's screen
+    changes because of it.
+    """
+    service = ChatService(db)
+    try:
+        edit, translation = await service.submit_translation_edit(
+            user_id=current_user.id,
+            translation_id=translation_id,
+            edited_text=payload.edited_text,
+        )
+    except TranslationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Translation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except ConversationValidationError as exc:
+        # A withdrawn message, which is a conflict with the message's state
+        # rather than a malformed request — same code §3.6 uses for editing one.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    return TranslationEditResponse(
+        edit_id=edit.id,
+        translation_id=translation.id,
+        message_id=translation.message_id,
+        target_language=translation.target_language,
+        edited_text=edit.edited_text,
+        edited_at=edit.created_at,
+    )
+
+
 async def _translations_by_message(
     db: AsyncSession,
     message_ids: list[str],
@@ -829,9 +917,18 @@ async def _translations_by_message(
         ).all()
     }
 
+    # The caller's own edits only. Loaded here rather than joined above so the
+    # privacy rule is visible in one place: this dict is keyed by translation
+    # and filtered by reader, and nothing else ever reaches these rows (§3.10).
+    my_edits = await ChatService(db).latest_translation_edits(
+        translation_ids=[row.id for row in rows],
+        editor_id=reader_id,
+    )
+
     grouped: dict[str, list[TranslationSummary]] = {}
     for row in rows:
         feedback = my_feedback.get(row.id)
+        edit = my_edits.get(row.id)
         grouped.setdefault(row.message_id, []).append(
             # Built field by field rather than validated from the ORM object:
             # the row's primary key is `id`, and the client needs it under the
@@ -846,6 +943,11 @@ async def _translations_by_message(
                 is_fallback=row.is_fallback,
                 my_rating=feedback.rating if feedback else None,
                 my_correction=feedback.correction if feedback else None,
+                my_edit=TranslationEditSummary(
+                    edit_id=edit.id,
+                    edited_text=edit.edited_text,
+                    edited_at=edit.created_at,
+                ) if edit else None,
             )
         )
     return grouped

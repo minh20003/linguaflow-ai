@@ -15,6 +15,7 @@ from src.database.models import (
     ConversationMember,
     Feedback,
     Message,
+    TranslationEdit,
     TranslationResult,
     User,
 )
@@ -289,6 +290,7 @@ class ChatService:
                 Message.conversation_id,
                 Message.original_text,
                 Message.created_at,
+                Message.deleted_at,
                 func.row_number()
                 .over(
                     partition_by=Message.conversation_id,
@@ -296,12 +298,13 @@ class ChatService:
                 )
                 .label("rank"),
             )
-            # A withdrawn message must not go on identifying the conversation in
-            # the sidebar; the one before it becomes the preview again.
-            .where(
-                Message.conversation_id.in_(conversation_ids),
-                Message.deleted_at.is_(None),
-            )
+            # Withdrawn messages stay in the ranking. The earlier rule skipped
+            # them so the message before became the preview again, which read as
+            # the conversation quietly rewinding: the row went back to older
+            # text, or blank when there was nothing before it, and neither says
+            # what happened. The row now reports the withdrawal instead — see
+            # the empty-text convention below and docs/CONTRACT.md §3.5.
+            .where(Message.conversation_id.in_(conversation_ids))
             .subquery()
         )
         newest = (await self._db.execute(select(ranked).where(ranked.c.rank == 1))).all()
@@ -321,9 +324,15 @@ class ChatService:
             ).all()
         }
 
+        # A withdrawn message previews as empty text with its timestamp intact.
+        # The wording belongs to the client: it is interface copy, and this
+        # endpoint has no business deciding which language the reader wants it
+        # in. Ordinary messages can never be empty — the send path rejects blank
+        # text — so "" is unambiguous (docs/CONTRACT.md §3.5).
         return {
             row.conversation_id: (
-                translated.get(row.id, row.original_text),
+                "" if row.deleted_at is not None
+                else translated.get(row.id, row.original_text),
                 row.created_at,
             )
             for row in newest
@@ -853,6 +862,100 @@ class ChatService:
         await self._db.commit()
         await self._db.refresh(feedback)
         return feedback
+
+    async def submit_translation_edit(
+        self,
+        *,
+        user_id: str,
+        translation_id: str,
+        edited_text: str,
+    ) -> tuple[TranslationEdit, TranslationResult]:
+        """Store one account's wording for a translation (docs/CONTRACT.md §3.10).
+
+        Appends rather than replaces, unlike `submit_translation_feedback`
+        above: an edit that supersedes another is still evidence of what the
+        machine got wrong, and the history is the whole point of the table.
+
+        Args:
+            user_id: Account writing the edit; the only account that will read it.
+            translation_id: Translation being reworded.
+            edited_text: The wording this account proposes.
+
+        Returns:
+            The stored edit and the translation it belongs to, so the caller can
+            answer with the target language without a second query.
+
+        Raises:
+            TranslationNotFoundError: No translation carries that id.
+            ConversationMembershipError: Caller is not in that conversation.
+            ConversationValidationError: The message has been withdrawn.
+        """
+        translation = await self._db.get(TranslationResult, translation_id)
+        if translation is None:
+            raise TranslationNotFoundError(translation_id)
+
+        message = await self._db.get(Message, translation.message_id)
+        if message is None:
+            raise TranslationNotFoundError(translation_id)
+
+        # Membership rather than "reads this language": the server keeps the
+        # same scope the feedback endpoint already uses, and the narrower rule
+        # about which controls appear belongs to the client (§3.10).
+        await self._require_membership(
+            conversation_id=message.conversation_id,
+            user_id=user_id,
+        )
+
+        if message.deleted_at is not None:
+            raise ConversationValidationError(
+                "Cannot edit the translation of a withdrawn message"
+            )
+
+        edit = TranslationEdit(
+            translation_id=translation_id,
+            editor_id=user_id,
+            edited_text=edited_text,
+        )
+        self._db.add(edit)
+        await self._db.commit()
+        await self._db.refresh(edit)
+        return edit, translation
+
+    async def latest_translation_edits(
+        self,
+        *,
+        translation_ids: list[str],
+        editor_id: str,
+    ) -> dict[str, TranslationEdit]:
+        """One account's newest edit for each of several translations.
+
+        Args:
+            translation_ids: Translations being rendered.
+            editor_id: Account whose edits are read; never another member's.
+
+        Returns:
+            Newest edit per translation id, missing where that account never
+            edited.
+        """
+        if not translation_ids:
+            return {}
+
+        rows = await self._db.scalars(
+            select(TranslationEdit)
+            .where(
+                TranslationEdit.translation_id.in_(translation_ids),
+                TranslationEdit.editor_id == editor_id,
+            )
+            .order_by(TranslationEdit.created_at, TranslationEdit.id)
+        )
+        # Ascending, so the last row for each translation wins. `created_at` is
+        # stamped in Python with microsecond precision (see the column), which is
+        # what makes "newest" meaningful — the `server_default` beside it renders
+        # as SQLite's whole-second CURRENT_TIMESTAMP and would let two quick
+        # edits tie. The id only keeps the order deterministic if a row ever does
+        # arrive without the Python default, as a raw SQL insert would; it is a
+        # random uuid4, so it settles such a tie arbitrarily rather than correctly.
+        return {edit.translation_id: edit for edit in rows}
 
     async def _require_membership(
         self,

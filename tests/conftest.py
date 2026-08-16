@@ -21,6 +21,7 @@ from src.api.websocket import router as websocket_router
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import translation as translation_module
 from src.services.connection_manager import ConnectionManager
 
 # ========================
@@ -89,6 +90,33 @@ def _init_engines(db_file: str) -> None:
     )
 
 
+async def _settle_background_translations() -> None:
+    """Stop translation tasks still running for the test that just finished.
+
+    Sending or editing a message schedules translation in a task that
+    deliberately outlives the request (`schedule_translations`). No test waits
+    for it, so without this the task is still querying when `_close_engines`
+    disposes the engine underneath it: the aiosqlite connection is gone, the
+    task dies mid-statement, and its session is never checked back in.
+    SQLAlchemy then warns from inside the garbage collector, and pytest blames
+    whichever test happens to be running at that moment — which is how a change
+    in one module could redden a test in another that never touched it.
+
+    Must run *before* the engines are disposed, which is why it is called from
+    the fixtures that dispose them rather than from an autouse fixture: an
+    autouse fixture is set up first and so torn down last, exactly too late.
+
+    Cancelled rather than awaited: a task blocked on a real LLM call would hang
+    the suite. Production never does this — the process is not torn down between
+    messages — so this belongs to the harness, not to the service.
+    """
+    pending = [task for task in translation_module._BACKGROUND_TASKS if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def _close_engines() -> None:
     """Dispose all engines after test."""
     global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
@@ -141,7 +169,9 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
     finally:
         await session.close()
 
-    # Drop all tables and clean up.
+    # Drop all tables and clean up. Background translations first: disposing the
+    # engine under a running task is what strands the connection.
+    await _settle_background_translations()
     await _close_engines()
     try:
         os.unlink(db_file)
@@ -354,6 +384,7 @@ async def _db_for_ws_fixture() -> None:
         _db_for_ws_fixture._db_file = db_file
         yield
         if hasattr(_db_for_ws_fixture, '_db_file'):
+            await _settle_background_translations()
             await _close_engines()
             try:
                 os.unlink(_db_for_ws_fixture._db_file)

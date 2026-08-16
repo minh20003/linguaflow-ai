@@ -1,7 +1,7 @@
 """SQLAlchemy database models."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -59,6 +59,15 @@ class User(Base):
         default="member",
     )
     preferred_language: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        default="en",
+    )
+    # The language of the interface, separate from the one messages are
+    # translated into (docs/CONTRACT.md §1.2). Defaults to English because that
+    # is the one language the label tables are guaranteed to cover in full, and
+    # it is what a stranger sees before they have chosen anything.
+    interface_language: Mapped[str] = mapped_column(
         String(10),
         nullable=False,
         default="en",
@@ -354,6 +363,61 @@ class Feedback(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        server_default=func.now(),
+    )
+
+
+class TranslationEdit(Base):
+    """One reader's attempt at a better wording for a translation (F-05).
+
+    Append-only: editing again writes a new row rather than replacing the old
+    one, and the row with the newest `created_at` *for that editor* is the one
+    in effect. The history behind it is what a later admin feature would read
+    to compare human wording against the machine's (docs/CONTRACT.md §3.10).
+
+    Private to its author. Nobody else in the conversation reads these rows,
+    which is why `editor_id` cascades: deleting an account deletes notes only
+    that account could ever see.
+    """
+
+    __tablename__ = "translation_edits"
+    __table_args__ = (
+        # Ordered the way every read filters: newest edit by one person on one
+        # translation, without scanning the rest of the table.
+        Index(
+            "ix_translation_edits_lookup",
+            "translation_id",
+            "editor_id",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    translation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("translation_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    editor_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    edited_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Stamped in Python, unlike every other table here, because this is the only
+    # column that has to *order* rows rather than just date them: the newest
+    # edit is the one in effect. `func.now()` renders as SQLite's
+    # CURRENT_TIMESTAMP, which resolves to whole seconds — two saves inside one
+    # second tie, and the tie was resolved by primary key, so fixing a typo and
+    # saving twice quickly could bring the older wording back.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
 
