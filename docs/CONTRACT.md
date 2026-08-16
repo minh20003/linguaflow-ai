@@ -233,7 +233,7 @@ Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không b�
 }
 ```
 
-Endpoint **yêu cầu xác thực**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Mọi thành viên đã đăng nhập đều đọc được.
+Endpoint **chỉ dành cho quản trị viên**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Chỉ tài khoản có `role == "admin"` được đọc; thành viên nhận `403 Forbidden`.
 
 `fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
 

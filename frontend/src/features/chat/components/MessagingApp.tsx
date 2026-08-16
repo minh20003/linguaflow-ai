@@ -20,7 +20,7 @@ import {
   Sidebar,
 } from "@chatscope/chat-ui-kit-react";
 import Link from "next/link";
-import { Forward, Info, MessagesSquare, MoreVertical, PencilLine, Settings, ThumbsDown, ThumbsUp, UserRoundPlus, X } from "lucide-react";
+import { BarChart3, Forward, Info, MessagesSquare, MoreVertical, PencilLine, Settings, ThumbsDown, ThumbsUp, UserRoundPlus, X } from "lucide-react";
 import { logoutSession } from "@/shared/lib/api";
 import { clearSession, getStoredRefreshToken, getStoredUser, restoreSession } from "@/shared/lib/auth-session";
 import {
@@ -1707,6 +1707,16 @@ export default function MessagingApp() {
         >
           <Settings size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
+        {me?.role === "admin" && (
+          <Link
+            className={styles.navRailButton}
+            href="/admin"
+            aria-label={uiText(lang, "nav.admin")}
+            title={uiText(lang, "nav.admin")}
+          >
+            <BarChart3 size={20} strokeWidth={1.8} aria-hidden="true" />
+          </Link>
+        )}
         <span className={styles.navRailSpacer} />
         <div className={styles.navRailAccount}>
           {showAccountMenu && (
