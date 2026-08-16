@@ -7,6 +7,7 @@ export interface AuthUser {
   username: string;
   email: string;
   display_name: string;
+  role: string;
   preferred_language: string;
   /** The language the interface is drawn in, separate from the one above. */
   interface_language: string;

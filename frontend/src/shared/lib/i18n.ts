@@ -1,9 +1,7 @@
 /**
  * Bảng nhãn song ngữ — nước đi ký tên của sản phẩm (docs/design.md §7).
  *
- * Nhãn chính trên form luôn lấy từ `LABELS.vi`; nhãn phụ lấy từ ngôn ngữ đang
- * chọn. Trang đăng nhập vì thế chứng minh việc sản phẩm làm trước khi người
- * dùng phải tin.
+ * Nhãn biểu mẫu luôn lấy từ ngôn ngữ giao diện đang chọn.
  *
  * CHƯA QUA SOÁT BẢN NGỮ. Nhãn sai ở một sản phẩm dịch thuật là lỗi đắt hơn bình
  * thường — ưu tiên soát ja, ko, th.
@@ -27,15 +25,11 @@ export type LabelKey =
   | "terms";
 
 /**
- * Nhãn theo ngôn ngữ. Không bắt buộc đủ mọi mã backend hỗ trợ: `altLabel` đã
- * lùi về tiếng Anh khi thiếu (§7.3), nên thêm một ngôn ngữ vào allowlist không
- * kéo theo nghĩa vụ dịch nhãn ngay. Riêng `vi` và `en` bắt buộc có — một là
- * ngôn ngữ giao diện, một là ngôn ngữ lùi về.
+ * Nhãn theo ngôn ngữ. Mọi mã backend hỗ trợ đều phải có đủ nhãn: người dùng đã
+ * chọn một ngôn ngữ giao diện thì không nên thấy tiếng Anh như đường đi bình
+ * thường. `Record` giữ cam kết này ở mức kiểu khi thêm mã hay nhãn mới.
  */
-type LabelTable = Partial<Record<LanguageCode, Record<LabelKey, string>>> & {
-  vi: Record<LabelKey, string>;
-  en: Record<LabelKey, string>;
-};
+type LabelTable = Record<LanguageCode, Record<LabelKey, string>>;
 
 export const LABELS: LabelTable = {
   vi: {
@@ -173,26 +167,96 @@ export const LABELS: LabelTable = {
     forgot: "ลืมรหัสผ่าน?",
     terms: "ข้อกำหนดการให้บริการ",
   },
+  id: {
+    fullName: "Nama lengkap",
+    email: "Email",
+    password: "Kata sandi",
+    passwordConfirm: "Konfirmasi kata sandi",
+    username: "Nama pengguna",
+    signIn: "Masuk",
+    createAccount: "Buat akun",
+    language: "Bahasa Anda",
+    show: "Tampilkan",
+    hide: "Sembunyikan",
+    remember: "Ingat perangkat ini",
+    forgot: "Lupa kata sandi?",
+    terms: "Ketentuan layanan",
+  },
+  pt: {
+    fullName: "Nome completo",
+    email: "E-mail",
+    password: "Palavra-passe",
+    passwordConfirm: "Confirmar palavra-passe",
+    username: "Nome de utilizador",
+    signIn: "Entrar",
+    createAccount: "Criar conta",
+    language: "O seu idioma",
+    show: "Mostrar",
+    hide: "Ocultar",
+    remember: "Lembrar este dispositivo",
+    forgot: "Esqueceu-se da palavra-passe?",
+    terms: "Termos de serviço",
+  },
+  ru: {
+    fullName: "Полное имя",
+    email: "Электронная почта",
+    password: "Пароль",
+    passwordConfirm: "Подтвердите пароль",
+    username: "Имя пользователя",
+    signIn: "Войти",
+    createAccount: "Создать аккаунт",
+    language: "Ваш язык",
+    show: "Показать",
+    hide: "Скрыть",
+    remember: "Запомнить это устройство",
+    forgot: "Забыли пароль?",
+    terms: "Условия обслуживания",
+  },
+  ar: {
+    fullName: "الاسم الكامل",
+    email: "البريد الإلكتروني",
+    password: "كلمة المرور",
+    passwordConfirm: "تأكيد كلمة المرور",
+    username: "اسم المستخدم",
+    signIn: "تسجيل الدخول",
+    createAccount: "إنشاء حساب",
+    language: "لغتك",
+    show: "إظهار",
+    hide: "إخفاء",
+    remember: "تذكر هذا الجهاز",
+    forgot: "هل نسيت كلمة المرور؟",
+    terms: "شروط الخدمة",
+  },
+  hi: {
+    fullName: "पूरा नाम",
+    email: "ईमेल",
+    password: "पासवर्ड",
+    passwordConfirm: "पासवर्ड की पुष्टि करें",
+    username: "उपयोगकर्ता नाम",
+    signIn: "साइन इन",
+    createAccount: "खाता बनाएँ",
+    language: "आपकी भाषा",
+    show: "दिखाएँ",
+    hide: "छिपाएँ",
+    remember: "इस डिवाइस को याद रखें",
+    forgot: "पासवर्ड भूल गए?",
+    terms: "सेवा की शर्तें",
+  },
 };
 
 /**
- * Nhãn chính, theo ngôn ngữ giao diện đang chọn.
- *
- * Trước đây hàm này luôn trả tiếng Việt (`LABELS[UI_LANGUAGE]`), nên trang đăng
- * nhập và đăng ký hiện tiếng Việt kể cả khi người dùng vừa chọn 中文 ngay trên
- * chính trang đó. Nay nó nhận ngôn ngữ và lùi về `en` cho từng nhãn còn thiếu,
- * đúng quy tắc docs/CONTRACT.md §1.2.
+ * Nhãn chính theo ngôn ngữ giao diện đang chọn. Bảng là tổng quát cho toàn bộ
+ * allowlist, nên một `LanguageCode` hợp lệ luôn có nhãn tương ứng.
  */
 export function mainLabel(key: LabelKey, lang: LanguageCode = UI_LANGUAGE): string {
-  return LABELS[lang]?.[key] ?? LABELS.en[key];
+  return LABELS[lang][key];
 }
 
 /**
  * Nhãn phụ ở ngôn ngữ đang chọn. Trả `null` khi ngôn ngữ đích trùng ngôn ngữ
- * giao diện — lúc đó nhãn phụ chỉ lặp lại nhãn chính. Thiếu ngôn ngữ thì lùi về
- * tiếng Anh, không để trống (§7.3).
+ * giao diện — lúc đó nhãn phụ chỉ lặp lại nhãn chính.
  */
 export function altLabel(lang: LanguageCode, key: LabelKey): string | null {
   if (lang === UI_LANGUAGE) return null;
-  return LABELS[lang]?.[key] ?? LABELS.en[key];
+  return LABELS[lang][key];
 }

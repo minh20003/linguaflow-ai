@@ -5,7 +5,19 @@ import Link from "next/link";
 import Button from "@/shared/ui/Button";
 import Input from "@/shared/ui/Input";
 import { requestPasswordReset, resetPassword } from "@/shared/lib/api";
+import type { LanguageCode } from "@/shared/lib/constants";
+import { MIN_PASSWORD_LENGTH, formMessage } from "@/shared/lib/form-messages";
+import { mainLabel } from "@/shared/lib/i18n";
+import { uiText } from "@/shared/lib/ui-text";
+import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
+
+type RecoveryMessageKey =
+  | "auth.recovery.requestAcceptedLocal"
+  | "auth.recovery.requestAcceptedRemote"
+  | "auth.recovery.passwordUpdated";
+
+type ErrorState = { lang: LanguageCode; message: string };
 
 /**
  * Password recovery, in two steps on one screen.
@@ -17,6 +29,7 @@ import styles from "./AuthForm.module.css";
  * with a field for the person to type the one they were given.
  */
 export default function PasswordRecoveryForm() {
+  const { lang } = useLanguage();
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
   const [tokenFromServer, setTokenFromServer] = useState(false);
@@ -24,13 +37,15 @@ export default function PasswordRecoveryForm() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState<ErrorState | null>(null);
+  const [messageKey, setMessageKey] = useState<RecoveryMessageKey | null>(null);
   const [complete, setComplete] = useState(false);
+
+  const visibleError = error?.lang === lang ? error.message : "";
 
   async function requestReset(event: FormEvent) {
     event.preventDefault();
-    setError("");
+    setError(null);
     setLoading(true);
     try {
       const result = await requestPasswordReset(email);
@@ -38,38 +53,131 @@ export default function PasswordRecoveryForm() {
       if (result.reset_token) {
         setToken(result.reset_token);
         setTokenFromServer(true);
-        setMessage("Yêu cầu đã được tiếp nhận. Trong môi trường local, bạn có thể đặt mật khẩu mới ngay bên dưới.");
+        setMessageKey("auth.recovery.requestAcceptedLocal");
       } else {
-        setMessage("Nếu địa chỉ này có tài khoản, mã đặt lại đã được ghi vào nhật ký máy chủ. Liên hệ quản trị viên để lấy mã rồi nhập vào bên dưới.");
+        setMessageKey("auth.recovery.requestAcceptedRemote");
       }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể gửi yêu cầu.");
-    } finally { setLoading(false); }
+    } catch {
+      setError({ lang, message: formMessage(lang, "resetRequestFailed") });
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function submitNewPassword(event: FormEvent) {
     event.preventDefault();
-    setError("");
-    if (!token.trim()) return setError("Nhập mã đặt lại bạn nhận được.");
-    if (password.length < 8) return setError("Mật khẩu cần có ít nhất 8 ký tự.");
-    if (password !== confirmPassword) return setError("Hai mật khẩu chưa khớp.");
+    setError(null);
+    if (!token.trim()) {
+      setError({ lang, message: formMessage(lang, "resetTokenRequired") });
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError({ lang, message: formMessage(lang, "passwordTooShort", { n: MIN_PASSWORD_LENGTH }) });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError({ lang, message: formMessage(lang, "confirmMismatch") });
+      return;
+    }
     setLoading(true);
     try {
       await resetPassword(token, password);
       setComplete(true);
-      setMessage("Mật khẩu đã được cập nhật. Các phiên đăng nhập cũ đã được đăng xuất.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Không thể đặt lại mật khẩu.");
-    } finally { setLoading(false); }
+      setMessageKey("auth.recovery.passwordUpdated");
+    } catch {
+      setError({ lang, message: formMessage(lang, "resetPasswordFailed") });
+    } finally {
+      setLoading(false);
+    }
   }
 
-  return <form className={styles.form} onSubmit={requested ? submitNewPassword : requestReset} noValidate>
-    <div className={styles.welcome}><h1 className={styles.loginTitle}>Khôi phục tài khoản</h1><p className={styles.loginDescription}>{requested ? "Tạo mật khẩu mới cho tài khoản của bạn." : "Nhập email đã đăng ký để đặt lại mật khẩu."}</p></div>
-    {error && <div className={styles.formError} role="alert"><span className={styles.errorMark}>!</span>{error}</div>}
-    {message && <div role="status" className={styles.loginDescription}>{message}</div>}
-    {!complete && !requested && <Input id="recovery-email" type="email" autoComplete="email" label="Email" placeholder="ban@vidu.com" value={email} onChange={(event) => setEmail(event.target.value)} />}
-    {!complete && requested && <div className={styles.fields}>{!tokenFromServer && <Input id="reset-token" type="text" autoComplete="one-time-code" label="Mã đặt lại" placeholder="Dán mã bạn nhận được" value={token} onChange={(event) => setToken(event.target.value)} />}<Input id="new-password" type="password" autoComplete="new-password" label="Mật khẩu mới" placeholder="Ít nhất 8 ký tự" value={password} onChange={(event) => setPassword(event.target.value)} /><Input id="confirm-new-password" type="password" autoComplete="new-password" label="Nhập lại mật khẩu" placeholder="Nhập lại mật khẩu mới" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></div>}
-    {!complete && <Button type="submit" size="lg" fullWidth loading={loading} className={styles.loginButton}>{requested ? "Cập nhật mật khẩu" : "Tiếp tục"}</Button>}
-    <p className={styles.footer}><Link href="/login">Quay lại đăng nhập</Link></p>
-  </form>;
+  return (
+    <form
+      className={styles.form}
+      onSubmit={requested ? submitNewPassword : requestReset}
+      noValidate
+    >
+      <div className={styles.welcome}>
+        <h1 className={styles.loginTitle}>{uiText(lang, "auth.recovery.title")}</h1>
+        <p className={styles.loginDescription}>
+          {requested
+            ? uiText(lang, "auth.recovery.newPasswordDescription")
+            : uiText(lang, "auth.recovery.requestDescription")}
+        </p>
+      </div>
+
+      {visibleError && (
+        <div className={styles.formError} role="alert">
+          <span className={styles.errorMark} aria-hidden="true">!</span>
+          {visibleError}
+        </div>
+      )}
+      {messageKey && (
+        <div role="status" className={styles.loginDescription}>
+          {uiText(lang, messageKey)}
+        </div>
+      )}
+
+      {!complete && !requested && (
+        <Input
+          id="recovery-email"
+          type="email"
+          autoComplete="email"
+          label={mainLabel("email", lang)}
+          placeholder={uiText(lang, "auth.emailPlaceholder")}
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      )}
+
+      {!complete && requested && (
+        <div className={styles.fields}>
+          {!tokenFromServer && (
+            <Input
+              id="reset-token"
+              type="text"
+              autoComplete="one-time-code"
+              label={uiText(lang, "auth.recovery.resetToken")}
+              placeholder={uiText(lang, "auth.recovery.tokenPlaceholder")}
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+            />
+          )}
+          <Input
+            id="new-password"
+            type="password"
+            autoComplete="new-password"
+            label={uiText(lang, "auth.recovery.newPassword")}
+            placeholder={uiText(lang, "auth.recovery.newPasswordPlaceholder")}
+            showText={mainLabel("show", lang)}
+            hideText={mainLabel("hide", lang)}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <Input
+            id="confirm-new-password"
+            type="password"
+            autoComplete="new-password"
+            label={uiText(lang, "auth.recovery.confirmNewPassword")}
+            placeholder={uiText(lang, "auth.recovery.confirmNewPasswordPlaceholder")}
+            showText={mainLabel("show", lang)}
+            hideText={mainLabel("hide", lang)}
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+          />
+        </div>
+      )}
+
+      {!complete && (
+        <Button type="submit" size="lg" fullWidth loading={loading} className={styles.loginButton}>
+          {requested
+            ? uiText(lang, "auth.recovery.updatePassword")
+            : uiText(lang, "auth.recovery.continue")}
+        </Button>
+      )}
+      <p className={styles.footer}>
+        <Link href="/login">{uiText(lang, "auth.recovery.backToLogin")}</Link>
+      </p>
+    </form>
+  );
 }

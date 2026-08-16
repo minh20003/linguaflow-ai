@@ -37,12 +37,12 @@ export const SUPPORTED_LANGUAGES = [
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
 
 /**
- * Ngôn ngữ giao diện — nhãn chính luôn ở ngôn ngữ này.
+ * Ngôn ngữ giao diện mặc định.
  *
- * Cố ý không chú kiểu `LanguageCode`: giữ kiểu literal `"vi"` cho phép bảng
- * nhãn ở `i18n.ts` bảo đảm ở mức kiểu rằng ngôn ngữ này luôn có nhãn.
+ * Giữ kiểu literal để những chỗ dùng giá trị mặc định này vẫn được kiểm tra
+ * cùng allowlist ngôn ngữ ở trên.
  */
-export const UI_LANGUAGE = "vi";
+export const UI_LANGUAGE = "en";
 
 /**
  * Ngôn ngữ đích mặc định. Cố tình KHÔNG phải `vi`: nhãn phụ song ngữ (§7) chỉ

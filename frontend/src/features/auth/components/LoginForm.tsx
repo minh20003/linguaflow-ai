@@ -7,11 +7,18 @@ import Button from "@/shared/ui/Button";
 import Input from "@/shared/ui/Input";
 import { login } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
+import type { LanguageCode } from "@/shared/lib/constants";
+import { formMessage } from "@/shared/lib/form-messages";
 import { mainLabel } from "@/shared/lib/i18n";
+import { uiText } from "@/shared/lib/ui-text";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
 const EMAIL_RE = /\S+@\S+\.\S+/;
+
+type ErrorState = { lang: LanguageCode; message: string };
+type FieldErrors = { email?: string; password?: string };
+type FieldErrorState = { lang: LanguageCode; fields: FieldErrors };
 
 export default function LoginForm() {
   const router = useRouter();
@@ -22,29 +29,31 @@ export default function LoginForm() {
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [error, setError] = useState<ErrorState | null>(null);
+  const [errors, setErrors] = useState<FieldErrorState | null>(null);
+  const visibleError = error?.lang === lang ? error.message : "";
+  const visibleErrors = errors?.lang === lang ? errors.fields : {};
 
   function validate(): boolean {
-    const nextErrors: typeof errors = {};
-    if (!email) nextErrors.email = "Bạn chưa nhập email.";
-    else if (!EMAIL_RE.test(email)) nextErrors.email = "Email chưa đúng định dạng. Ví dụ: ban@vidu.com";
-    if (!password) nextErrors.password = "Bạn chưa nhập mật khẩu.";
-    setErrors(nextErrors);
+    const nextErrors: FieldErrors = {};
+    if (!email) nextErrors.email = formMessage(lang, "emailRequired");
+    else if (!EMAIL_RE.test(email)) nextErrors.email = formMessage(lang, "emailInvalid");
+    if (!password) nextErrors.password = formMessage(lang, "passwordRequired");
+    setErrors({ lang, fields: nextErrors });
     return Object.keys(nextErrors).length === 0;
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setError("");
+    setError(null);
     if (!validate()) return;
     setLoading(true);
     try {
       const result = await login(email, password, remember);
       saveSession(result, remember);
       router.replace("/chat");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Chưa thể đăng nhập. Bạn vui lòng thử lại nhé.");
+    } catch {
+      setError({ lang, message: formMessage(lang, "loginFailed") });
     } finally {
       setLoading(false);
     }
@@ -53,15 +62,15 @@ export default function LoginForm() {
   return (
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <div className={styles.welcome}>
-        <h1 className={styles.loginTitle}>Chào mừng trở lại</h1>
-        <p className={styles.loginDescription}>Đăng nhập để tiếp tục những cuộc trò chuyện của bạn.</p>
+        <h1 className={styles.loginTitle}>{uiText(lang, "auth.welcomeBack")}</h1>
+        <p className={styles.loginDescription}>{uiText(lang, "auth.signInDescription")}</p>
       </div>
 
-      {error && <div className={styles.formError} role="alert"><span className={styles.errorMark} aria-hidden="true">!</span>{error}</div>}
+      {visibleError && <div className={styles.formError} role="alert"><span className={styles.errorMark} aria-hidden="true">!</span>{visibleError}</div>}
 
       <div className={styles.fields}>
-        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder="linguachat@vidu.com" label={mainLabel("email", lang)} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => ({ ...previous, email: undefined })); }} error={errors.email} />
-        <Input id="login-password" type="password" autoComplete="current-password" placeholder="Nhập mật khẩu của bạn" label={mainLabel("password", lang)} showText={mainLabel("show", lang)} hideText={mainLabel("hide", lang)} value={password} onChange={(event) => { setPassword(event.target.value); setErrors((previous) => ({ ...previous, password: undefined })); }} error={errors.password} />
+        <Input id="login-email" type="email" autoComplete="email" inputMode="email" placeholder={uiText(lang, "auth.emailPlaceholder")} label={mainLabel("email", lang)} value={email} onChange={(event) => { setEmail(event.target.value); setErrors((previous) => previous?.lang === lang ? { ...previous, fields: { ...previous.fields, email: undefined } } : previous); }} error={visibleErrors.email} />
+        <Input id="login-password" type="password" autoComplete="current-password" placeholder={uiText(lang, "auth.passwordPlaceholder")} label={mainLabel("password", lang)} showText={mainLabel("show", lang)} hideText={mainLabel("hide", lang)} value={password} onChange={(event) => { setPassword(event.target.value); setErrors((previous) => previous?.lang === lang ? { ...previous, fields: { ...previous.fields, password: undefined } } : previous); }} error={visibleErrors.password} />
       </div>
 
       <div className={styles.row}>
@@ -76,7 +85,7 @@ export default function LoginForm() {
         <span className={styles.actionMain}>{mainLabel("signIn", lang)}</span>
       </Button>
 
-      <p className={styles.footer}>Bạn mới đến LinguaFlow? <Link href="/register">Tạo tài khoản miễn phí</Link></p>
+      <p className={styles.footer}>{uiText(lang, "auth.newToProduct")} <Link href="/register">{uiText(lang, "auth.createFreeAccount")}</Link></p>
     </form>
   );
 }

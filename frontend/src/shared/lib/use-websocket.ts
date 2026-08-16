@@ -29,7 +29,6 @@ const BACKOFF_STEPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 const FATAL_ERROR_CODES = new Set([
   "authentication_failed",
   "authentication_required",
-  "authentication_timeout",
 ]);
 
 export interface RealtimeMessage {
@@ -99,6 +98,10 @@ export interface ChatSocketHandlers {
   onTranslationCompleted?: (event: TranslationCompleted) => void;
   /** A non-fatal application error. */
   onError?: (code: string, message: string) => void;
+  /** Refresh a rejected access token. `true` permits the hook to reconnect. */
+  onCredentialsRefreshNeeded?: () => Promise<boolean>;
+  /** Fires only after a socket that was previously authenticated reconnects. */
+  onReconnect?: (sendMessage: ChatSocket["sendMessage"]) => void | Promise<void>;
   /** The session is unusable; the caller should send the user back to login. */
   onAuthFailure?: () => void;
 }
@@ -135,6 +138,10 @@ export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): 
   const authTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const closedByUsRef = useRef(false);
+  const everAuthenticatedRef = useRef(false);
+  const refreshingCredentialsRef = useRef(false);
+  const mountedRef = useRef(false);
+  const authenticatedTokenRef = useRef<string | null>(null);
 
   // Handlers change on every render of the caller; a ref keeps the socket from
   // being torn down and rebuilt each time.
@@ -146,116 +153,6 @@ export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): 
   // The reconnect timer has to call `connect` from inside `connect` itself.
   // Going through a ref avoids the circular dependency.
   const connectRef = useRef<() => void>(() => {});
-
-  const connect = useCallback(() => {
-    const token = authToken ?? getToken();
-    if (!token) {
-      handlersRef.current.onAuthFailure?.();
-      return;
-    }
-
-    const socket = new WebSocket(socketUrl());
-    socketRef.current = socket;
-    // Local to this socket rather than read from state, which would be stale
-    // by the time the timer fires.
-    let authenticated = false;
-
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "auth", token }));
-      // The server closes the socket if auth does not complete in time; give up
-      // on our side too rather than sitting on a half-open connection.
-      authTimerRef.current = setTimeout(() => {
-        if (!authenticated) socket.close();
-      }, AUTH_TIMEOUT_MS);
-    };
-
-    socket.onmessage = (raw) => {
-      let event: Record<string, unknown>;
-      try {
-        event = JSON.parse(raw.data as string);
-      } catch {
-        return;
-      }
-
-      const callbacks = handlersRef.current;
-      switch (event.type) {
-        case "auth_ok":
-          if (authTimerRef.current) clearTimeout(authTimerRef.current);
-          authenticated = true;
-          attemptRef.current = 0;
-          setConnected(true);
-          break;
-        case "message_created":
-          callbacks.onMessageCreated?.(
-            event.client_message_id as string,
-            event.message as RealtimeMessage,
-          );
-          break;
-        case "message_received":
-          callbacks.onMessageReceived?.(event.message as RealtimeMessage);
-          break;
-        case "translation_completed":
-          callbacks.onTranslationCompleted?.(event as unknown as TranslationCompleted);
-          break;
-        case "typing":
-          callbacks.onTyping?.(event as unknown as TypingNotice);
-          break;
-        case "message_read":
-          callbacks.onMessageRead?.(event as unknown as MessageRead);
-          break;
-        case "message_updated":
-          callbacks.onMessageUpdated?.(event as unknown as MessageUpdated);
-          break;
-        case "message_deleted":
-          callbacks.onMessageDeleted?.(event as unknown as MessageDeleted);
-          break;
-        case "error": {
-          const code = event.code as string;
-          if (FATAL_ERROR_CODES.has(code)) {
-            // Reconnecting with the same rejected token would loop forever.
-            closedByUsRef.current = true;
-            callbacks.onAuthFailure?.();
-            socket.close();
-            return;
-          }
-          callbacks.onError?.(code, event.message as string);
-          break;
-        }
-      }
-    };
-
-    socket.onclose = () => {
-      setConnected(false);
-      if (closedByUsRef.current) return;
-
-      const delay = BACKOFF_STEPS_MS[Math.min(attemptRef.current, BACKOFF_STEPS_MS.length - 1)];
-      attemptRef.current += 1;
-      reconnectRef.current = setTimeout(() => connectRef.current(), delay);
-    };
-  }, [authToken]);
-
-  useEffect(() => {
-    connectRef.current = connect;
-  }, [connect]);
-
-  useEffect(() => {
-    closedByUsRef.current = false;
-    connect();
-
-    return () => {
-      // React 19 StrictMode mounts effects twice in development. Without
-      // closing here, the demo would run two sockets and show every message
-      // twice.
-      closedByUsRef.current = true;
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      if (authTimerRef.current) clearTimeout(authTimerRef.current);
-      socketRef.current?.close();
-      socketRef.current = null;
-    };
-    // connect is intentionally not a dependency: re-running it would reconnect
-    // on every state change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const sendMessage: ChatSocket["sendMessage"] = useCallback((input) => {
     const socket = socketRef.current;
@@ -286,6 +183,167 @@ export function useWebSocket(handlers: ChatSocketHandlers, authToken?: string): 
         is_typing: isTyping,
       }),
     );
+  }, []);
+
+  const connect = useCallback(() => {
+    if (!mountedRef.current || closedByUsRef.current) return;
+    const token = authenticatedTokenRef.current ?? authToken ?? getToken();
+    if (!token) {
+      handlersRef.current.onAuthFailure?.();
+      return;
+    }
+
+    const socket = new WebSocket(socketUrl());
+    socketRef.current = socket;
+    // Local to this socket rather than read from state, which would be stale
+    // by the time the timer fires.
+    let authenticated = false;
+
+    socket.onopen = () => {
+      if (socketRef.current !== socket) return;
+      socket.send(JSON.stringify({ type: "auth", token }));
+      // The server closes the socket if auth does not complete in time; give up
+      // on our side too rather than sitting on a half-open connection.
+      authTimerRef.current = setTimeout(() => {
+        if (!authenticated) socket.close();
+      }, AUTH_TIMEOUT_MS);
+    };
+
+    socket.onmessage = (raw) => {
+      if (socketRef.current !== socket) return;
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(raw.data as string);
+      } catch {
+        return;
+      }
+
+      const callbacks = handlersRef.current;
+      switch (event.type) {
+        case "auth_ok":
+          if (authTimerRef.current) clearTimeout(authTimerRef.current);
+          authenticated = true;
+          authenticatedTokenRef.current = token;
+          attemptRef.current = 0;
+          setConnected(true);
+          if (everAuthenticatedRef.current) {
+            void callbacks.onReconnect?.(sendMessage);
+          } else {
+            everAuthenticatedRef.current = true;
+          }
+          break;
+        case "message_created":
+          callbacks.onMessageCreated?.(
+            event.client_message_id as string,
+            event.message as RealtimeMessage,
+          );
+          break;
+        case "message_received":
+          callbacks.onMessageReceived?.(event.message as RealtimeMessage);
+          break;
+        case "translation_completed":
+          callbacks.onTranslationCompleted?.(event as unknown as TranslationCompleted);
+          break;
+        case "typing":
+          callbacks.onTyping?.(event as unknown as TypingNotice);
+          break;
+        case "message_read":
+          callbacks.onMessageRead?.(event as unknown as MessageRead);
+          break;
+        case "message_updated":
+          callbacks.onMessageUpdated?.(event as unknown as MessageUpdated);
+          break;
+        case "message_deleted":
+          callbacks.onMessageDeleted?.(event as unknown as MessageDeleted);
+          break;
+        case "error": {
+          const code = event.code as string;
+          if (FATAL_ERROR_CODES.has(code)) {
+            // Reconnecting with the same rejected token would loop forever.
+            if (refreshingCredentialsRef.current) return;
+            refreshingCredentialsRef.current = true;
+            closedByUsRef.current = true;
+            authenticatedTokenRef.current = null;
+            setConnected(false);
+            if (reconnectRef.current) clearTimeout(reconnectRef.current);
+            if (authTimerRef.current) clearTimeout(authTimerRef.current);
+            socket.close();
+            void (async () => {
+              let refreshed = false;
+              try {
+                refreshed = (await callbacks.onCredentialsRefreshNeeded?.()) ?? false;
+              } catch {
+                refreshed = false;
+              } finally {
+                refreshingCredentialsRef.current = false;
+              }
+
+              if (!mountedRef.current) return;
+              if (!refreshed) {
+                callbacks.onAuthFailure?.();
+                return;
+              }
+              const refreshedToken = getToken();
+              if (!refreshedToken) {
+                callbacks.onAuthFailure?.();
+                return;
+              }
+
+              // The refresh rotated the token. This hook owns the one and only
+              // restart, so the caller can never reconnect with the rejected
+              // credentials by mistake.
+              authenticatedTokenRef.current = refreshedToken;
+              attemptRef.current = 0;
+              closedByUsRef.current = false;
+              connectRef.current();
+            })();
+            return;
+          }
+          callbacks.onError?.(code, event.message as string);
+          break;
+        }
+      }
+    };
+
+    socket.onclose = () => {
+      if (socketRef.current !== socket) return;
+      socketRef.current = null;
+      setConnected(false);
+      if (authTimerRef.current) clearTimeout(authTimerRef.current);
+      if (closedByUsRef.current) return;
+
+      const delay = BACKOFF_STEPS_MS[Math.min(attemptRef.current, BACKOFF_STEPS_MS.length - 1)];
+      attemptRef.current += 1;
+      reconnectRef.current = setTimeout(() => {
+        reconnectRef.current = null;
+        connectRef.current();
+      }, delay);
+    };
+  }, [authToken, sendMessage]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    closedByUsRef.current = false;
+    connect();
+
+    return () => {
+      // React 19 StrictMode mounts effects twice in development. Without
+      // closing here, the demo would run two sockets and show every message
+      // twice.
+      mountedRef.current = false;
+      closedByUsRef.current = true;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      if (authTimerRef.current) clearTimeout(authTimerRef.current);
+      socketRef.current?.close();
+      socketRef.current = null;
+    };
+    // connect is intentionally not a dependency: re-running it would reconnect
+    // on every state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return { connected, sendMessage, sendTyping };

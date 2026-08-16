@@ -1,5 +1,6 @@
 "use client";
 
+import { useUiText } from "@/shared/lib/use-ui-text";
 import styles from "./TranslationToggleSwitch.module.css";
 
 interface TranslationToggleSwitchProps {
@@ -19,13 +20,16 @@ export default function TranslationToggleSwitch({
   onToggle,
   className = "",
 }: TranslationToggleSwitchProps) {
+  const t = useUiText();
+  const label = t(showOriginal ? "toggle.original" : "toggle.translated");
+
   return (
     <button
       type="button"
       role="switch"
       aria-checked={showOriginal}
-      aria-label={showOriginal ? "Đang hiện bản gốc, bấm để xem bản dịch" : "Đang hiện bản dịch, bấm để xem bản gốc"}
-      title={showOriginal ? "Chuyển sang xem bản dịch" : "Chuyển sang xem bản gốc"}
+      aria-label={label}
+      title={label}
       className={`${styles.switch} ${showOriginal ? styles.isOriginal : ""} ${className}`}
       onClick={onToggle}
     >

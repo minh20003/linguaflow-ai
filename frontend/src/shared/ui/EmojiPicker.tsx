@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Smile } from "lucide-react";
+import { formatUiText } from "@/shared/lib/ui-text";
+import { useInterfaceLanguage, useUiText } from "@/shared/lib/use-ui-text";
 import styles from "./EmojiPicker.module.css";
 
 /**
@@ -26,6 +28,8 @@ interface EmojiPickerProps {
 }
 
 export default function EmojiPicker({ onSelect, disabled = false }: EmojiPickerProps) {
+  const t = useUiText();
+  const lang = useInterfaceLanguage();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -52,14 +56,14 @@ export default function EmojiPicker({ onSelect, disabled = false }: EmojiPickerP
   return (
     <div className={styles.root} ref={rootRef}>
       {open && (
-        <div className={styles.panel} role="dialog" aria-label="Chọn biểu tượng cảm xúc">
+        <div className={styles.panel} role="dialog" aria-label={t("emoji.picker")}>
           <div className={styles.grid}>
             {EMOJI.map((emoji) => (
               <button
                 key={emoji}
                 type="button"
                 className={styles.emoji}
-                aria-label={`Chèn ${emoji}`}
+                aria-label={formatUiText(lang, "emoji.insert", { name: emoji })}
                 onClick={() => choose(emoji)}
               >
                 {emoji}
@@ -71,8 +75,8 @@ export default function EmojiPicker({ onSelect, disabled = false }: EmojiPickerP
       <button
         type="button"
         className={styles.trigger}
-        aria-label="Biểu tượng cảm xúc"
-        title="Biểu tượng cảm xúc"
+        aria-label={t("emoji.trigger")}
+        title={t("emoji.trigger")}
         aria-expanded={open}
         aria-haspopup="dialog"
         disabled={disabled}
