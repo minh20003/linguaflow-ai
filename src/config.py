@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
+    # Public frontend routed through this project's Cloudflare Tunnel. Keeping
+    # it separate from CORS_ORIGINS lets a local development .env retain its
+    # localhost values without breaking the deployed browser client.
+    public_frontend_origin: str = "https://agent.dquangminh2003.id.vn"
     # Matched against the Origin header when the exact list above does not.
     # Vercel gives every pull request its own hostname, so a preview build can
     # only reach the API through a pattern — for example
@@ -139,7 +143,10 @@ class Settings(BaseSettings):
         no browser Origin header and fails as a CORS error with nothing in the
         logs to explain it.
         """
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        if self.public_frontend_origin and self.public_frontend_origin not in origins:
+            origins.append(self.public_frontend_origin)
+        return origins
 
     @field_validator("jwt_secret")
     @classmethod
