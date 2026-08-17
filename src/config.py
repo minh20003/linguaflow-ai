@@ -144,6 +144,12 @@ class Settings(BaseSettings):
         logs to explain it.
         """
         origins = [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        # The browser-facing local development app is part of the documented
+        # contract. Keep these origins available even when a machine-level
+        # CORS_ORIGINS variable overrides the repository's .env value.
+        for local_origin in ("http://localhost:3000", "http://localhost:3001"):
+            if local_origin not in origins:
+                origins.append(local_origin)
         if self.public_frontend_origin and self.public_frontend_origin not in origins:
             origins.append(self.public_frontend_origin)
         return origins
