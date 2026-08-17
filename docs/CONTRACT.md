@@ -327,7 +327,7 @@ Nút bút chì dưới mỗi bản dịch cho phép người đọc gõ lại b�
 
 | | §3.6 Sửa **tin nhắn** (F-06) | §3.10 Góp ý **bản dịch** (F-05) |
 |---|---|---|
-| Ai làm được | Chỉ người gửi (server chặn) | Mọi thành viên (server); giao diện chỉ hiện nút cho người đọc bản dịch đó, cộng người gửi ở `direct` |
+| Ai làm được | Chỉ người gửi (server chặn) | Mọi thành viên (server); giao diện chỉ hiện nút cho người đọc bản dịch đó |
 | Sửa cái gì | `messages.original_text` | Không sửa gì cả — ghi thêm một bản song song |
 | Ai thấy kết quả | **Cả phòng**: nội dung mới, bản dịch mới, trạng thái "đã sửa" | **Chỉ người viết góp ý** |
 | Có dịch lại không | Có, tốn hạn mức LLM | Không bao giờ |
@@ -354,10 +354,10 @@ Không có trường `edited_by`: người viết luôn là tài khoản đang g
 
 | Loại hội thoại | Người nhận | Người gửi |
 |---|---|---|
-| `direct` | Nút gạt bản gốc/bản dịch, đánh giá, góp ý | **Giống hệt người nhận**: nút gạt, đánh giá, góp ý |
+| `direct` | Nút gạt bản gốc/bản dịch, đánh giá, góp ý | Chỉ thấy bản gốc, không có điều khiển dịch |
 | `group` | Nút gạt, đánh giá, góp ý cho bản dịch ngôn ngữ mình đọc | **Không có nút nào** |
 
-Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại chỉ có một người nhận và một bản dịch: họ nhìn thấy trọn vẹn cả bản gốc lẫn bản dịch nên đánh giá được, và cái họ gạt qua gạt lại là chính hai văn bản đó. Ở `group` thì không: một tin nhắn có nhiều bản dịch, không có "bản dịch của tin này" để mà gạt hay chấm điểm, nên người gửi không thấy nút nào và ai đọc ngôn ngữ nào thì góp ý cho ngôn ngữ ấy.
+Người gửi không nhận hoặc xem bản dịch của chính tin nhắn, bất kể hội thoại `direct` hay `group`; bóng chat của họ luôn giữ văn bản gốc. Chỉ người nhận bằng ngôn ngữ đích mới có các điều khiển dịch và có thể góp ý cho bản dịch họ đọc.
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
 
@@ -432,11 +432,7 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 
 1. Server truy vấn tập `DISTINCT preferred_language` của toàn bộ thành viên, loại trừ `source_language` đã xác định.
 2. Thực hiện một lần dịch cho mỗi ngôn ngữ đích còn lại (tối đa M-1 lần, không phải N lần). Các thành viên cùng ngôn ngữ dùng chung một bản dịch và cùng một `translation_id`.
-3. Mỗi kết nối WebSocket chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của người dùng tương ứng — **cộng thêm người gửi tin nhắn trong hội thoại `type = "direct"`, nhận bản dịch của chính tin mình gửi** (sửa theo §3.10, **đề xuất**).
-
-   Vế thêm vào là điều kiện để §3.10 chạy được ở chat 1-1. Trước đây `_recipients_by_language` xếp người gửi vào đúng nhóm ngôn ngữ *họ đọc*, nên giữa một người đọc `vi` và một người đọc `en`, bản dịch `en` chỉ tới người nhận. Người gửi không có bản dịch nào trong tay để đối chiếu hay góp ý cho tới khi tải lại trang — trong khi `GET /conversations/{id}/messages` vốn đã trả **toàn bộ** bản dịch của mỗi tin, tức dữ liệu đã sẵn sàng, chỉ thiếu đường phát theo thời gian thực.
-
-   Phạm vi dừng ở `direct` chứ không mở cho nhóm, vì quyền góp ý của người gửi cũng chỉ có ở `direct` (§3.10). Hội thoại `direct` có đúng một ngôn ngữ đích khác, nên người gửi nhận thêm nhiều nhất một sự kiện cho mỗi tin nhắn.
+3. Mỗi kết nối WebSocket của **người nhận** chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của họ. Người gửi bị loại khỏi fan-out; server không tạo bản dịch chỉ để trả về cho chính người đã gửi.
 
 Đây là yêu cầu chức năng bắt buộc, khác biệt với nội dung tối ưu hiệu năng tại ADR-03 ([`ARCHITECTURE.md`](../ARCHITECTURE.md)). ADR-03 chỉ đề cập việc tối ưu fan-out, không thay đổi quy tắc nêu trên.
 
