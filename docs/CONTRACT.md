@@ -44,6 +44,36 @@ Bảng `users` chỉ có một cột lưu thông tin ngôn ngữ. Ngữ nghĩa �
 
 Trường này không mang ý nghĩa "ngôn ngữ người dùng sử dụng khi soạn tin". Ngôn ngữ nguồn của mỗi tin nhắn luôn do Agent xác định. Giá trị `preferred_language` của người gửi chỉ được sử dụng làm giá trị tạm tại thời điểm ghi bản ghi (xem §4.3) và luôn bị kết quả detect ghi đè.
 
+**Đổi `preferred_language` chỉ có hiệu lực với tin nhắn mới.** Bản dịch đã lưu trong `translation_results` không bị dịch lại, không có tác vụ nền nào chạy sau khi người dùng đổi ngôn ngữ, và `PUT /auth/me/language` không gọi Agent. Tin nhắn cũ vì thế giữ nguyên bản gốc cùng bản dịch đã có — client hiển thị bản dịch ứng với `target_language` mới nếu tồn tại, còn lại **hiển thị bản dịch đã lưu sẵn của tin đó** chứ không gọi lại API dịch và cũng không lùi về chỉ còn bản gốc.
+
+### 1.2. Ngữ nghĩa trường `interface_language`
+
+`users.interface_language` là ngôn ngữ của **chữ trên giao diện** — nhãn nút, trang cài đặt, điều khoản, thông báo hướng dẫn. Nó tách hẳn khỏi `preferred_language` ở §1.1 vì hai lựa chọn này độc lập: một người học tiếng Nhật có thể muốn đọc tin nhắn đã dịch sang tiếng Nhật nhưng vẫn muốn menu bằng tiếng Việt.
+
+Hai trường khác nhau ở thời điểm có hiệu lực, và đây là điểm dễ nhầm nhất:
+
+| | `preferred_language` | `interface_language` |
+|---|---|---|
+| Chi phối | Nội dung tin nhắn | Chữ của ứng dụng |
+| Khi đổi | Chỉ áp dụng cho tin nhắn **mới** | Áp dụng **ngay lập tức** cho toàn bộ màn hình đang mở |
+| Tốn hạn mức LLM | Có, khi có tin nhắn mới | Không bao giờ |
+
+**Giao diện phải có đủ nhãn cho toàn bộ ngôn ngữ hệ thống hỗ trợ** — tức cả 14 mã trong `SUPPORTED_LANGUAGES` (`src/schemas/auth.py`), cùng danh sách mà `GET /languages` trả về. Không có ngôn ngữ hạng hai: đã cho chọn trong ô ngôn ngữ thì phải có nhãn.
+
+Cơ chế lùi về `en` cho từng nhãn còn thiếu (quy tắc `altLabel` sẵn có ở `frontend/src/shared/lib/i18n.ts`) vẫn giữ, nhưng từ nay nó là **lưới an toàn cho lúc thêm nhãn mới**, không phải cách làm bình thường: thêm một nhãn vào giao diện mà chưa dịch thì người dùng `ar` thấy đúng dòng đó bằng tiếng Anh chứ không thấy chuỗi khoá hay màn hình trắng.
+
+### 1.3. Ngôn ngữ trước khi đăng nhập
+
+Trang đăng nhập và đăng ký chạy khi chưa có tài khoản nào để đọc `interface_language`, nên thứ tự lấy giá trị như sau:
+
+1. **Lần đầu vào, chưa từng chọn gì: `en`.** Đây là ngôn ngữ duy nhất chắc chắn có đủ nhãn và là mặc định an toàn cho người lạ. `RegisterRequest.preferred_language` cũng mặc định `en` vì lý do này (sửa 16/08 — trước đây mặc định `vi`).
+2. Người dùng đổi ngôn ngữ ngay tại đó bằng ô chọn có sẵn trên trang. Lựa chọn này đổi chữ **ngay lập tức** và được ghi vào `localStorage` của trình duyệt, nên lần vào sau vẫn đúng ngôn ngữ họ đã chọn.
+3. **Đăng nhập xong thì `interface_language` của tài khoản thắng**, ghi đè giá trị trong `localStorage`. Từ đó trở đi ngôn ngữ giao diện và ngôn ngữ dịch đều lấy từ cài đặt tài khoản (§1.1, §1.2), không phải từ trình duyệt — đó là lý do hai trường này lưu ở server chứ không phải chỉ ở máy.
+
+`localStorage` ở bước 2 không phải là nơi lưu chính thức, chỉ là bộ nhớ tạm cho trạng thái chưa đăng nhập và cho lần render đầu tiên sau khi mở lại trình duyệt. Không thành phần nào sau khi đăng nhập được đọc nó thay cho `UserDTO`.
+
+**Khi đăng ký, ngôn ngữ đang chọn trở thành cả hai trường**: server ghi `interface_language = preferred_language = ` giá trị người dùng vừa chọn. Người mới chỉ phải trả lời một câu hỏi ngôn ngữ, và tách hai thứ ra là việc họ làm sau ở trang cài đặt nếu muốn. Vì vậy `POST /auth/register` **không** thêm trường mới vào request body.
+
 ## 2. LangGraph AgentState
 
 Cấu trúc dưới đây là bắt buộc đối với mọi node trong `src/agents/nodes/`. Không sử dụng tên trường khác.
@@ -99,11 +129,13 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/auth/password/reset` | `{"token": str, "password": str}` | `204 No Content` | Đã hiện thực |
 | `GET` | `/auth/me` | — | `UserDTO` | Đã hiện thực |
 | `PUT` | `/auth/me/language` | `{"preferred_language": str}` | `UserDTO` | Đã hiện thực |
+| `PUT` | `/auth/me/interface-language` | `{"interface_language": str}` | `UserDTO`, xem §1.2 | Đã hiện thực |
 | `GET` | `/languages` | — | `[str]` | Đã hiện thực |
 | `GET` | `/users?q=` | — | `[UserDTO]`, xem §3.1 | Đã hiện thực |
 | `POST` | `/conversations` | `{"type": "direct" \| "group", "member_ids": [uuid], "title": str \| null}` | `ConversationDTO`, `201` khi tạo mới và `200` khi dùng lại — xem §3.5 | Đã hiện thực |
-| `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `{"messages": [MessageDTO]}` | Chưa hiện thực |
+| `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `[MessageDTO]` — mảng trần, xem ghi chú §3.2 | Đã hiện thực |
 | `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Đã hiện thực |
+| `POST` | `/translations/{translation_id}/edits` | `{"edited_text": str}` | `TranslationEditDTO`, xem §3.10 | **Đề xuất** |
 | `PATCH` | `/conversations/{conversation_id}/messages/{message_id}` | `{"text": str}` | `MessageDTO`, xem §3.6 | Đã hiện thực |
 | `DELETE` | `/conversations/{conversation_id}/messages/{message_id}` | — | `204 No Content` | Đã hiện thực |
 | `POST` | `/conversations/{conversation_id}/attachments` | `multipart/form-data`, trường `file` | `AttachmentDTO`, xem §3.7 | Đã hiện thực |
@@ -125,9 +157,12 @@ Tương ứng lớp `UserResponse` trong `src/schemas/auth.py`.
   "display_name": "Nguyễn An",
   "role": "member",
   "preferred_language": "vi",
+  "interface_language": "vi",
   "created_at": "2026-08-10T09:00:00Z"
 }
 ```
+
+Trường `interface_language` (§1.2) **không bao giờ null**: tài khoản tạo trước khi có nó nhận giá trị bằng `preferred_language` của chính mình lúc migrate, nên giao diện của họ không đổi sau khi nâng cấp.
 
 Hai trường `username` và `display_name` **không bao giờ null trong phản hồi**: tài khoản tạo trước khi có hai trường này được lấp bằng phần trước dấu `@` của email, nên client luôn có thứ để hiển thị.
 
@@ -154,15 +189,24 @@ Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗ
       "latency_ms": 420,
       "is_fallback": false,
       "my_rating": 5,
-      "my_correction": null
+      "my_correction": null,
+      "my_edit": {
+        "edit_id": "uuid",
+        "edited_text": "string",
+        "edited_at": "2026-08-15T09:04:00Z"
+      }
     }
   ]
 }
 ```
 
+**Lịch sử trả về mảng trần, không bọc trong `{"messages": ...}`.** Bảng ở §3 từng ghi dạng bọc và đánh dấu "chưa hiện thực"; endpoint đã được hiện thực từ lâu với `response_model=list[MessageResponse]` (`src/api/routes.py`), và client đang đọc theo mã nguồn. Sửa tài liệu cho khớp mã chứ không ngược lại: đổi hình dạng phản hồi bây giờ sẽ làm hỏng frontend đang chạy, để đúng một dấu ngoặc trong tài liệu.
+
 Trường `translation_id` là bắt buộc trong mỗi phần tử của mảng `translations`. Frontend sử dụng giá trị này để gọi endpoint gửi phản hồi (F-05).
 
-Hai trường `my_rating` và `my_correction` là phản hồi **của chính tài khoản đang gọi** cho bản dịch đó, `null` khi tài khoản chưa đánh giá. Chúng tồn tại để nút đánh giá giữ nguyên trạng thái sau khi tải lại trang — không có chúng, người dùng không phân biệt được "chưa bình chọn" với "đã bình chọn nhưng giao diện quên mất". Đây là dữ liệu riêng theo người gọi: hai thành viên khác nhau đọc cùng một `translation_id` sẽ nhận hai giá trị khác nhau, nên tuyệt đối không cache chung giữa các tài khoản.
+Trường `my_edit` là bản góp ý **mới nhất của chính tài khoản đang gọi** cho bản dịch đó, `null` khi họ chưa góp ý (§3.10). Tiền tố `my_` mang đúng nghĩa như ở `my_rating`: hai người đọc cùng một `translation_id` nhận hai giá trị khác nhau, và **không tài khoản nào đọc được `my_edit` của người khác**. Chỉ bản mới nhất nằm trong DTO; lịch sử đầy đủ nằm trong bảng `translation_edits` và chỉ dành cho quản trị.
+
+Ba trường `my_rating`, `my_correction` và `my_edit` là phản hồi **của chính tài khoản đang gọi** cho bản dịch đó, `null` khi tài khoản chưa đánh giá. Chúng tồn tại để nút đánh giá giữ nguyên trạng thái sau khi tải lại trang — không có chúng, người dùng không phân biệt được "chưa bình chọn" với "đã bình chọn nhưng giao diện quên mất". Đây là dữ liệu riêng theo người gọi: hai thành viên khác nhau đọc cùng một `translation_id` sẽ nhận hai giá trị khác nhau, nên tuyệt đối không cache chung giữa các tài khoản.
 
 ### 3.3. Endpoint kế thừa
 
@@ -189,7 +233,7 @@ Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không b�
 }
 ```
 
-Endpoint **yêu cầu xác thực**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Mọi thành viên đã đăng nhập đều đọc được.
+Endpoint **chỉ dành cho quản trị viên**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Chỉ tài khoản có `role == "admin"` được đọc; thành viên nhận `403 Forbidden`.
 
 `fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
 
@@ -216,7 +260,9 @@ Tương ứng lớp `ConversationResponse` trong `src/schemas/chat.py`, trả v�
 
 Lý do không đẩy qua socket: xác định "ai cần biết" đòi hỏi một truy vấn ngay lúc socket vừa mở hoặc vừa đóng, mà phiên cơ sở dữ liệu lại có vòng đời gắn với chính socket đó — truy vấn tại hai thời điểm ấy chạy đua với việc dọn phiên và làm hỏng kết nối một cách không ổn định. Đổi lại, trạng thái online chỉ mới đến mức lần gọi gần nhất.
 
-Hai trường `last_message` và `last_message_at` mô tả tin nhắn mới nhất của hội thoại, `null` khi hội thoại chưa có tin nào. Chúng tồn tại để danh sách hội thoại hiển thị được dòng xem trước và thời gian mà không phải gọi thêm một request cho mỗi hội thoại.
+Hai trường `last_message` và `last_message_at` mô tả tin nhắn mới nhất của hội thoại, `null` khi hội thoại chưa có tin nào.
+
+**Tin mới nhất đã bị gỡ thì `last_message` là chuỗi rỗng, `last_message_at` vẫn giữ nguyên** (sửa 16/08). Trước đây tin đã gỡ bị loại khỏi phép tính, nên dòng xem trước lùi về tin trước đó — hoặc trống hẳn khi không còn tin nào — và người dùng không có cách nào biết chuyện gì vừa xảy ra. Chuỗi rỗng là tín hiệu không nhập nhằng vì tin nhắn thường **không bao giờ** rỗng: endpoint gửi tin từ chối nội dung trắng (§3.6). Câu chữ hiển thị ("Tin nhắn đã được thu hồi") do client quyết định — đó là chữ giao diện và phải theo ngôn ngữ người đọc, không phải thứ server áp đặt. Chúng tồn tại để danh sách hội thoại hiển thị được dòng xem trước và thời gian mà không phải gọi thêm một request cho mỗi hội thoại.
 
 `last_message` là **dữ liệu riêng theo người gọi**, cùng nguyên tắc với `my_rating` ở §3.2: nếu tin nhắn đó đã có bản dịch sang `preferred_language` của tài khoản đang gọi thì trả về bản dịch, không thì trả về `original_text`. Lý do: danh sách hội thoại mà hiển thị thứ tiếng người đọc không hiểu thì không dùng để nhận ra hội thoại được. Vì vậy tuyệt đối không cache chung giá trị này giữa các tài khoản.
 
@@ -273,6 +319,56 @@ Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=dev
 
 `POST /auth/password/reset` tiêu thụ mã đó, đổi mật khẩu và **thu hồi toàn bộ phiên** của tài khoản. Mã dùng một lần và hết hạn sau `PASSWORD_RESET_EXPIRE_MINUTES` phút.
 
+### 3.10. Góp ý bản dịch (F-05 mở rộng)
+
+Nút bút chì dưới mỗi bản dịch cho phép người đọc gõ lại bản họ cho là đúng. **Bản góp ý là dữ liệu riêng tư của chính người viết ra nó** — không thành viên nào khác đọc được, kể cả người gửi tin nhắn, và nó không thay đổi thứ bất kỳ ai khác nhìn thấy.
+
+Đây là điểm phân biệt bắt buộc với §3.6, hai việc rất dễ lẫn:
+
+| | §3.6 Sửa **tin nhắn** (F-06) | §3.10 Góp ý **bản dịch** (F-05) |
+|---|---|---|
+| Ai làm được | Chỉ người gửi (server chặn) | Mọi thành viên (server); giao diện chỉ hiện nút cho người đọc bản dịch đó, cộng người gửi ở `direct` |
+| Sửa cái gì | `messages.original_text` | Không sửa gì cả — ghi thêm một bản song song |
+| Ai thấy kết quả | **Cả phòng**: nội dung mới, bản dịch mới, trạng thái "đã sửa" | **Chỉ người viết góp ý** |
+| Có dịch lại không | Có, tốn hạn mức LLM | Không bao giờ |
+| Sự kiện WebSocket | `message_updated`, rồi `translation_completed` như tin thường | **Không có** |
+
+**TranslationEditDTO**
+
+```json
+{
+  "edit_id": "uuid",
+  "translation_id": "uuid",
+  "message_id": "uuid",
+  "target_language": "en",
+  "edited_text": "string",
+  "edited_at": "2026-08-15T09:04:00Z"
+}
+```
+
+Không có trường `edited_by`: người viết luôn là tài khoản đang gọi, vì không tài khoản nào đọc được bản góp ý của người khác.
+
+**Ai được góp ý — quy tắc phía server.** Bất kỳ **thành viên nào của hội thoại**, `403` nếu không phải. Đây là mô tả đúng endpoint feedback đã hiện thực (`src/api/routes.py`, `submit_translation_feedback`), vốn chỉ kiểm tư cách thành viên chứ không kiểm ngôn ngữ, và endpoint góp ý mới dùng lại đúng phạm vi đó. Không siết chặt hơn ở server vì dữ liệu này riêng tư: một thành viên gọi API để tự ghi chú về một bản dịch họ không đọc thì cũng không ai bị ảnh hưởng, trong khi thêm một quy tắc phân quyền nữa là thêm một chỗ để sai.
+
+**Ai thấy nút — quy tắc phía client.** Hẹp hơn quy tắc trên, và đây mới là thứ người dùng cảm nhận được:
+
+| Loại hội thoại | Người nhận | Người gửi |
+|---|---|---|
+| `direct` | Nút gạt bản gốc/bản dịch, đánh giá, góp ý | **Giống hệt người nhận**: nút gạt, đánh giá, góp ý |
+| `group` | Nút gạt, đánh giá, góp ý cho bản dịch ngôn ngữ mình đọc | **Không có nút nào** |
+
+Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại chỉ có một người nhận và một bản dịch: họ nhìn thấy trọn vẹn cả bản gốc lẫn bản dịch nên đánh giá được, và cái họ gạt qua gạt lại là chính hai văn bản đó. Ở `group` thì không: một tin nhắn có nhiều bản dịch, không có "bản dịch của tin này" để mà gạt hay chấm điểm, nên người gửi không thấy nút nào và ai đọc ngôn ngữ nào thì góp ý cho ngôn ngữ ấy.
+
+Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
+
+**Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
+
+**Bản máy dịch không bao giờ bị ghi đè.** `translation_results.translated_text` giữ nguyên văn bản LLM sinh ra. Đây là điều kiện để so sánh người với máy, nên client **không** được coi bản góp ý là bản dịch mới của hệ thống.
+
+**Hiển thị.** Bóng chat luôn hiện `translated_text`. Bản góp ý của chính mình nằm sau nút bút chì: bấm để mở, bấm lần nữa để đóng. Người dùng vì thế đối chiếu được hai bản, thay vì bị thay thầm nội dung đang đọc.
+
+`404` khi `translation_id` không tồn tại; `409` khi tin nhắn tương ứng đã bị gỡ (§3.6).
+
 ## 4. WebSocket Protocol
 
 **Endpoint:** `ws(s)://<host>/api/v1/ws` — một kênh duy nhất cho mọi hội thoại, không phải một kênh cho mỗi hội thoại.
@@ -306,6 +402,8 @@ Trình tự sự kiện khi cần dịch: `message.received` (trạng thái `str
 | `message_read` | `{"type": "message_read", "conversation_id", "user_id", "read_at"}` | Khi một thành viên đánh dấu đã đọc (§3.8). Phát tới các thành viên khác để họ đổi dấu ✓ thành ✓✓ |
 | `error` | `{"type": "error", "code": "string", "message": "string"}` | Khi phát sinh lỗi kết nối hoặc xác thực (xem §6) |
 
+**Góp ý bản dịch (§3.10) không có sự kiện WebSocket nào.** Bản góp ý là dữ liệu riêng của người viết, không ai khác đọc được, nên không có gì để phát đi — phản hồi của lời gọi REST là đủ. Việc "người nhận thấy nội dung mới" thuộc về §3.6: người gửi sửa **tin nhắn gốc**, server dịch lại, cả phòng nhận `message_updated` rồi `translation_completed` như một tin nhắn thường và bóng chat hiện trạng thái đã sửa. Đừng gộp hai luồng này.
+
 Hai sự kiện `message_updated` và `message_deleted` đặt tên `snake_case` theo đúng quy ước trong `CLAUDE.md` và theo tên các sự kiện đã hiện thực trong `src/schemas/chat.py`. Các dòng viết dạng chấm phía trên là bản nháp trước khi hiện thực, chưa được đồng bộ lại với mã nguồn.
 
 **Quy định xử lý phía Frontend:**
@@ -334,7 +432,11 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 
 1. Server truy vấn tập `DISTINCT preferred_language` của toàn bộ thành viên, loại trừ `source_language` đã xác định.
 2. Thực hiện một lần dịch cho mỗi ngôn ngữ đích còn lại (tối đa M-1 lần, không phải N lần). Các thành viên cùng ngôn ngữ dùng chung một bản dịch và cùng một `translation_id`.
-3. Mỗi kết nối WebSocket chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của người dùng tương ứng.
+3. Mỗi kết nối WebSocket chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của người dùng tương ứng — **cộng thêm người gửi tin nhắn trong hội thoại `type = "direct"`, nhận bản dịch của chính tin mình gửi** (sửa theo §3.10, **đề xuất**).
+
+   Vế thêm vào là điều kiện để §3.10 chạy được ở chat 1-1. Trước đây `_recipients_by_language` xếp người gửi vào đúng nhóm ngôn ngữ *họ đọc*, nên giữa một người đọc `vi` và một người đọc `en`, bản dịch `en` chỉ tới người nhận. Người gửi không có bản dịch nào trong tay để đối chiếu hay góp ý cho tới khi tải lại trang — trong khi `GET /conversations/{id}/messages` vốn đã trả **toàn bộ** bản dịch của mỗi tin, tức dữ liệu đã sẵn sàng, chỉ thiếu đường phát theo thời gian thực.
+
+   Phạm vi dừng ở `direct` chứ không mở cho nhóm, vì quyền góp ý của người gửi cũng chỉ có ở `direct` (§3.10). Hội thoại `direct` có đúng một ngôn ngữ đích khác, nên người gửi nhận thêm nhiều nhất một sự kiện cho mỗi tin nhắn.
 
 Đây là yêu cầu chức năng bắt buộc, khác biệt với nội dung tối ưu hiệu năng tại ADR-03 ([`ARCHITECTURE.md`](../ARCHITECTURE.md)). ADR-03 chỉ đề cập việc tối ưu fan-out, không thay đổi quy tắc nêu trên.
 
@@ -344,12 +446,13 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 
 | Bảng | Các trường |
 |---|---|
-| `users` | `id`, `email`, `password_hash`, `role`, `preferred_language`, `created_at` |
+| `users` | `id`, `email`, `password_hash`, `role`, `preferred_language`, `interface_language`, `created_at` |
 | `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
 | `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
 | `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at`, `edited_at`, `deleted_at` |
 | `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
+| `translation_edits` | `id`, `translation_id`, `editor_id`, `edited_text`, `created_at` |  <!-- đã hiện thực -->
 | `translation_attempts` | `id`, `message_id`, `target_language`, `source_language_declared`, `source_language_detected`, `outcome`, `provider`, `model_configured`, `model_served`, `detect_method`, `llm_calls`, `input_tokens`, `output_tokens`, `finish_reason`, `detect_ms`, `context_ms`, `translate_ms`, `fallback_ms`, `total_ms`, `context_lines`, `fallback_reason`, `translation_id`, `created_at` |
 
 **Ghi chú:**
@@ -365,7 +468,9 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 9. `translation_attempts` là **nhật ký đo lường**, không phải trạng thái ứng dụng (ADR-16). Mỗi cặp (tin nhắn × ngôn ngữ đích) được thử ghi một dòng, **kể cả khi không sinh ra bản dịch nào**. Khác `translation_results` ở ba điểm có chủ đích: không có ràng buộc duy nhất (chạy lại là một lượt thử mới, đáng đếm riêng), `translation_id` cho phép `NULL` với `ON DELETE SET NULL` (xoá bản dịch không được xoá bằng chứng rằng đã dịch), và các cột được tự do thay đổi theo nhu cầu đo — **không** thành phần nào ngoài `src/services/metrics.py` và `scripts/report_metrics.py` được đọc bảng này.
 10. `translation_attempts.outcome` nhận đúng bảy giá trị, có `CheckConstraint` ở mức cơ sở dữ liệu: `llm`, `secondary`, `original` (ba trường hợp có dòng trong `translation_results`), và `passthrough`, `timeout`, `error`, `empty` (bốn trường hợp không có). Bốn giá trị sau chính là mẫu số còn thiếu: mọi tỷ lệ fallback tính riêng trên các lượt thành công đều không phải là một tỷ lệ.
 11. `translation_attempts.source_language_detected` để `NULL` khi nhận diện bị bỏ qua hoặc thất bại. Không được ghi giá trị khai báo vào đây: hai cột sẽ khớp nhau do cách xây dựng, và tỷ lệ đồng thuận của ADR-11 sẽ luôn đọc ra 100% bất kể nhận diện hoạt động thế nào.
-12. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
+12. `translation_edits` là **nhật ký chỉ ghi thêm** (đề xuất, §3.10): không có ràng buộc duy nhất trên `(translation_id, editor_id)` vì góp ý lại là một dòng mới chứ không phải sửa dòng cũ, và bản có hiệu lực là bản `created_at` lớn nhất **của từng người**. Chỉ mục `(translation_id, editor_id, created_at)` để lấy bản mới nhất của người đang gọi mà không quét cả bảng — thứ tự cột đúng theo cách truy vấn, vì mọi lần đọc đều lọc theo cả hai khoá. `editor_id` dùng `ON DELETE CASCADE`: dữ liệu này riêng tư của một người, xoá tài khoản thì xoá theo, không để lại dòng vô chủ mà không ai có quyền đọc. Khác `feedbacks.correction` đúng một điểm: bảng này giữ **toàn bộ lịch sử** góp ý thay vì một dòng mỗi người — cả hai đều riêng tư như nhau. `feedbacks.correction` sẽ **không còn được client ghi vào** kể từ khi giao diện chuyển sang endpoint mới (PR frontend của F-05); tới lúc đó nút bút chì vẫn ghi vào cột cũ. Cột giữ lại vĩnh viễn để đọc dữ liệu đã có.
+13. `users.interface_language` (§1.2) `NOT NULL`; migration lấp giá trị ban đầu bằng chính `preferred_language` của từng dòng, nên không tài khoản nào thấy giao diện đổi ngôn ngữ sau khi nâng cấp. Không có ràng buộc khoá ngoại tới danh sách ngôn ngữ: danh sách đó là allowlist ở tầng ứng dụng (`GET /languages`), không phải bảng.
+14. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
 
 ## 6. Đặc tả lỗi
 

@@ -15,6 +15,14 @@ Khi student `git push`:
 
 Toàn bộ prompt user đã gõ trong Antigravity IDE được capture **nguyên văn từ disk**, không cần AI tự tóm tắt.
 
+## Chỉ một thư mục log duy nhất
+
+Mọi script `log_*` và `submit_log.py` đều ghi vào **`<gốc repo>/.ai-log/`**, bất kể chúng được gọi từ thư mục làm việc nào. Đường dẫn được suy ra từ vị trí của chính tệp script (`Path(__file__).resolve().parent.parent`), không phải từ thư mục hiện hành.
+
+Lý do: một công cụ chạy với thư mục làm việc là `frontend/` từng tạo ra `frontend/.ai-log/session.jsonl` thứ hai. Không có gì nộp tệp đó lên grading server, nên những prompt ghi vào đấy coi như mất trắng.
+
+`AI_LOG_DIR` vẫn được tôn trọng: giá trị tuyệt đối dùng nguyên như đã đặt, giá trị tương đối tính từ gốc repo.
+
 ## Không làm những việc sau
 
 - ❌ **KHÔNG** gọi `scripts/log_antigravity.py "<summary>" "<model>"` sau mỗi task. Lệnh này đã bị deprecate; nếu vô tình gọi sẽ tạo log entry giả mạo dạng "TaskComplete" không phải prompt thật của user.

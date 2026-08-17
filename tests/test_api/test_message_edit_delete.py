@@ -265,7 +265,7 @@ async def test_blank_edit_is_rejected(
 
 
 @pytest.mark.asyncio
-async def test_withdrawn_message_stops_being_the_sidebar_preview(
+async def test_withdrawn_message_previews_as_empty_rather_than_the_one_before(
     client,
     test_db,
     test_user,
@@ -273,7 +273,14 @@ async def test_withdrawn_message_stops_being_the_sidebar_preview(
     test_user_two,
     conversation_factory,
 ):
-    """The preview falls back to the newest message that still exists."""
+    """The sidebar reports the withdrawal instead of rewinding to older text.
+
+    Reversed on 16/08. The preview used to fall back to the newest surviving
+    message, which read as the conversation going backwards in time and never
+    said that anything had been withdrawn. It now keeps the withdrawn message's
+    slot and empties its text, and the client renders the wording in the
+    reader's own language (docs/CONTRACT.md §3.5).
+    """
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     earlier = Message(
         client_message_id="preview-earlier",
@@ -298,4 +305,5 @@ async def test_withdrawn_message_stops_being_the_sidebar_preview(
     )
 
     listed = (await client.get("/api/v1/conversations", headers=test_user_headers)).json()[0]
-    assert listed["last_message"] == "Tin trước đó"
+    assert listed["last_message"] == ""
+    assert listed["last_message_at"].startswith("2026-08-14T09:05")

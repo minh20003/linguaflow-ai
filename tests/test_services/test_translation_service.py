@@ -15,7 +15,8 @@ import asyncio
 import pytest
 from sqlalchemy import select
 
-from src.database.models import Message, TranslationResult
+from src.database.models import Message, TranslationAttempt, TranslationResult
+from src.services import translation as translation_service
 from src.services.translation import schedule_translations
 
 
@@ -67,9 +68,25 @@ def session_factory_for_tests():
     return conftest_module.test_async_session_maker
 
 
-async def persist_message(session, *, conversation_id, sender_id, text, source_language):
+@pytest.fixture(autouse=True)
+def clear_translation_cache():
+    """Keep process-local cache entries from crossing test boundaries."""
+    translation_service._translation_cache.clear()
+    yield
+    translation_service._translation_cache.clear()
+
+
+async def persist_message(
+    session,
+    *,
+    conversation_id,
+    sender_id,
+    text,
+    source_language,
+    client_message_id="m1",
+):
     message = Message(
-        client_message_id="m1",
+        client_message_id=client_message_id,
         conversation_id=conversation_id,
         sender_id=sender_id,
         original_text=text,
@@ -410,3 +427,362 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
         )
     ).all()
     assert stored == []
+
+
+@pytest.mark.asyncio
+async def test_direct_sender_also_receives_the_translation_of_their_own_message(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """The one-to-one sender needs the translation their reader got (§4.4 rule 3).
+
+    test_user_two reads vi and writes in vi, so grouping by reading language
+    alone would send the English translation only to test_user. Without this the
+    sender has nothing to toggle, rate or edit under their own bubble until the
+    page is reloaded.
+    """
+    conversation = await conversation_factory(test_user_two, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user_two.id,
+        text="Chieu nay hop luc may gio?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=make_graph_factory(
+            {
+                "en": {
+                    "source_language": "vi",
+                    "translated_text": "What time is the meeting this afternoon?",
+                    "model": "mock-model",
+                    "latency_ms": 700,
+                    "is_fallback": False,
+                }
+            }
+        ),
+    )
+
+    english_recipients = [
+        recipients for recipients, payload in publisher.sent
+        if payload.get("target_language") == "en"
+    ]
+    assert len(english_recipients) == 1
+    assert set(english_recipients[0]) == {test_user.id, test_user_two.id}
+
+
+@pytest.mark.asyncio
+async def test_group_sender_is_left_out_of_a_language_they_do_not_read(
+    test_db, test_user, test_user_two, test_user_three, conversation_factory
+):
+    """Groups keep the old routing: no controls there, so nothing extra to send.
+
+    A group message has one translation per language and no single one belongs
+    to the sender's bubble, so §3.10 shows them no controls and §4.4 rule 3
+    stays as it was.
+    """
+    conversation = await conversation_factory(
+        test_user_two,
+        [test_user, test_user_two, test_user_three],
+        conversation_type="group",
+    )
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user_two.id,
+        text="Chieu nay hop luc may gio?",
+        source_language="vi",
+    )
+    publisher = RecordingPublisher()
+
+    await run_translations(
+        message=message,
+        publisher=publisher,
+        graph_factory=make_graph_factory(
+            {
+                "en": {
+                    "source_language": "vi",
+                    "translated_text": "What time is the meeting this afternoon?",
+                    "model": "mock-model",
+                    "latency_ms": 700,
+                    "is_fallback": False,
+                },
+                "ja": {
+                    "source_language": "vi",
+                    "translated_text": "今日の午後の会議は何時ですか?",
+                    "model": "mock-model",
+                    "latency_ms": 800,
+                    "is_fallback": False,
+                },
+            }
+        ),
+    )
+
+    for recipients, payload in publisher.sent:
+        if payload.get("target_language") in {"en", "ja"}:
+            assert test_user_two.id not in recipients
+
+
+def counting_graph_factory(result_by_language: dict[str, dict]):
+    """Return a canned graph factory and the target languages it was asked for."""
+    calls: list[str] = []
+
+    def factory(_session, _message_id):
+        class FakeGraph:
+            async def ainvoke(self, state, config=None):
+                calls.append(state["target_language"])
+                return {**state, **result_by_language.get(state["target_language"], {})}
+
+        return FakeGraph()
+
+    return factory, calls
+
+
+PRIMARY_EN_TO_VI = {
+    "source_language": "en",
+    "translated_text": "Chao buoi sang",
+    "model": "primary-model",
+    "latency_ms": 42,
+    "is_fallback": False,
+    "telemetry": {"outcome": "llm", "detect_method": "langdetect"},
+}
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_hit_skips_graph_and_attempt(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    """A safely detected short phrase reuses its completed primary translation."""
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    first = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="cache-1",
+    )
+    second = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="cache-2",
+    )
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=first, publisher=publisher, graph_factory=graph_factory)
+    await run_translations(message=second, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 1
+    assert [event["model"] for event in publisher.events_for("vi")] == [
+        "primary-model",
+        "cache",
+    ]
+    async with session_factory_for_tests()() as session:
+        attempts = (
+            await session.scalars(
+                select(TranslationAttempt).where(TranslationAttempt.target_language == "vi")
+            )
+        ).all()
+    assert len(attempts) == 1
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_long_text_is_not_cached(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    text = "This phrase is deliberately longer than thirty characters"
+    first = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text=text,
+        source_language="en",
+        client_message_id="long-1",
+    )
+    second = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text=text,
+        source_language="en",
+        client_message_id="long-2",
+    )
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+
+    await run_translations(
+        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+    await run_translations(
+        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+
+    assert calls.count("vi") == 2
+    assert translation_service._translation_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_failure_falls_through_to_the_graph(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    class BrokenCache(dict):
+        def get(self, key, default=None):
+            raise RuntimeError("cache unavailable")
+
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    monkeypatch.setattr(translation_service, "_translation_cache", BrokenCache())
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+    )
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 1
+    assert len(publisher.events_for("vi")) == 1
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_does_not_store_fallback_output(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    first = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="fallback-1",
+    )
+    second = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="fallback-2",
+    )
+    fallback_result = {
+        **PRIMARY_EN_TO_VI,
+        "translated_text": "Good morning",
+        "is_fallback": True,
+        "telemetry": {"outcome": "original", "detect_method": "langdetect"},
+    }
+    graph_factory, calls = counting_graph_factory({"vi": fallback_result})
+
+    await run_translations(
+        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+    await run_translations(
+        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+
+    assert calls.count("vi") == 2
+    assert translation_service._translation_cache == {}
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_hit_does_not_publish_a_withdrawn_message(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    """A cached value is still checked against the current persisted message."""
+    from datetime import UTC, datetime
+
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+    )
+    translation_service._translation_cache[
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+    ] = "Chao buoi sang"
+    message.deleted_at = datetime.now(UTC)
+    await test_db.commit()
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 0
+    assert publisher.events_for("vi") == []
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_is_scoped_to_the_conversation(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    first_conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    second_conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    first = await persist_message(
+        test_db,
+        conversation_id=first_conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="conversation-1",
+    )
+    second = await persist_message(
+        test_db,
+        conversation_id=second_conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+        client_message_id="conversation-2",
+    )
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+
+    await run_translations(
+        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+    await run_translations(
+        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
+    )
+
+    assert calls.count("vi") == 2
+
+
+@pytest.mark.asyncio
+async def test_translation_cache_detector_disagreement_runs_the_graph(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "fr")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+    )
+    translation_service._translation_cache[
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+    ] = "Chao buoi sang"
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 1
+    assert [event["model"] for event in publisher.events_for("vi")] == ["primary-model"]

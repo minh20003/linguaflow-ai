@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.deps import get_current_user
+from src.core.deps import get_admin_user
 from src.database import get_db
 from src.database.models import User
 from src.services.metrics import summarize_attempts
@@ -32,13 +32,13 @@ async def read_stats(
         description="Only count attempts from the last N days. Omit for all time.",
     ),
     session: AsyncSession = Depends(get_db),
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_admin_user),
 ) -> dict:
     """Summarise how translation has been performing.
 
-    Authenticated rather than public: the response exposes system-wide traffic,
-    which model is serving it and how much it costs in tokens. It contains no
-    message text and no per-user data, so any signed-in member may read it.
+    Administrator-only: the response exposes system-wide traffic, which model
+    is serving it and how much it costs in tokens. It contains no message text
+    or per-user data, but it is operational information rather than member UI.
     """
     since = datetime.now(UTC) - timedelta(days=days) if days else None
     summary = await summarize_attempts(session, since=since)

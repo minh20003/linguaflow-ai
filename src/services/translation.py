@@ -32,9 +32,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.graph import build_translation_graph
+from src.agents.nodes.translation import _HAS_LETTER, _MIN_DETECT_CHARS, _detect_local
 from src.agents.observability import build_runnable_config
 from src.database import get_async_session_maker
 from src.database.models import (
+    Conversation,
     ConversationMember,
     Message,
     TranslationAttempt,
@@ -49,6 +51,88 @@ logger = logging.getLogger(__name__)
 # asyncio.create_task holds only a weak reference, so a task with no other
 # reference can be garbage-collected mid-flight and its exception swallowed.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+# This deliberately stays small and local to one process. It avoids repeat LLM
+# calls for common short phrases without turning translation delivery into a
+# cache dependency or changing the persistence contract.
+_CACHE_MAX_SIZE = 200
+_translation_cache: dict[tuple[str, str, str, str], str] = {}
+
+
+def _normalize_cache_text(text: str) -> str:
+    """Remove incidental outer whitespace without changing the phrase itself."""
+    return text.strip()
+
+
+def _is_cacheable(text: str) -> bool:
+    """Limit completed-value caching to short, simple phrases."""
+    normalized = _normalize_cache_text(text)
+    return bool(normalized) and len(normalized) <= 30 and len(normalized.split()) <= 3
+
+
+def _cache_key(
+    conversation_id: str,
+    text: str,
+    source_language: str,
+    target_language: str,
+) -> tuple[str, str, str, str]:
+    """Build a case-preserving key scoped to the conversation."""
+    return (
+        conversation_id,
+        _normalize_cache_text(text),
+        source_language,
+        target_language,
+    )
+
+
+def _confirmed_cache_source(snapshot: Mapping[str, Any]) -> str | None:
+    """Return a source language only when the graph's local fast path trusts it.
+
+    ``Message.source_language`` starts as the sender's preference, not a fact
+    about this particular message. Reusing it before the graph would therefore
+    be unsafe unless the existing local detector independently agrees with it.
+    """
+    text = _normalize_cache_text(str(snapshot.get("original_text") or ""))
+    declared = str(snapshot.get("source_language") or "")
+    if (
+        not declared
+        or len(text) < _MIN_DETECT_CHARS
+        or not _HAS_LETTER.search(text)
+    ):
+        return None
+
+    try:
+        detected = _detect_local(text)
+    except Exception as exc:
+        logger.warning("Local language detection for the translation cache failed: %s", exc)
+        return None
+    return detected if detected == declared else None
+
+
+def _cache_primary_translation(
+    *,
+    snapshot: Mapping[str, Any],
+    target_language: str,
+    source_language: str,
+    translated_text: str,
+) -> None:
+    """Best-effort insertion of a completed primary-LLM translation."""
+    try:
+        if not _is_cacheable(str(snapshot["original_text"])):
+            return
+        if len(_translation_cache) >= _CACHE_MAX_SIZE:
+            for key in list(_translation_cache)[: _CACHE_MAX_SIZE // 2]:
+                del _translation_cache[key]
+        _translation_cache[
+            _cache_key(
+                str(snapshot["conversation_id"]),
+                str(snapshot["original_text"]),
+                source_language,
+                target_language,
+            )
+        ] = translated_text
+    except Exception as exc:
+        logger.warning("Caching completed translation failed: %s", exc)
 
 
 class EventPublisher(Protocol):
@@ -94,6 +178,7 @@ def schedule_translations(
         "sender_id": message.sender_id,
         "original_text": message.original_text,
         "source_language": message.source_language,
+        "edited_at": message.edited_at,
     }
 
     task = asyncio.create_task(
@@ -132,12 +217,18 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        recipients_by_language = await _recipients_by_language(
+        conversation_type, recipients_by_language = await _recipients_by_language(
             session, snapshot["conversation_id"]
         )
 
     if not recipients_by_language:
         return
+
+    recipients_by_language = _include_direct_sender(
+        conversation_type=conversation_type,
+        sender_id=snapshot["sender_id"],
+        recipients_by_language=recipients_by_language,
+    )
 
     await asyncio.gather(
         *(
@@ -157,25 +248,75 @@ async def _translate_message(
 async def _recipients_by_language(
     session: AsyncSession,
     conversation_id: str,
-) -> dict[str, list[str]]:
+) -> tuple[str | None, dict[str, list[str]]]:
     """Group a conversation's members by the language each of them reads.
 
-    One query answers both questions the fan-out needs: which languages are in
-    play, and who wants each. The keys are the distinct set, so no second query.
+    One query answers everything the fan-out needs: which languages are in play,
+    who wants each, and whether this is a one-to-one conversation. The
+    conversation type rides along on the same join rather than costing a second
+    round trip — this runs in a background task that can be abandoned when the
+    caller goes away, and every extra await inside the session block is another
+    point where that leaves a connection checked out.
 
     The sender is included deliberately. If they wrote in a language other than
     the one they read, they get a translation too — which falls out for free.
+
+    Returns:
+        The conversation's type (None when it has no members), and the members
+        grouped by the language each of them reads.
     """
     rows = await session.execute(
-        select(ConversationMember.user_id, User.preferred_language)
+        select(ConversationMember.user_id, User.preferred_language, Conversation.type)
         .join(User, User.id == ConversationMember.user_id)
+        .join(Conversation, Conversation.id == ConversationMember.conversation_id)
         .where(ConversationMember.conversation_id == conversation_id)
     )
 
+    conversation_type: str | None = None
     grouped: dict[str, list[str]] = {}
-    for user_id, language in rows:
+    for user_id, language, row_type in rows:
+        conversation_type = row_type
         grouped.setdefault(language, []).append(user_id)
-    return grouped
+    return conversation_type, grouped
+
+
+def _include_direct_sender(
+    *,
+    conversation_type: str | None,
+    sender_id: str,
+    recipients_by_language: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Let a one-to-one sender receive the translation of their own message.
+
+    Grouping by reading language puts the sender in the bucket for the language
+    *they* read, so the translation going to the other person never reaches
+    them. That is what the controls under their own bubble need: the toggle,
+    the rating and the edit box all describe a translation the sender otherwise
+    only sees after a reload (docs/CONTRACT.md §4.4 rule 3).
+
+    Limited to `direct` conversations because that is where the controls exist
+    (§3.10). A group message has several translations and no single one belongs
+    to the bubble, so the sender is shown nothing and needs nothing sent.
+
+    Takes no session on purpose: the type it needs already arrived with the
+    grouping, so this stays a plain function outside the session block.
+
+    Args:
+        conversation_type: `direct` or `group`, as read alongside the members.
+        sender_id: Account that sent the message.
+        recipients_by_language: Grouping to extend, left untouched.
+
+    Returns:
+        The same grouping, with the sender added to every language in a direct
+        conversation.
+    """
+    if conversation_type != "direct":
+        return recipients_by_language
+
+    return {
+        language: user_ids if sender_id in user_ids else [*user_ids, sender_id]
+        for language, user_ids in recipients_by_language.items()
+    }
 
 
 async def _translate_into(
@@ -189,6 +330,34 @@ async def _translate_into(
 ) -> None:
     """Run the agent for one target language, then persist and publish."""
     from src.config import get_settings
+
+    cacheable = _is_cacheable(str(snapshot["original_text"]))
+    confirmed_source = _confirmed_cache_source(snapshot) if cacheable else None
+    if confirmed_source:
+        try:
+            cached_text = _translation_cache.get(
+                _cache_key(
+                    str(snapshot["conversation_id"]),
+                    str(snapshot["original_text"]),
+                    confirmed_source,
+                    target_language,
+                )
+            )
+        except Exception as exc:
+            logger.warning("Reading the translation cache failed: %s", exc)
+            cached_text = None
+
+        if cached_text is not None:
+            if await _serve_cached_translation(
+                snapshot=snapshot,
+                target_language=target_language,
+                source_language=confirmed_source,
+                translated_text=cached_text,
+                user_ids=user_ids,
+                publisher=publisher,
+                session_factory=session_factory,
+            ):
+                return
 
     settings = get_settings()
 
@@ -311,6 +480,20 @@ async def _translate_into(
         if translation is None:
             return
 
+        telemetry = result.get("telemetry", {})
+        if (
+            not bool(result.get("is_fallback"))
+            and telemetry.get("outcome") == "llm"
+            and result.get("source_language")
+            and telemetry.get("detect_method") == "langdetect"
+        ):
+            _cache_primary_translation(
+                snapshot=snapshot,
+                target_language=target_language,
+                source_language=str(result["source_language"]),
+                translated_text=translated_text,
+            )
+
         # Built before the attempt is recorded, and deliberately so. Recording
         # rolls back on failure, and a rollback expires every instance in the
         # session — reading `translation.translated_text` afterwards would go
@@ -340,6 +523,69 @@ async def _translate_into(
         # The translation is persisted; an undelivered event is recovered from
         # message history on reconnect.
         logger.warning("Publishing translation into %s failed: %s", target_language, exc)
+
+
+async def _serve_cached_translation(
+    *,
+    snapshot: Mapping[str, Any],
+    target_language: str,
+    source_language: str,
+    translated_text: str,
+    user_ids: list[str],
+    publisher: EventPublisher,
+    session_factory: Callable[[], AsyncSession],
+) -> bool:
+    """Persist and publish a completed cache value without creating an attempt.
+
+    ``True`` means the cache path handled the request, including a message that
+    became stale before the read. A persistence/cache error returns ``False`` so
+    the caller can use the unchanged graph path instead.
+    """
+    try:
+        async with session_factory() as session:
+            message = await session.get(Message, snapshot["message_id"])
+            superseded = (
+                message is None
+                or message.deleted_at is not None
+                or message.original_text != snapshot["original_text"]
+                or message.edited_at != snapshot.get("edited_at")
+            )
+            if superseded:
+                return True
+
+            translation = await _persist_translation(
+                session,
+                message_id=snapshot["message_id"],
+                target_language=target_language,
+                translated_text=translated_text,
+                model="cache",
+                latency_ms=0,
+                is_fallback=False,
+            )
+            if translation is None:
+                return False
+
+            event = TranslationCompletedEvent(
+                message_id=snapshot["message_id"],
+                conversation_id=snapshot["conversation_id"],
+                translation_id=translation.id,
+                source_language=source_language,
+                target_language=target_language,
+                translated_text=translation.translated_text,
+                model=translation.model,
+                latency_ms=translation.latency_ms,
+                is_fallback=translation.is_fallback,
+            )
+    except Exception as exc:
+        logger.warning("Serving cached translation into %s failed: %s", target_language, exc)
+        return False
+
+    try:
+        await publisher.send_to_users(user_ids, event.model_dump(mode="json"))
+    except Exception as exc:
+        # Match the normal path: persistence is enough for reconnect recovery.
+        logger.warning("Publishing cached translation into %s failed: %s", target_language, exc)
+    return True
 
 
 async def record_attempt(

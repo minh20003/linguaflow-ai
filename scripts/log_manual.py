@@ -60,6 +60,22 @@ def interactive_mode():
     return tool, model, prompt, result
 
 
+def resolve_log_dir() -> Path:
+    """The one directory AI log entries go to, wherever the tool was started from.
+
+    Resolved against the repository root — this file's parent's parent — and not
+    against the working directory. A tool launched inside `frontend/` used to
+    create a second `frontend/.ai-log/session.jsonl`; nothing submits that file,
+    so those entries were written and then silently never handed in.
+
+    An absolute AI_LOG_DIR is honoured as given. A relative one is taken from the
+    repository root, for the same reason.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    configured = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
+    return configured if configured.is_absolute() else project_root / configured
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manual AI usage logger")
     parser.add_argument("--tool", help="AI tool name (e.g. chatgpt, gemini-web)")
@@ -98,8 +114,8 @@ def main():
         "response_summary": result[:500] if result else "",
     }
 
-    log_dir = Path(os.environ.get("AI_LOG_DIR", ".ai-log"))
-    log_dir.mkdir(exist_ok=True)
+    log_dir = resolve_log_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "session.jsonl"
 
     with open(log_file, "a", encoding="utf-8") as f:

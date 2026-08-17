@@ -208,3 +208,51 @@ async def test_newly_created_conversation_has_no_preview(
     assert response.status_code == 201
     assert response.json()["last_message"] is None
     assert response.json()["last_message_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_newest_message_previews_as_empty_text_not_the_one_before(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """A withdrawal is reported, not hidden by rewinding to older text.
+
+    The preview used to skip withdrawn messages, so the row silently went back
+    to the previous message — or blank, when there was none. Empty text with the
+    timestamp kept is how the row says "this was withdrawn"; the wording itself
+    belongs to the client, which knows the reader's language.
+    """
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    base = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
+    test_db.add(
+        Message(
+            client_message_id="preview-older",
+            conversation_id=conversation.id,
+            sender_id=test_user_two.id,
+            original_text="Tin cũ hơn",
+            source_language="vi",
+            created_at=base,
+        )
+    )
+    test_db.add(
+        Message(
+            client_message_id="preview-withdrawn",
+            conversation_id=conversation.id,
+            sender_id=test_user_two.id,
+            original_text="Tin bị gỡ",
+            source_language="vi",
+            created_at=base + timedelta(minutes=5),
+            deleted_at=base + timedelta(minutes=6),
+        )
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/conversations", headers=test_user_headers)
+
+    listed = response.json()[0]
+    assert listed["last_message"] == ""
+    assert listed["last_message_at"].startswith("2026-08-14T09:05")
