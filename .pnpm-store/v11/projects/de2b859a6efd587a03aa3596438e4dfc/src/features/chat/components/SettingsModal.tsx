@@ -5,6 +5,7 @@ import {
   X,
   Languages,
   User as UserIcon,
+
   Bell,
   Shield,
   Sparkles,
@@ -42,6 +43,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const sections = [
     { id: 'language' as SettingsSection, label: 'Language & Translation', icon: Languages },
     { id: 'profile' as SettingsSection, label: 'Profile', icon: UserIcon },
+
     { id: 'notifications' as SettingsSection, label: 'Notifications', icon: Bell },
     { id: 'privacy' as SettingsSection, label: 'Privacy & Security', icon: Shield },
     { id: 'ai' as SettingsSection, label: 'AI & Smart Tools', icon: Sparkles },

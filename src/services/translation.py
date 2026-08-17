@@ -36,6 +36,7 @@ from src.agents.nodes.translation import _HAS_LETTER, _MIN_DETECT_CHARS, _detect
 from src.agents.observability import build_runnable_config
 from src.database import get_async_session_maker
 from src.database.models import (
+    Conversation,
     ConversationMember,
     Message,
     TranslationAttempt,
@@ -223,6 +224,12 @@ async def _translate_message(
     if not recipients_by_language:
         return
 
+    recipients_by_language = _include_direct_sender(
+        conversation_type=conversation_type,
+        sender_id=snapshot["sender_id"],
+        recipients_by_language=recipients_by_language,
+    )
+
     await asyncio.gather(
         *(
             _translate_into(
@@ -250,7 +257,7 @@ async def _recipients_by_language(
     created solely for the author of a message.
     """
     rows = await session.execute(
-        select(ConversationMember.user_id, User.preferred_language)
+        select(ConversationMember.user_id, User.preferred_language, Conversation.type)
         .join(User, User.id == ConversationMember.user_id)
         .where(
             ConversationMember.conversation_id == conversation_id,
@@ -258,10 +265,51 @@ async def _recipients_by_language(
         )
     )
 
+    conversation_type: str | None = None
     grouped: dict[str, list[str]] = {}
-    for user_id, language in rows:
+    for user_id, language, row_type in rows:
+        conversation_type = row_type
         grouped.setdefault(language, []).append(user_id)
-    return grouped
+    return conversation_type, grouped
+
+
+def _include_direct_sender(
+    *,
+    conversation_type: str | None,
+    sender_id: str,
+    recipients_by_language: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Let a one-to-one sender receive the translation of their own message.
+
+    Grouping by reading language puts the sender in the bucket for the language
+    *they* read, so the translation going to the other person never reaches
+    them. That is what the controls under their own bubble need: the toggle,
+    the rating and the edit box all describe a translation the sender otherwise
+    only sees after a reload (docs/CONTRACT.md §4.4 rule 3).
+
+    Limited to `direct` conversations because that is where the controls exist
+    (§3.10). A group message has several translations and no single one belongs
+    to the bubble, so the sender is shown nothing and needs nothing sent.
+
+    Takes no session on purpose: the type it needs already arrived with the
+    grouping, so this stays a plain function outside the session block.
+
+    Args:
+        conversation_type: `direct` or `group`, as read alongside the members.
+        sender_id: Account that sent the message.
+        recipients_by_language: Grouping to extend, left untouched.
+
+    Returns:
+        The same grouping, with the sender added to every language in a direct
+        conversation.
+    """
+    if conversation_type != "direct":
+        return recipients_by_language
+
+    return {
+        language: user_ids if sender_id in user_ids else [*user_ids, sender_id]
+        for language, user_ids in recipients_by_language.items()
+    }
 
 
 async def _translate_into(
