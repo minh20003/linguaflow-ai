@@ -1,0 +1,1145 @@
+.appShell {
+  --ledger-width: 318px;
+  /* One number for both the thread and the composer row. They used to be two
+     independent constants, which is why the send button sat 32px outside the
+     bubbles above it; sharing the token makes those edges line up by
+     construction rather than by two values happening to match. */
+  --thread-inset: var(--s-4);
+  /* Three zones, the layout every mainstream messenger converged on: a narrow
+     rail that is always visible, the conversation list, then the thread. The
+     rail matters here because it is the only surface that never scrolls away,
+     which makes it the one place Settings can live. */
+  display: grid;
+  /* The fourth track collapses to nothing until the info panel opens, so the
+     thread keeps the full width until something is actually shown there. */
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  /* The blocks are told apart by their own background, so the ground has to show
+     between them — the gap is the separator, in place of the rules that used to
+     be drawn here. */
+  gap: var(--s-3);
+  width: 100%;
+  height: 100svh;
+  padding: var(--s-3) var(--s-3) var(--s-3) 0;
+  margin-inline: auto;
+  overflow: hidden;
+  background-color: var(--surface-ground);
+  background-image:
+    radial-gradient(circle at 18% 8%, var(--glow-a), transparent 32rem),
+    radial-gradient(circle at 88% 92%, var(--glow-b), transparent 28rem);
+  color: var(--ink);
+}
+
+.navRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  padding-block: var(--s-4);
+  background: var(--surface-rail);
+  color: var(--ink-on-rail);
+}
+
+.navRailLogo {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--s-3);
+  color: var(--primary);
+}
+
+.navRailButton {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--r-3);
+  color: var(--ink-on-rail);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: background var(--dur-hover), opacity var(--dur-hover);
+}
+
+.navRailButton:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ink-on-rail) 12%, transparent);
+}
+
+.navRailButton[aria-current="page"] {
+  opacity: 1;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+}
+
+.navRailSpacer {
+  flex: 1;
+}
+
+.navRailAvatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--r-full);
+  color: var(--accent-action-ink);
+  background: var(--accent-action);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.navRailAvatar:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+
+.ledger {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--surface-ground);
+  border-right: 1px solid var(--rule-strong);
+}
+
+.brandHeader,
+.chatHeader {
+  min-height: 64px;
+  box-shadow: inset 0 -1px 0 var(--edge-dark), inset 0 -2px 0 var(--edge-light);
+}
+
+.brandHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: var(--s-5);
+}
+
+.brandHeader > div {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  letter-spacing: .08em;
+}
+
+.brandMark {
+  display: grid;
+  width: 28px;
+  height: 32px;
+  place-items: center;
+  color: var(--ink-inverse);
+  background: var(--ink);
+}
+
+.squareButton,
+.backButton {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-label);
+  font-size: var(--fs-lead);
+}
+
+.squareButton:hover,
+.backButton:hover { background: var(--surface-sunken); }
+
+.accountStrip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface-label);
+}
+
+.selfAvatar,
+.avatar {
+  display: grid;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-insert);
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+}
+
+.accountStrip > span:nth-child(2) { min-width: 0; }
+.accountStrip strong,
+.accountStrip small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accountStrip strong { font-size: var(--fs-small); }
+.accountStrip small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.accountStrip i,
+.presenceDot { display: inline-block; width: 6px; height: 6px; margin-right: var(--s-2); background: var(--success); }
+.accountStrip > button { min-width: 34px; min-height: 34px; color: var(--ink-muted); }
+
+.searchBox {
+  padding: var(--s-4) var(--s-5) var(--s-3);
+}
+
+.searchBox label,
+.conversationSection h2 {
+  display: block;
+  margin-bottom: var(--s-2);
+  color: var(--ink-muted);
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.searchBox > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 38px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-insert);
+}
+
+.searchBox input { min-width: 0; width: 100%; border: 0; color: var(--ink); background: transparent; }
+.searchBox input::placeholder { color: var(--ink-placeholder); }
+
+.ledgerScroll { overflow-y: auto; padding-block: var(--s-2) var(--s-4); }
+.conversationSection + .conversationSection { margin-top: var(--s-5); }
+.conversationSection h2 { padding-inline: var(--s-5); }
+.conversationList { list-style: none; }
+.conversationRow {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  width: 100%;
+  min-height: 66px;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  text-align: left;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+.conversationRow:hover { background: var(--surface-sunken); }
+.activeRow { background: var(--surface-label); border-color: var(--rule); }
+.activeRow::before,
+.unreadRow::before { content: ""; position: absolute; inset-block: 9px; left: 0; width: 3px; background: var(--primary); }
+.conversationCopy { min-width: 0; }
+.conversationTop,
+.conversationBottom { display: flex; align-items: baseline; gap: var(--s-2); }
+.conversationTop strong,
+.conversationBottom > span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversationTop strong { font-size: var(--fs-small); font-weight: 500; }
+.unreadRow .conversationTop strong { font-weight: 600; }
+.conversationTop time { color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.conversationBottom { margin-top: var(--s-1); color: var(--ink-muted); font-size: var(--fs-small); }
+.mention,
+.unreadCount { flex: 0 0 auto; font-family: var(--font-body); font-size: var(--fs-micro); font-weight: 500; }
+.mention { color: var(--danger); }
+.unreadCount { min-width: 18px; padding: 1px 4px; text-align: center; color: var(--ink-inverse); background: var(--primary); }
+.ledgerFooter { display: flex; justify-content: space-between; padding: var(--s-3) var(--s-5); border-top: 1px solid var(--rule); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.ledgerFooter strong { color: var(--success); font-weight: 500; }
+
+.noResults,
+.emptyConversation { display: grid; justify-items: start; align-content: center; }
+.noResults { min-height: 230px; padding: var(--s-6) var(--s-5); border-block: 1px solid var(--rule); }
+.noResults > span { margin-bottom: var(--s-3); font-family: var(--font-body); font-size: var(--fs-display); }
+.noResults p { color: var(--ink-muted); font-size: var(--fs-small); }
+.noResults button,
+.emptyConversation button { margin-top: var(--s-4); padding-bottom: 2px; border-bottom: 1px solid var(--ink); font-weight: 500; }
+
+.workspace { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; height: 100%; overflow: hidden; background: var(--surface-label); }
+.chatHeader { display: flex; align-items: center; gap: var(--s-3); padding-inline: var(--s-5); background: transparent; }
+.backButton { display: none; }
+.identity { flex: 1; min-width: 0; }
+.identity h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lead); font-weight: 600; }
+.identity p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-size: var(--fs-small); }
+.identity b { margin-inline: var(--s-1); font-weight: 400; }
+.headerActions { display: flex; align-items: center; gap: var(--s-2); }
+.headerActions button { display: inline-flex; min-height: 38px; align-items: center; gap: var(--s-2); padding-inline: var(--s-3); border: 1px solid transparent; color: var(--ink-secondary); font-size: var(--fs-small); }
+.headerActions button:hover { background: var(--surface-sunken); }
+.headerActions .actionOn { border-color: var(--rule-strong); background: var(--surface-insert); color: var(--primary); }
+.headerActions button span:first-child { font-family: var(--font-body); }
+
+.connectionBanner { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--danger); background: var(--danger-weak); color: var(--ink-secondary); font-size: var(--fs-small); }
+.connectionSlot { min-height: 0; }
+.connectionBanner button { min-height: 32px; padding-inline: var(--s-3); border: 1px solid var(--danger); color: var(--danger); font-weight: 500; }
+
+.timeline { min-height: 0; overflow-y: auto; scroll-behavior: smooth; padding: var(--s-5) clamp(var(--s-5), 4vw, var(--s-8)) var(--s-6); background: var(--surface-insert); }
+.dayDivider,
+.unreadDivider { display: flex; align-items: center; gap: var(--s-4); margin-block: var(--s-3) var(--s-5); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: .06em; }
+.dayDivider::before,
+.dayDivider::after,
+.unreadDivider::before,
+.unreadDivider::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.unreadDivider { margin-block: var(--s-6) var(--s-4); color: var(--danger); }
+.unreadDivider::before,
+.unreadDivider::after { background: var(--danger); opacity: .5; }
+
+.message { position: relative; display: grid; grid-template-columns: minmax(0, 700px) auto; column-gap: var(--s-3); align-items: start; max-width: 900px; padding: var(--s-3) var(--s-4) var(--s-4); border-left: 2px solid var(--rule-strong); }
+.message + .message { margin-top: var(--s-2); }
+.message:hover,
+.message:focus-within { background: var(--surface-label); }
+.myMessage { margin-left: clamp(var(--s-5), 7vw, var(--s-8)); border-left-color: var(--primary); }
+.continued { padding-top: var(--s-2); }
+.message header { grid-column: 1; display: flex; align-items: baseline; gap: var(--s-3); margin-bottom: var(--s-2); }
+.message header strong { font-size: var(--fs-small); font-weight: 600; }
+.message header time,
+.continuedTime { color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.continuedTime { position: absolute; top: var(--s-3); left: calc(var(--s-4) * -1); transform: translateX(-100%); opacity: 0; }
+.message:hover .continuedTime { opacity: 1; }
+.messageBody { grid-column: 1; min-width: 0; }
+.messageBody > p { max-width: 68ch; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.65; }
+.messageBody blockquote { max-width: 58ch; margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); overflow: hidden; border-left: 2px solid var(--rule-strong); color: var(--ink-muted); background: var(--surface-sunken); font-size: var(--fs-small); text-overflow: ellipsis; white-space: nowrap; }
+.translation { max-width: 68ch; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--rule-strong); color: var(--ink-secondary); }
+.translation > span { display: block; margin-bottom: var(--s-1); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); text-transform: uppercase; }
+.translation p { overflow-wrap: anywhere; }
+.messageMeta { display: flex; min-height: 18px; align-items: center; gap: var(--s-3); margin-top: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.messageMeta button { color: var(--danger); font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.messageActions { grid-column: 2; grid-row: 1 / span 2; display: flex; opacity: 0; border: 1px solid var(--rule); background: var(--surface-insert); }
+.message:hover .messageActions,
+.message:focus-within .messageActions { opacity: 1; }
+.messageActions button { min-height: 32px; padding-inline: var(--s-3); color: var(--ink-secondary); font-size: var(--fs-micro); }
+.messageActions button + button { border-left: 1px solid var(--rule); }
+.messageActions button:hover { color: var(--ink); background: var(--surface-sunken); }
+.failedMessage { border-left-color: var(--danger); background: var(--danger-weak); }
+.deletedText { color: var(--ink-muted); font-style: italic; }
+.fileAttachment { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; width: min(100%, 440px); align-items: center; gap: var(--s-3); margin-top: var(--s-3); padding: var(--s-3); border: 1px solid var(--rule-strong); text-align: left; background: var(--surface-label); }
+.fileAttachment > span:first-child { padding: var(--s-2); color: var(--danger); border: 1px solid var(--danger); font-family: var(--font-body); font-size: var(--fs-micro); }
+.fileAttachment strong,
+.fileAttachment small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileAttachment small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.typingStatus { margin: var(--s-4) 0 0 var(--s-4); color: var(--ink-muted); font-size: var(--fs-small); }
+.typingStatus span { margin-right: var(--s-2); color: var(--primary); font-family: var(--font-body); letter-spacing: .18em; }
+
+.emptyConversation { width: min(520px, 100%); min-height: 100%; margin-inline: auto; text-align: left; }
+.emptyGlyph { display: grid; width: 54px; height: 60px; margin-bottom: var(--s-5); place-items: center; border: 1px solid var(--rule-strong); color: var(--ink-secondary); font-family: var(--font-body); font-size: var(--fs-title); }
+.emptyConversation h2 { font-size: var(--fs-title); }
+.emptyConversation p { max-width: 46ch; margin-top: var(--s-2); color: var(--ink-muted); }
+
+.composer { border-top: 1px solid var(--rule-strong); background: var(--surface-label); }
+.composerContext { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--rule); border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.composerContext span { min-width: 0; }
+.composerContext strong,
+.composerContext small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composerContext strong { font-size: var(--fs-small); }
+.composerContext small { color: var(--ink-muted); }
+.composerContext button { width: 34px; height: 34px; font-size: var(--fs-lead); }
+.composerMain { display: grid; grid-template-columns: auto minmax(80px, 1fr) auto auto; align-items: end; gap: var(--s-3); padding: var(--s-4) var(--s-5) var(--s-2); }
+.attachButton { width: 42px; height: 42px; border: 1px solid var(--rule-strong); font-size: var(--fs-lead); }
+.composer textarea { width: 100%; min-height: 42px; max-height: 132px; resize: vertical; padding: 9px 0; border: 0; border-bottom: 1px solid var(--rule-strong); color: var(--ink); background: transparent; line-height: 1.55; }
+.composer textarea:disabled { cursor: not-allowed; color: var(--ink-disabled); }
+.composerLanguage { display: flex; min-height: 42px; align-items: center; gap: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.composerLanguage span:last-child { color: var(--primary); font-weight: 500; }
+.sendButton { display: flex; min-width: 86px; height: 42px; align-items: center; justify-content: center; gap: var(--s-3); padding-inline: var(--s-4); color: var(--ink-inverse); background: var(--primary); font-weight: 500; }
+.sendButton:disabled { cursor: not-allowed; color: var(--ink-disabled); background: var(--surface-sunken); }
+.sendButton b { font-family: var(--font-body); font-size: var(--fs-small); font-weight: 400; }
+.composerHint { display: flex; justify-content: space-between; padding: 0 var(--s-5) var(--s-3) 67px; color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+.composerHint button { color: var(--success); font-family: inherit; font-size: inherit; }
+
+@media (max-width: 920px) {
+  .appShell { --ledger-width: 286px; }
+  .timeline { padding-inline: var(--s-5); }
+  .myMessage { margin-left: var(--s-5); }
+  .desktopLabel { display: none; }
+  .headerActions button { min-width: 38px; justify-content: center; }
+  .composerHint > span { display: none; }
+  .composerHint { justify-content: flex-end; padding-left: var(--s-5); }
+}
+
+@media (max-width: 680px) {
+  /* Redefining the token keeps the thread and the composer in step on a phone
+     too, instead of overriding the two of them separately. */
+  .appShell { --thread-inset: var(--s-3); display: block; width: 100%; padding: 0; border: 0; }
+  /* No room for a permanent rail on a phone; the account menu inside the
+     conversation list carries the same links there. */
+  .navRail { display: none; }
+  .ledger,
+  .workspace { width: 100%; height: 100svh; }
+  .mobileList .workspace,
+  .mobileChat .ledger { display: none; }
+  .ledger { border: 0; }
+  .backButton { display: grid; flex: 0 0 auto; }
+  .chatHeader { min-height: 62px; padding-inline: var(--s-3); }
+  .chatHeader > .avatar { display: none; }
+  .identity p { max-width: 42vw; }
+  .headerActions { gap: 0; }
+  .headerActions button { padding-inline: var(--s-2); }
+  .headerActions button:nth-child(2) { display: none; }
+  .timeline { padding: var(--s-4) var(--s-3) var(--s-5); }
+  .message { grid-template-columns: minmax(0, 1fr); padding-inline: var(--s-3); }
+  .myMessage { margin-left: var(--s-4); }
+  .messageActions { position: static; grid-column: 1; grid-row: auto; width: max-content; margin-top: var(--s-2); opacity: 1; }
+  .composerMain { grid-template-columns: auto minmax(70px, 1fr) auto; gap: var(--s-2); padding-inline: var(--s-3); }
+  .composerLanguage { display: none; }
+  .sendButton { min-width: 46px; padding-inline: var(--s-3); }
+  .sendButton span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .composerHint { display: none; }
+  .composerContext { padding-inline: var(--s-3); }
+  .connectionBanner { padding-inline: var(--s-3); }
+}
+
+@media (max-width: 390px) {
+  .headerActions button:last-child { display: none; }
+  .identity p { max-width: 48vw; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline { scroll-behavior: auto; }
+}
+
+/* ChatScope gives us the messaging anatomy and keyboard-ready editor. These
+   overrides are intentionally scoped to LinguaFlow's shell so its default demo
+   theme never becomes the product's visual identity. */
+/* Holds two of the three blocks, so it carries their gap and stays transparent
+   itself — the ground it lets through is what reads as the separation. */
+.appShell :global(.cs-main-container) {
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  gap: var(--s-3);
+  /* Must clip: it is a flex parent whose children size from content, so with
+     `visible` the thread pushed it 118px past the viewport and the composer
+     ended up below the fold. Clipping here costs nothing — the rounded corners
+     belong to the children and curve inward, away from this box's edges. */
+  overflow: hidden;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-body);
+}
+
+.appShell :global(.cs-sidebar.cs-sidebar--left) {
+  flex: 0 0 var(--ledger-width);
+  max-width: var(--ledger-width);
+  overflow: hidden;
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+}
+
+.workspaceTop { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: var(--s-4) var(--s-5); }
+.workspaceTop > div { display: flex; align-items: center; gap: var(--s-3); }
+.workspaceTop strong, .workspaceTop small { display: block; }
+.workspaceTop strong { font-size: var(--fs-small); font-weight: 600; }
+.workspaceTop small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.productMark { display: grid; width: 32px; height: 32px; place-items: center; border-radius: var(--r-2); color: #fff; background: var(--primary); font-family: var(--font-body); font-size: var(--fs-micro); }
+.sidebarTools { display: flex; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--rule); }
+.sidebarTools button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: var(--s-2); padding-inline: var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); background: var(--surface-label); font-size: var(--fs-micro); }
+.sidebarTools button { width: 34px; padding: 0; font-size: var(--fs-lead); }
+.sidebarTools button:hover, .sidebarTools button[aria-expanded="true"] { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.sidebarSearchInline { min-width: 0; flex: 1; }
+.sidebarSearchInline :global(.cs-search) { min-height: 34px; padding-block: var(--s-1); }
+.sidebarSearch { padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--rule); }
+.conversationFilters { display: flex; gap: var(--s-2); padding: var(--s-3) var(--s-4) 0; }
+.conversationFilters button { min-height: 30px; padding-inline: var(--s-3); border: 1px solid var(--rule-strong); border-radius: 999px; color: var(--ink-secondary); background: var(--surface-label); font-size: var(--fs-micro); }
+.conversationFilters button[aria-pressed="true"] { border-color: var(--primary); color: var(--ink); background: var(--primary-light); font-weight: 600; }
+.appShell :global(.cs-search) { border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--surface-label); }
+.appShell :global(.cs-search__input) { color: var(--ink); background: transparent; font-family: var(--font-body); }
+.listTitle { display: flex; justify-content: space-between; padding: var(--s-3) var(--s-5) var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; }
+.conversationIndex { min-height: 0; overflow-y: auto; }
+.appShell :global(.cs-conversation-list) { background: var(--surface-ground); }
+.appShell :global(.cs-conversation) { min-height: 62px; padding-inline: var(--s-4); border-bottom: 1px solid transparent; color: var(--ink); background: transparent; }
+.appShell :global(.cs-conversation:hover) { background: var(--surface-sunken); }
+.appShell :global(.cs-conversation.cs-conversation--active) { border-bottom-color: var(--rule); background: var(--surface-label); box-shadow: inset 3px 0 0 var(--primary); }
+.appShell :global(.cs-conversation__name) { color: var(--ink); font-family: var(--font-body); font-size: var(--fs-small); font-weight: 500; }
+.appShell :global(.cs-conversation__info), .appShell :global(.cs-conversation__last-activity-time) { color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+/* The action accent carries the eye to what is new or actionable: unread
+   counts and the send control. It is always paired with dark ink — white on
+   #FEA837 measures 1.93:1, below even the large-text threshold. */
+.appShell :global(.cs-conversation__unread) { border-radius: var(--r-full); color: var(--accent-action-ink); background: var(--accent-action); font-size: var(--fs-micro); font-weight: 700; }
+.appShell :global(.cs-conversation.cs-conversation--active .cs-conversation__name) { color: var(--ink); font-weight: 600; }
+.appShell :global(.cs-conversation.cs-conversation--active .cs-conversation__info) { color: var(--ink-secondary); }
+.appShell :global(.cs-button--send) { color: var(--accent-action); }
+.appShell :global(.cs-button--send:hover) { color: var(--accent-warm); }
+.appShell :global(.cs-avatar) { border: 1px solid var(--rule); color: var(--primary); background: var(--surface-label); }
+.appShell :global(.cs-avatar__image) { display: none; }
+.initialsAvatar { display: grid; width: 100%; height: 100%; place-items: center; color: var(--ink); font-family: var(--font-body); font-size: var(--fs-micro); font-weight: 600; }
+.noResults { display: grid; gap: var(--s-3); padding: var(--s-5); color: var(--ink-secondary); font-size: var(--fs-small); }
+.noResults button { justify-self: start; color: var(--primary); text-decoration: underline; }
+
+.appShell :global(.cs-chat-container) { min-width: 0; overflow: hidden; border-radius: var(--r-3); background: var(--surface-card); }
+.appShell :global(.cs-conversation-header) { min-height: 64px; border-bottom: 0; color: var(--ink); background: transparent; }
+/* chatscope paints an opaque near-white background on the name and info
+   elements themselves, not just on the header. Overriding only `color` left a
+   white plate behind cream text in dark mode — the name became invisible. */
+.appShell :global(.cs-conversation-header__user-name) { color: var(--ink); background: transparent; font-family: var(--font-body); font-size: var(--fs-lead); font-weight: 600; }
+.appShell :global(.cs-conversation-header__info) { color: var(--ink-muted); background: transparent; font-family: var(--font-body); font-size: var(--fs-small); }
+.appShell :global(.cs-conversation-header__actions) { gap: var(--s-2); padding-right: var(--s-4); }
+.appShell :global(.cs-conversation-header__actions button), .appShell :global(.cs-conversation-header__back button) { min-width: 34px; min-height: 34px; padding-inline: var(--s-2); border: 1px solid transparent; border-radius: var(--r-2); color: var(--ink-secondary); }
+.appShell :global(.cs-conversation-header__actions button:hover), .appShell :global(.cs-conversation-header__back button:hover) { border-color: var(--rule); background: var(--surface-sunken); }
+.appShell :global(.cs-conversation-header__back) { display: none; }
+.statusBanner { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--danger); color: var(--ink-secondary); background: var(--danger-weak); font-size: var(--fs-small); }.statusBanner strong,.statusBanner button { color: var(--danger); }.statusBanner button { margin-left: auto; text-decoration: underline; }
+.messageSearch { position: sticky; z-index: 4; top: 0; display: grid; grid-template-columns: minmax(120px, 1fr) auto auto; align-items: center; gap: var(--s-2); margin: calc(var(--s-3) * -1) 0 var(--s-4); padding: var(--s-3); border: 1px solid var(--rule); background: var(--surface-label); }
+.messageSearch label { grid-column: 1 / -1; color: var(--ink-muted); font-size: var(--fs-micro); font-weight: 600; }
+.messageSearch input { min-width: 0; min-height: 36px; padding-inline: var(--s-3); border: 1px solid var(--rule-strong); border-radius: var(--r-2); color: var(--ink); background: var(--surface-card); }
+.messageSearch input:focus { border-color: var(--primary); outline: 2px solid var(--primary-light); }
+.messageSearch span { color: var(--ink-muted); font-size: var(--fs-micro); white-space: nowrap; }
+.messageSearch button { width: 32px; height: 32px; border-radius: var(--r-2); color: var(--ink-secondary); font-size: var(--fs-lead); }
+
+.appShell :global(.cs-message-list) { background: var(--surface-insert); }
+/* The thread's inset lives on .messageRow, not here. chatscope's scroll wrapper
+   refuses padding — it computes to 0 even from an inline `!important`, measured
+   in the browser — so the bubbles ran flush to the card edge while the composer
+   sat 16px in, which is what made the send button look misaligned. Insetting the
+   row wrapper this component renders itself is the part we actually control. */
+.messageRow { margin-inline: var(--thread-inset); }
+.appShell :global(.cs-message-separator) { color: var(--ink-muted); background: transparent; font-family: var(--font-body); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+.appShell :global(.cs-message-separator::before), .appShell :global(.cs-message-separator::after) { background: var(--rule); }
+.appShell :global(.cs-message-group) { max-width: min(760px, 90%); margin-bottom: var(--s-4); }
+.appShell :global(.cs-message-group__header), .appShell :global(.cs-message-group__footer) { color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); }
+/* The bubble is as wide as its text and no wider — `fit-content` stops a short
+   message from being stretched to the group's max-width. */
+.appShell :global(.cs-message__content) { width: fit-content; max-width: min(66ch, 100%); padding: var(--s-2) var(--s-3); border-radius: 8px; box-shadow: none; font-family: var(--font-body); font-size: var(--fs-small); line-height: 1.5; }
+.appShell :global(.cs-message) { overflow: visible; }
+/* Bubbles, not ledger rows. The tightened corner points at the side the message
+   came from, so the sender reads from shape and position before colour.
+
+   The long selectors are not decoration. chatscope styles the first, last and
+   single message of a group with four classes
+   (`.cs-message.cs-message--outgoing.cs-message--first .cs-message__content`),
+   so a shorter override only ever reached messages in the middle of a group and
+   the rest kept the kit's default blue. Each selector here is chatscope's own,
+   prefixed with the shell class to win by exactly one. */
+.appShell :global(.cs-message--incoming .cs-message__content),
+.appShell :global(.cs-message.cs-message--incoming.cs-message--first .cs-message__content),
+.appShell :global(.cs-message.cs-message--incoming.cs-message--last .cs-message__content),
+.appShell :global(.cs-message.cs-message--incoming.cs-message--single .cs-message__content) {
+  border: 1px solid var(--rule);
+  border-radius: var(--r-4) var(--r-4) var(--r-4) var(--r-1);
+  color: var(--bubble-other-ink);
+  background: var(--bubble-other);
+  box-shadow: var(--shadow-sm);
+}
+.appShell :global(.cs-message--outgoing .cs-message__content),
+.appShell :global(.cs-message.cs-message--outgoing.cs-message--first .cs-message__content),
+.appShell :global(.cs-message.cs-message--outgoing.cs-message--last .cs-message__content),
+.appShell :global(.cs-message.cs-message--outgoing.cs-message--single .cs-message__content) {
+  border: 1px solid transparent;
+  border-radius: var(--r-4) var(--r-4) var(--r-1) var(--r-4);
+  color: var(--bubble-mine-ink);
+  background: var(--bubble-mine);
+  box-shadow: var(--shadow-sm);
+}
+.appShell :global(.cs-message__footer) {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  color: var(--ink-muted);
+  font-size: var(--fs-micro);
+}
+/* Header, bubble and footer are one column, and the bubble is `fit-content`
+   while the column is as wide as its widest row. Without an explicit alignment
+   every row started at the left edge of that column, so the delivery tick of a
+   short outgoing message floated off past the end of its own bubble. */
+.appShell :global(.cs-message__content-wrapper) { max-width: 100%; align-items: flex-start; }
+.appShell :global(.cs-message--outgoing .cs-message__content-wrapper) { align-items: flex-end; }
+.appShell :global(.cs-message__header) { min-height: 14px; margin-bottom: var(--s-1); color: var(--ink-muted); font-family: var(--font-body); font-size: 10px; line-height: 1.2; }
+.appShell :global(.cs-message--outgoing .cs-message__header) { justify-content: flex-end; text-align: right; }
+.appShell :global(.cs-message--outgoing .cs-message__footer) { display: flex; justify-content: flex-end; align-items: center; min-height: 16px; }
+.messageTimestamp { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--ink-muted); font-style: normal; font-weight: 400; letter-spacing: .01em; }
+.appShell :global(.cs-message--outgoing .messageTimestamp) { justify-content: flex-end; width: 100%; }
+.messageContent > p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.messageBubble { position: relative; }
+/* Inherits the bubble's own ink instead of the global muted colour, which is
+   the whole fix: `--ink-muted` is a dark purple, and on my own bubble
+   (`--bubble-mine`, a warm red) it measured 1.2:1 in light mode — the notice
+   was all but invisible on exactly the messages I had just withdrawn myself.
+   Opacity carries the "this is not content" signal instead, and it cannot
+   collide with a background because it is relative to whatever ink is there. */
+.deletedMessage { color: inherit; opacity: 0.78; font-style: italic; }
+.match { padding: 0 1px; color: inherit; background: var(--accent-gold); }
+.deliveryIcon { display: inline-flex; min-width: 18px; align-items: center; justify-content: flex-end; margin-left: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: 11px; letter-spacing: -2px; line-height: 1; }
+.sending { color: var(--ink-muted); letter-spacing: 0; }.delivered { color: var(--primary); }.read { color: var(--success); }.editedMark { color: var(--ink-muted); font-size: 10px; }
+.replyPreview { margin: 0 0 var(--s-2); padding: var(--s-2) var(--s-3); border-left: 2px solid var(--primary); color: var(--ink-secondary); background: var(--surface-sunken); font-size: var(--fs-small); }
+.fileCard { display: grid; grid-template-columns: auto 1fr auto; width: min(100%, 360px); gap: var(--s-3); align-items: center; padding: var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink); text-align: left; background: var(--surface-card); }.fileCard > span { padding: var(--s-2); border: 1px solid var(--primary); color: var(--primary); font-family: var(--font-body); font-size: var(--fs-micro); }.fileCard strong,.fileCard small { display:block; }.fileCard small { color: var(--ink-muted); font-weight: 400; font-size: var(--fs-micro); }.fileCard b { color: var(--primary); }
+.retryButton { color: var(--accent-coral); text-decoration: underline; }
+.messageQuickActions { position: absolute; z-index: 3; top: 50%; left: calc(100% + var(--s-2)); display: flex; gap: 2px; transform: translateY(-50%); opacity: 0; pointer-events: none; }
+.appShell :global(.cs-message--outgoing) .messageQuickActions { right: calc(100% + var(--s-2)); left: auto; }
+.messageQuickActions button { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); background: var(--surface-card); font-size: var(--fs-small); }
+.messageQuickActions button:hover, .messageQuickActions button:focus-visible { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
+.messageMenu { position: absolute; z-index: 5; top: calc(50% + 20px); left: calc(100% + var(--s-2)); display: grid; min-width: 96px; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--surface-card); box-shadow: var(--shadow-lg); }
+.appShell :global(.cs-message--outgoing) .messageMenu { right: calc(100% + var(--s-2)); left: auto; }
+.messageMenu button { min-height: 30px; padding-inline: var(--s-2); color: var(--ink-secondary); text-align: left; font-size: var(--fs-micro); }
+.messageMenu button:hover, .messageMenu button:focus-visible { color: var(--primary); background: var(--primary-light); }
+.appShell :global(.cs-message:hover) .messageQuickActions,.appShell :global(.cs-message:focus-within) .messageQuickActions { opacity: 1; pointer-events: auto; }
+
+/* The translation controls sit under the bubble, not beside it: they belong to
+   the translation, while the dots button beside the bubble belongs to the
+   message. Hidden by opacity rather than display so the footer keeps its height
+   and the thread does not jump as the pointer moves down it. */
+.translationTools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-hover);
+}
+
+.appShell :global(.cs-message:hover) .translationTools,
+.appShell :global(.cs-message:focus-within) .translationTools { opacity: 1; pointer-events: auto; }
+
+/* The switch is the one control here that is not an icon, so it keeps its own
+   size and only needs to be told not to stretch — and to sit slightly apart, so
+   the three icons read as one group rather than four unrelated controls. */
+.translationTools .translationSwitch { flex: none; margin-right: var(--s-1); }
+
+/* Bare icons rather than boxed buttons: four framed squares under a bubble
+   competed with the bubble itself. All three share --feedback-ink, so what
+   separates a set control from an unset one is the filled glyph the button
+   renders, not a colour of its own. */
+.translationTools .feedbackButton {
+  display: grid;
+  padding: var(--s-1);
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-full);
+  color: var(--feedback-ink);
+  background: none;
+  transition: background var(--dur-hover);
+}
+
+.translationTools .feedbackButton:hover { background: var(--surface-sunken); }
+.translationTools .feedbackButton:focus-visible { outline: 2px solid var(--primary); outline-offset: -1px; }
+
+.correctionForm {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--s-1));
+  left: 0;
+  display: grid;
+  gap: var(--s-2);
+  width: min(320px, 78vw);
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-lg), var(--edge-highlight);
+}
+
+.correctionForm label { color: var(--ink-muted); font-size: var(--fs-micro); font-weight: 600; }
+/* Says who can read this and what the bubble keeps showing. Without it the box
+   reads as "correct the message for everyone", which is the one thing it is
+   not (docs/CONTRACT.md §3.10). */
+.correctionHint { margin: 0; color: var(--ink-muted); font-size: var(--fs-micro); line-height: 1.4; }
+.correctionForm textarea {
+  width: 100%;
+  padding: var(--s-2);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-2);
+  color: var(--ink);
+  background: var(--surface-sunken);
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+  resize: vertical;
+}
+.correctionForm textarea:focus { border-color: var(--primary); outline: 2px solid var(--primary-light); }
+.correctionForm > div { display: flex; justify-content: flex-end; gap: var(--s-2); }
+.correctionForm button { min-height: 30px; padding-inline: var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); font-size: var(--fs-micro); }
+.correctionForm button[type="submit"] { border-color: var(--primary); color: #fff; background: var(--primary); font-weight: 600; }
+.correctionForm button:disabled { border-color: var(--rule); color: var(--ink-disabled); background: var(--surface-sunken); cursor: not-allowed; }
+.correctionForm p { color: var(--danger); font-size: var(--fs-micro); }
+
+.forwardBody { display: grid; gap: var(--s-3); padding: var(--s-4) var(--s-5) var(--s-5); }
+.forwardPreview {
+  padding: var(--s-2) var(--s-3);
+  border-left: 2px solid var(--primary);
+  border-radius: 0 var(--r-2) var(--r-2) 0;
+  color: var(--ink-secondary);
+  background: var(--surface-sunken);
+  font-size: var(--fs-small);
+}
+
+.forwardTarget {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 52px;
+  padding: var(--s-2);
+  border-radius: var(--r-2);
+  text-align: left;
+}
+
+.forwardTarget:hover, .forwardTarget:focus-visible { background: var(--surface-sunken); }
+.forwardTarget strong, .forwardTarget small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.forwardTarget strong { color: var(--ink); font-size: var(--fs-small); }
+.forwardTarget small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.appShell :global(.cs-typing-indicator) { color: var(--ink-muted); background: transparent; font-family: var(--font-body); }
+.emptyState { display: grid; min-height: 100%; place-content: center start; max-width: 430px; margin-inline: auto; color: var(--ink-secondary); }.emptyState > span { display: grid; width: 42px; height: 42px; margin-bottom: var(--s-4); place-items: center; border-radius: var(--r-2); color: var(--primary); background: var(--primary-light); }.emptyState h2 { color: var(--ink); font-size: var(--fs-title); }.emptyState p { margin-top: var(--s-2); }
+.composerWrap { border-top: 1px solid var(--rule); background: var(--surface-card); }.replyBar { display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); padding:var(--s-2) var(--s-5); border-left:3px solid var(--primary); color:var(--ink-secondary); background:var(--surface-sunken); }.replyBar strong,.replyBar small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.replyBar strong{font-size:var(--fs-small)}.replyBar small{font-size:var(--fs-micro)}.replyBar button{font-size:var(--fs-lead)}
+.appShell :global(.cs-input-toolbox) { order: 2; }
+.appShell :global(.cs-message-input) { order: 3; }
+.composerToolbox { display: flex; align-items: center; gap: var(--s-3); min-height: 34px; padding: var(--s-1) var(--s-4); border-top: 1px solid var(--rule); color: var(--ink-secondary); background: var(--surface-card); }
+.fileInput { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.fileUploadPreview { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--rule); border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.fileType { display: grid; min-width: 38px; min-height: 34px; place-items: center; padding-inline: var(--s-1); border: 1px solid var(--primary); color: var(--primary); background: var(--surface-card); font-family: var(--font-body); font-size: 10px; }
+.fileUploadPreview > div { min-width: 0; }.fileUploadPreview strong,.fileUploadPreview small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.fileUploadPreview strong { color: var(--ink); font-size: var(--fs-small); }.fileUploadPreview small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.uploadProgress { display: block; height: 3px; margin-top: var(--s-2); overflow: hidden; background: var(--rule); }.uploadProgress > span { display: block; height: 100%; background: var(--primary); transition: width 160ms linear; }
+.sendFileAction { min-height: 30px; padding-inline: var(--s-3); border-radius: var(--r-2); color: #fff; background: var(--primary); font-size: var(--fs-micro); font-weight: 600; }.sendFileAction:hover { background: var(--primary-hover); }
+.composerToolboxActive { min-height: 54px; border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.composerContext { min-width: 0; flex: 1; }
+.composerToolbox strong, .composerToolbox small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composerToolbox strong { color: var(--ink); font-size: var(--fs-small); }
+.composerToolbox small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.cancelAction { width: 32px; height: 32px; border-radius: var(--r-2); color: var(--ink-secondary); font-size: var(--fs-lead); }
+.appShell :global(.cs-message-input) { gap: 0; margin: var(--s-3) var(--s-4); padding: 0; border: 0; color: var(--ink); background: var(--surface-card); }.appShell :global(.cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input__content-editor-container), .appShell :global(.cs-message-input__content-editor) { color: var(--ink); background: transparent; font-family: var(--font-body); }.appShell :global(.cs-message-input__tools:last-child) { order: 3; margin-left: var(--s-2); }.appShell :global(.cs-message-input:focus-within .cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input:focus-within .cs-message-input__tools:first-child) { border-color: var(--primary); background: var(--surface-card); }.appShell :global(.cs-button--send) { display: inline-grid; width: 36px; height: 36px; place-items: center; border-radius: var(--r-2); color: var(--primary); }.appShell :global(.cs-button--send:hover:not(:disabled)), .appShell :global(.cs-button--send:focus-visible) { background: var(--primary-light); }.appShell :global(.cs-button--attachment) { display: inline-grid; width: 36px; height: 36px; margin: 0; place-items: center; border-radius: var(--r-2); color: var(--ink-secondary); }.appShell :global(.cs-button--attachment:hover:not(:disabled)), .appShell :global(.cs-button--attachment:focus-visible) { color: var(--primary); background: var(--primary-light); }
+
+
+.modalBackdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: var(--s-4); background: rgb(17 40 64 / 42%); }
+.groupModal { width: min(480px, 100%); overflow: hidden; border: 1px solid var(--rule-strong); border-radius: var(--r-3); background: var(--surface-card); box-shadow: 0 18px 48px rgb(28 56 84 / 22%); }
+.groupModal > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s-4); padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--rule); }
+.groupModal > header > div { display: flex; align-items: center; gap: var(--s-3); }
+.groupModal h2 { color: var(--ink); font-size: var(--fs-lead); font-weight: 650; }
+.groupModal p { margin-top: 2px; color: var(--ink-muted); font-size: var(--fs-micro); }
+.groupModal > header > button { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: var(--r-2); color: var(--ink-secondary); }
+.groupModal > header > button:hover { background: var(--surface-sunken); }
+.groupModalIcon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: var(--r-2); color: var(--primary); background: var(--primary-light); }
+.groupModal form { display: grid; gap: var(--s-2); padding: var(--s-4) var(--s-5) var(--s-5); }
+.groupModal form > label { margin-top: var(--s-2); color: var(--ink-secondary); font-size: var(--fs-micro); font-weight: 600; }
+.groupModal form > input, .groupUserSearch { min-height: 40px; border: 1px solid var(--rule-strong); border-radius: var(--r-2); background: var(--surface-card); }
+.groupModal form > input { padding-inline: var(--s-3); color: var(--ink); }
+.groupModal form > input:focus, .groupUserSearch:focus-within { border-color: var(--primary); outline: 2px solid var(--primary-light); }
+.groupUserSearch { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--s-2); padding-inline: var(--s-3); color: var(--ink-muted); }
+.groupUserSearch input { min-width: 0; height: 38px; border: 0; outline: 0; color: var(--ink); background: transparent; }
+.memberResults { display: grid; max-height: 224px; overflow-y: auto; border-block: 1px solid var(--rule); }
+.memberResults > p { padding: var(--s-4) 0; }
+/* The whole row is the target, not just the circle: `padding-inline` pulls the
+   clickable area out to the dialog's edges so a click that lands beside the
+   radio still selects the person. */
+.memberOption { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: var(--s-3); min-height: 56px; padding: var(--s-2) var(--s-3); cursor: pointer; }
+.memberOption:hover { background: var(--surface-sunken); }
+/* 16px sat under the 24px minimum target size, and a near miss reads as a
+   control that simply does not respond — the row does catch the click, but only
+   once the pointer is inside it. Bigger circle, and a margin so the pointer has
+   somewhere to land around it. */
+.memberOption input { width: 20px; height: 20px; margin: 2px; accent-color: var(--primary); cursor: pointer; }
+.memberAvatar { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--rule); border-radius: 50%; color: var(--primary); background: var(--surface-label); font-family: var(--font-body); font-size: 10px; }
+.memberOption strong, .memberOption small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memberOption strong { color: var(--ink); font-size: var(--fs-small); }.memberOption small { color: var(--ink-muted); font-size: var(--fs-micro); }
+.groupModal footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-3); }
+.groupModal footer > span { margin-right: auto; color: var(--ink-muted); font-size: var(--fs-micro); }
+.groupModal footer button { min-height: 36px; padding-inline: var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); background: var(--surface-card); font-size: var(--fs-small); }
+.groupModal footer button[type="submit"] { border-color: var(--primary); color: #fff; background: var(--primary); font-weight: 600; }
+.groupModal footer button:disabled { border-color: var(--rule); color: var(--ink-disabled); background: var(--surface-sunken); cursor: not-allowed; }
+
+/* A direct chat and a group are the same dialog with one field's difference, so
+   they are two tabs rather than two screens. */
+.composerTabs { display: grid; grid-auto-flow: column; gap: var(--s-1); margin: var(--s-4) var(--s-5) 0; padding: 3px; border-radius: var(--r-2); background: var(--surface-sunken); }
+.composerTabs button { min-height: 32px; border-radius: calc(var(--r-2) - 2px); color: var(--ink-secondary); font-size: var(--fs-small); font-weight: 600; }
+.composerTabs button:hover { color: var(--ink); }
+.composerTabActive { color: var(--primary); background: var(--surface-card); box-shadow: var(--shadow-sm); }
+.composerTabActive:hover { color: var(--primary); }
+
+/* Chosen people stay visible after the search that found them is typed over —
+   otherwise the only record of the selection is a checkbox no longer on screen. */
+.composerChosen { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-2); }
+.composerChosen li { display: flex; align-items: center; gap: var(--s-1); padding: 2px var(--s-1) 2px var(--s-2); border-radius: var(--r-full); color: var(--primary); background: var(--primary-light); font-size: var(--fs-micro); }
+.composerChosen button { display: grid; width: 18px; height: 18px; place-items: center; border-radius: var(--r-full); color: inherit; }
+.composerChosen button:hover { background: var(--surface-card); }
+
+@media (max-width: 680px) {
+  .appShell :global(.cs-sidebar.cs-sidebar--left), .appShell :global(.cs-chat-container) { flex-basis: 100%; max-width: none; width: 100%; }
+  .mobileList :global(.cs-chat-container), .mobileChat :global(.cs-sidebar.cs-sidebar--left) { display: none; }
+  .appShell :global(.cs-conversation-header__back) { display: flex; }
+  /* Same reason as .messageRow above: the wrapper does not take padding. */
+  .appShell :global(.cs-message-group) { max-width: 96%; }
+  .messageQuickActions { position: static; margin-top: var(--s-1); transform: none; opacity: 1; pointer-events: auto; }
+  .appShell :global(.cs-message--outgoing) .messageQuickActions { margin-left: auto; }
+  .messageMenu { top: calc(100% + var(--s-1)); left: auto; right: 0; }
+  .appShell :global(.cs-message--outgoing) .messageMenu { right: 0; left: auto; }
+  .messageSearch { margin-inline: calc(var(--s-2) * -1); }
+  .statusBanner { align-items: flex-start; flex-direction: column; gap: var(--s-1); padding-inline: var(--s-3); }
+  .composerToolbox { padding-inline: var(--s-3); }
+  .fileUploadPreview { grid-template-columns: auto minmax(0, 1fr) auto; padding-inline: var(--s-3); }.fileUploadPreview .sendFileAction { grid-column: 2; justify-self: start; }.fileUploadPreview .cancelAction { grid-column: 3; grid-row: 1; }
+  .modalBackdrop { align-items: end; padding: 0; }
+  .groupModal { max-height: 88vh; border-radius: var(--r-3) var(--r-3) 0 0; }
+  .groupModal form { padding-inline: var(--s-4); }
+}
+
+.formError {
+  margin: 0 var(--s-5) var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--r-2);
+  color: var(--danger);
+  background: var(--danger-weak);
+  font-size: var(--fs-small);
+}
+
+
+/* Identity lives on the rail avatar, the way every mainstream messenger does
+   it: the conversation list holds conversations and nothing else, and the name
+   and address appear only when the avatar is pressed. */
+.navRailAccount { position: relative; }
+
+.accountMenu {
+  position: absolute;
+  z-index: 20;
+  bottom: 0;
+  left: calc(100% + var(--s-2));
+  min-width: 208px;
+  padding: var(--s-2);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.accountMenuHead {
+  padding: var(--s-2) var(--s-3) var(--s-3);
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: var(--s-2);
+}
+
+.accountMenuHead strong { display: block; overflow: hidden; font-size: var(--fs-small); text-overflow: ellipsis; white-space: nowrap; }
+.accountMenuHead small { display: block; overflow: hidden; color: var(--ink-muted); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+
+.accountMenuItem {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding-inline: var(--s-3);
+  border-radius: var(--r-2);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  line-height: 36px;
+  text-align: left;
+}
+
+.accountMenuItem:hover { background: var(--surface-sunken); }
+
+/* The conversation name doubles as the control that opens the info panel — the
+   same affordance Messenger gives it. */
+.headerIdentity {
+  display: block;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.headerIdentity strong { display: block; color: var(--ink); font-size: var(--fs-lead); font-weight: 600; }
+.headerIdentity small { display: block; color: var(--ink-muted); font-size: var(--fs-small); }
+.headerIdentity:hover strong { text-decoration: underline; }
+.headerIdentity:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--r-1); }
+
+.infoPanel {
+  width: 300px;
+  padding: var(--s-5);
+  overflow-y: auto;
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+}
+
+.infoPanel > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s-4); }
+.infoPanel > header h2 { font-size: var(--fs-lead); font-weight: 600; }
+.infoPanel > header button { display: grid; width: 32px; height: 32px; place-items: center; border-radius: var(--r-2); color: var(--ink-muted); }
+.infoPanel > header button:hover { background: var(--surface-sunken); }
+
+.infoName { font-size: var(--fs-title); font-weight: 700; letter-spacing: -0.01em; }
+.infoHint { margin-top: var(--s-2); color: var(--ink-muted); font-size: var(--fs-small); line-height: 1.55; }
+
+.infoSectionTitle {
+  margin: var(--s-5) 0 var(--s-3);
+  color: var(--ink-muted);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.memberList { list-style: none; display: grid; gap: var(--s-2); }
+
+.memberRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2);
+  border-radius: var(--r-2);
+}
+
+.memberRow:hover { background: var(--surface-sunken); }
+
+.memberAvatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--r-full);
+  color: var(--ink);
+  background: var(--surface-label);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+}
+
+.memberCopy { min-width: 0; }
+.memberCopy strong { display: block; overflow: hidden; font-size: var(--fs-small); text-overflow: ellipsis; white-space: nowrap; }
+.memberCopy small { display: block; overflow: hidden; color: var(--ink-muted); font-size: var(--fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+
+/* The one fact this product has that a normal messenger does not: which
+   language each person will actually read the message in. */
+.memberLanguage {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--r-full);
+  color: var(--ink-secondary);
+  background: var(--surface-label);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+@media (max-width: 920px) {
+  .infoPanel { display: none; }
+}
+
+.panelSearch {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 38px;
+  padding-inline: var(--s-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-2);
+  background: var(--surface-card);
+}
+
+.panelSearch input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: var(--fs-small);
+}
+
+.panelSearch input::placeholder { color: var(--ink-placeholder); }
+.panelSearch button { display: grid; width: 22px; height: 22px; place-items: center; border-radius: var(--r-full); color: var(--ink-muted); }
+.panelSearch button:hover { color: var(--ink); background: var(--surface-sunken); }
+
+/* The emoji button sits beside the input pill, not inside it. It has to live in
+   an InputToolbox because ChatContainer discards any child that is not one of
+   its four known types, so the container's column layout is overridden into a
+   grid and the two share the bottom row.
+
+   The previous attempt positioned the toolbox absolutely against the container
+   while the pill took its place from its own margin — two unrelated anchors,
+   which measured 12px apart. A shared grid row lines them up by construction
+   rather than by arithmetic. */
+.appShell :global(.cs-chat-container) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.appShell :global(.cs-chat-container > .cs-conversation-header),
+.appShell :global(.cs-chat-container > .cs-message-list) {
+  grid-column: 1 / -1;
+}
+
+.appShell .composerTools:global(.cs-input-toolbox) {
+  grid-row: 3;
+  grid-column: 1;
+  align-self: center;
+  min-height: 0;
+  margin: var(--s-3) 0 var(--s-3) var(--thread-inset);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.composerInput {
+  grid-row: 3;
+  grid-column: 2;
+  align-self: center;
+}
+
+/* Mirrors the toolbox's left margin so the send button is inset from the right
+   edge by the same amount the emoji button is from the left — and by the same
+   amount .messageRow insets the bubbles above it. */
+.appShell .composerInput:global(.cs-message-input) {
+  margin: 0 var(--thread-inset) 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.appShell .composerInput :global(.cs-message-input__content-editor-wrapper) {
+  order: 1;
+  /* The pill centres what it holds, because the editor inside it does not size
+     itself: react-perfect-scrollbar's .scrollbar-container puts height:100% on
+     it, so one line of text was pinned to the top of the pill instead of
+     sitting on its centre line. */
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px var(--s-3);
+  font-size: var(--fs-small);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-full);
+  background: var(--surface-sunken);
+  transition: border-color var(--dur-hover), background var(--dur-hover);
+}
+
+/* Height back to the text it holds; max-height still caps how far it grows. */
+.appShell .composerInput :global(.cs-message-input__content-editor-container) {
+  width: 100%;
+  height: auto;
+}
+
+.appShell .composerInput:global(.cs-message-input):focus-within :global(.cs-message-input__content-editor-wrapper) {
+  border-color: var(--primary);
+  background: var(--surface-card);
+}
+
+/* Attach and send are icon buttons in their own right, like the emoji trigger
+   beside them — no filled block around the glyph, just a wash on hover.
+
+   `place-content` matters as much as `place-items` here: the single icon forms
+   one grid track, and a track is placed at the start of the box unless the
+   content is centred too. With chatscope's own 0.7em inline padding left in
+   place that track began 13px in, which is how the plane ended up leaning
+   against the right edge of the circle it was meant to sit inside. */
+.appShell .composerInput :global(.cs-button.cs-button--send),
+.appShell .composerInput :global(.cs-button.cs-button--attachment) {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  /* chatscope bottom-aligns both buttons so they stay level with the last line
+     of a grown input; on a one-line composer that read as 2px too low. */
+  align-self: center;
+  place-content: center;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--r-full);
+  background: transparent;
+  /* Font Awesome sizes its glyph in em, and chatscope asks for 1.2em — which is
+     what made these two icons a different size from the emoji trigger beside
+     them. Stating it here puts all three on one 18px glyph. */
+  font-size: 18px;
+  opacity: 1;
+  transition: color var(--dur-hover), background var(--dur-hover);
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--send) { color: var(--accent-action); }
+.appShell .composerInput :global(.cs-button.cs-button--attachment) { color: var(--ink-muted); }
+
+/* The same wash the emoji trigger uses, so the three controls on this row react
+   alike. Send keeps its accent colour through the hover: it is the one button
+   here that is already the action colour at rest. */
+.appShell .composerInput :global(.cs-button.cs-button--send:hover:not(:disabled)),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:hover:not(:disabled)) {
+  background: var(--surface-sunken);
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--attachment:hover:not(:disabled)) {
+  color: var(--accent-warm);
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--send:focus-visible),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.appShell .composerInput :global(.cs-button.cs-button--send:disabled),
+.appShell .composerInput :global(.cs-button.cs-button--attachment:disabled) {
+  color: var(--ink-disabled);
+  background: transparent;
+}
+
+/* Raised surfaces carry the rim light as well as the shadow, so they separate
+   from the ground in dark mode where a shadow alone cannot. */
+.infoPanel,
+.accountMenu,
+.groupModal,
+.appShell :global(.cs-message--outgoing .cs-message__content),
+.appShell :global(.cs-message--incoming .cs-message__content) {
+  box-shadow: var(--shadow-md), var(--edge-highlight);
+}
+
+.accountMenu { box-shadow: var(--shadow-lg), var(--edge-highlight); }
+
+/* The thread sits a step behind the surfaces floating above it. */
+.appShell :global(.cs-message-list) {
+  background-color: transparent;
+}
+
+/* perfect-scrollbar (chatscope's scroller) paints its rail near-white and swells
+   the thumb from 6px to 11px while you drag — a white slab down the side of the
+   thread, worst in dark mode. The rail stays transparent and the width stays
+   put; the shade alone reports the state, the same two tokens the native
+   scrollbars in globals.css already use. */
+.appShell :global(.ps__rail-y),
+.appShell :global(.ps__rail-x),
+.appShell :global(.ps .ps__rail-y:hover),
+.appShell :global(.ps .ps__rail-y:focus),
+.appShell :global(.ps .ps__rail-y.ps--clicking),
+.appShell :global(.ps .ps__rail-x:hover),
+.appShell :global(.ps .ps__rail-x:focus),
+.appShell :global(.ps .ps__rail-x.ps--clicking) {
+  background-color: transparent;
+}
+
+/* The rail still fades in only while the list is in use, but at full strength:
+   its opacity applies to the thumb inside it, and 0.6 washed the colour out. */
+.appShell :global(.ps:hover > .ps__rail-y),
+.appShell :global(.ps--focus > .ps__rail-y),
+.appShell :global(.ps--scrolling-y > .ps__rail-y),
+.appShell :global(.ps .ps__rail-y:hover),
+.appShell :global(.ps .ps__rail-y.ps--clicking) {
+  opacity: 1;
+}
+
+.appShell :global(.ps__thumb-y),
+.appShell :global(.ps__thumb-x) {
+  background-color: var(--rule-strong);
+}
+
+.appShell :global(.ps__rail-y:hover > .ps__thumb-y),
+.appShell :global(.ps__rail-y:focus > .ps__thumb-y),
+.appShell :global(.ps__rail-y.ps--clicking .ps__thumb-y) {
+  width: 6px;
+  background-color: var(--ink-muted);
+}
+
+.appShell :global(.ps__rail-x:hover > .ps__thumb-x),
+.appShell :global(.ps__rail-x:focus > .ps__thumb-x),
+.appShell :global(.ps__rail-x.ps--clicking .ps__thumb-x) {
+  height: 6px;
+  background-color: var(--ink-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .appShell *,
+  .appShell *::before,
+  .appShell *::after { transition-duration: 0.01ms !important; }
+}
+
+/* chatscope leaves its own near-black placeholder on both the conversation
+   search and the composer, the latter drawn as a ::before rather than a real
+   placeholder attribute. Neither was ever overridden, so on a dark surface the
+   search hint measured 1.92:1. */
+.appShell :global(.cs-search__input)::placeholder {
+  color: var(--ink-placeholder);
+  opacity: 1;
+}
+
+.appShell :global(.cs-message-input__content-editor[data-placeholder])::before {
+  color: var(--ink-placeholder);
+  opacity: 1;
+}
