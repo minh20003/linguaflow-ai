@@ -1,0 +1,99 @@
+.page {
+  min-height: 100svh;
+  padding-block: var(--s-7);
+  padding-inline: var(--s-5);
+  background: var(--surface-ground);
+  color: var(--ink);
+}
+
+.sheet {
+  width: min(720px, 100%);
+  margin-inline: auto;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-6);
+  color: var(--primary);
+  font-size: var(--fs-lead);
+  font-weight: 700;
+}
+
+.sheet h1 {
+  margin-bottom: var(--s-2);
+  font-size: var(--fs-display);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.updated {
+  margin-bottom: var(--s-6);
+  color: var(--ink-muted);
+  font-size: var(--fs-small);
+}
+
+/* The note that this is coursework, not a service anyone should trust with real
+   conversations. It is the most important line on the page, so it does not read
+   like body text. */
+.callout {
+  margin-bottom: var(--s-6);
+  padding: var(--s-4);
+  border: 1px solid var(--rule-strong);
+  border-left: 3px solid var(--accent-warm);
+  border-radius: var(--r-2);
+  background: var(--surface-label);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+}
+
+.sheet h2 {
+  margin-top: var(--s-6);
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-lead);
+  font-weight: 600;
+}
+
+.sheet p,
+.sheet li {
+  color: var(--ink-secondary);
+  font-size: var(--fs-body);
+  line-height: 1.65;
+}
+
+.sheet p + p { margin-top: var(--s-3); }
+
+.sheet ul {
+  margin-top: var(--s-3);
+  padding-left: var(--s-5);
+  display: grid;
+  gap: var(--s-2);
+}
+
+.table {
+  width: 100%;
+  margin-top: var(--s-4);
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+
+.table th,
+.table td {
+  padding: var(--s-3);
+  border: 1px solid var(--rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th { background: var(--surface-label); font-weight: 600; }
+
+.back {
+  display: inline-block;
+  margin-top: var(--s-7);
+  color: var(--primary);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+.back:hover { text-decoration: underline; }
