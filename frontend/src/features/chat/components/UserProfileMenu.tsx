@@ -9,6 +9,8 @@ interface UserProfileMenuProps {
   onClose: () => void;
   onOpenSettings: () => void;
   onToggleTheme: () => void;
+  onLogout: () => void;
+  isLoggingOut?: boolean;
 }
 
 export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
@@ -18,6 +20,8 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
   onClose,
   onOpenSettings,
   onToggleTheme,
+  onLogout,
+  isLoggingOut = false,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -81,7 +85,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors text-left"
         >
           <UserIcon className="w-4 h-4 text-[#74798C]" />
-          <span>My Profile & Status</span>
+          <span>My Profile</span>
         </button>
 
         <button
@@ -119,11 +123,12 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
 
       <button
         id="profile-menu-logout-btn"
-        onClick={onClose}
-        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors text-left"
+        onClick={onLogout}
+        disabled={isLoggingOut}
+        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-60 disabled:cursor-wait transition-colors text-left"
       >
         <LogOut className="w-4 h-4" />
-        <span>Log out</span>
+        <span>{isLoggingOut ? 'Logging out…' : 'Log out'}</span>
       </button>
     </div>
   );

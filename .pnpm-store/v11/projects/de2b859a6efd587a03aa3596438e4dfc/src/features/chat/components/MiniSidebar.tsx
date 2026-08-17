@@ -16,6 +16,8 @@ interface MiniSidebarProps {
   settings: AppSettings;
   onOpenSettings: () => void;
   onToggleTheme: () => void;
+  onLogout: () => void;
+  isLoggingOut?: boolean;
   unreadChatsCount: number;
 }
 
@@ -26,6 +28,8 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
   settings,
   onOpenSettings,
   onToggleTheme,
+  onLogout,
+  isLoggingOut,
   unreadChatsCount,
 }) => {
   const [profileOpen, setProfileOpen] = useState(false);
@@ -185,6 +189,8 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
             onClose={() => setProfileOpen(false)}
             onOpenSettings={onOpenSettings}
             onToggleTheme={onToggleTheme}
+            onLogout={onLogout}
+            isLoggingOut={isLoggingOut}
           />
         </div>
       </div>

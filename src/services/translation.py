@@ -36,7 +36,6 @@ from src.agents.nodes.translation import _HAS_LETTER, _MIN_DETECT_CHARS, _detect
 from src.agents.observability import build_runnable_config
 from src.database import get_async_session_maker
 from src.database.models import (
-    Conversation,
     ConversationMember,
     Message,
     TranslationAttempt,
@@ -217,18 +216,12 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        conversation_type, recipients_by_language = await _recipients_by_language(
-            session, snapshot["conversation_id"]
+        recipients_by_language = await _recipients_by_language(
+            session, snapshot["conversation_id"], snapshot["sender_id"]
         )
 
     if not recipients_by_language:
         return
-
-    recipients_by_language = _include_direct_sender(
-        conversation_type=conversation_type,
-        sender_id=snapshot["sender_id"],
-        recipients_by_language=recipients_by_language,
-    )
 
     await asyncio.gather(
         *(
@@ -248,75 +241,27 @@ async def _translate_message(
 async def _recipients_by_language(
     session: AsyncSession,
     conversation_id: str,
-) -> tuple[str | None, dict[str, list[str]]]:
-    """Group a conversation's members by the language each of them reads.
+    sender_id: str,
+) -> dict[str, list[str]]:
+    """Group message recipients, excluding the sender, by reading language.
 
-    One query answers everything the fan-out needs: which languages are in play,
-    who wants each, and whether this is a one-to-one conversation. The
-    conversation type rides along on the same join rather than costing a second
-    round trip — this runs in a background task that can be abandoned when the
-    caller goes away, and every extra await inside the session block is another
-    point where that leaves a connection checked out.
-
-    The sender is included deliberately. If they wrote in a language other than
-    the one they read, they get a translation too — which falls out for free.
-
-    Returns:
-        The conversation's type (None when it has no members), and the members
-        grouped by the language each of them reads.
+    The sender's bubble always shows the original text. Excluding them here
+    prevents unnecessary LLM work and ensures no translation event or result is
+    created solely for the author of a message.
     """
     rows = await session.execute(
-        select(ConversationMember.user_id, User.preferred_language, Conversation.type)
+        select(ConversationMember.user_id, User.preferred_language)
         .join(User, User.id == ConversationMember.user_id)
-        .join(Conversation, Conversation.id == ConversationMember.conversation_id)
-        .where(ConversationMember.conversation_id == conversation_id)
+        .where(
+            ConversationMember.conversation_id == conversation_id,
+            ConversationMember.user_id != sender_id,
+        )
     )
 
-    conversation_type: str | None = None
     grouped: dict[str, list[str]] = {}
-    for user_id, language, row_type in rows:
-        conversation_type = row_type
+    for user_id, language in rows:
         grouped.setdefault(language, []).append(user_id)
-    return conversation_type, grouped
-
-
-def _include_direct_sender(
-    *,
-    conversation_type: str | None,
-    sender_id: str,
-    recipients_by_language: dict[str, list[str]],
-) -> dict[str, list[str]]:
-    """Let a one-to-one sender receive the translation of their own message.
-
-    Grouping by reading language puts the sender in the bucket for the language
-    *they* read, so the translation going to the other person never reaches
-    them. That is what the controls under their own bubble need: the toggle,
-    the rating and the edit box all describe a translation the sender otherwise
-    only sees after a reload (docs/CONTRACT.md §4.4 rule 3).
-
-    Limited to `direct` conversations because that is where the controls exist
-    (§3.10). A group message has several translations and no single one belongs
-    to the bubble, so the sender is shown nothing and needs nothing sent.
-
-    Takes no session on purpose: the type it needs already arrived with the
-    grouping, so this stays a plain function outside the session block.
-
-    Args:
-        conversation_type: `direct` or `group`, as read alongside the members.
-        sender_id: Account that sent the message.
-        recipients_by_language: Grouping to extend, left untouched.
-
-    Returns:
-        The same grouping, with the sender added to every language in a direct
-        conversation.
-    """
-    if conversation_type != "direct":
-        return recipients_by_language
-
-    return {
-        language: user_ids if sender_id in user_ids else [*user_ids, sender_id]
-        for language, user_ids in recipients_by_language.items()
-    }
+    return grouped
 
 
 async def _translate_into(

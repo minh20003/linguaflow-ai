@@ -23,6 +23,10 @@ export function getAccessToken(): string | null {
   return window.localStorage.getItem("access_token") ?? window.sessionStorage.getItem("access_token");
 }
 
+export function getRefreshToken(): string | null {
+  return window.localStorage.getItem("refresh_token") ?? window.sessionStorage.getItem("refresh_token");
+}
+
 export function clearSession(): void {
   for (const storage of [window.localStorage, window.sessionStorage]) {
     for (const key of KEYS) storage.removeItem(key);

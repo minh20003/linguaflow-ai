@@ -77,7 +77,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setReplyTo({
       id: message.id,
       senderName: message.senderName || 'Sender',
-      content: message.translation?.showOriginal
+      content: message.senderId === currentUser.id || message.translation?.showOriginal
         ? message.content
         : message.translation?.translatedText || message.content,
     });

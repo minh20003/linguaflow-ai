@@ -52,10 +52,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
   const isOutgoing = message.senderId === currentUser.id;
   const hasTranslation = !!message.translation;
-  const isTranslated = hasTranslation && message.translation?.status === 'success';
-  const isTranslating = hasTranslation && message.translation?.status === 'pending';
-  const isTranslationFailed = hasTranslation && message.translation?.status === 'failed';
+  // A sender always reads their original wording. Do not surface historical
+  // self-translations while the backend stops creating new ones for them.
+  const isTranslated = !isOutgoing && hasTranslation && message.translation?.status === 'success';
+  const isTranslating = !isOutgoing && hasTranslation && message.translation?.status === 'pending';
+  const isTranslationFailed = !isOutgoing && hasTranslation && message.translation?.status === 'failed';
   const isShowingOriginal = message.translation?.showOriginal;
+  const showTranslatedAsPrimary = isTranslated && !isShowingOriginal;
+  const showTranslationPreview = isTranslated && isShowingOriginal;
 
   // Language display name helper
   const getLanguageName = (code?: string) => {
@@ -150,7 +154,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         >
           {/* Main message text */}
           <div className="space-y-1">
-            {isTranslated && !isShowingOriginal ? (
+            {showTranslatedAsPrimary ? (
               <p className="whitespace-pre-wrap break-words font-normal">
                 {message.translation?.translatedText}
               </p>
@@ -161,10 +165,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             )}
 
             {/* Revealed Original (when toggle is active) */}
-            {isTranslated && isShowingOriginal && (
+            {showTranslationPreview && (
               <div className="mt-2 pt-2 border-t border-dashed border-[#E8EAF0] dark:border-[#383E50] text-xs">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[#74798C] dark:text-[#9DA3B4] block mb-0.5">
-                  Translated Version:
+                  {isOutgoing ? 'Translation preview:' : 'Translated Version:'}
                 </span>
                 <p className="text-[#1E2230] dark:text-[#F5F6FA]">
                   {message.translation?.translatedText}
@@ -211,7 +215,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               <div className="flex items-center gap-1">
                 <Languages className="w-3 h-3 text-[#2563EB]" />
                 <span>
-                  Translated from {getLanguageName(message.translation?.originalLanguage)}
+                  {isOutgoing
+                    ? `Translated for ${getLanguageName(message.translation?.targetLanguage)}`
+                    : `Translated from ${getLanguageName(message.translation?.originalLanguage)}`}
                 </span>
               </div>
 
@@ -222,12 +228,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 {isShowingOriginal ? (
                   <>
                     <EyeOff className="w-2.5 h-2.5" />
-                    <span>Hide original</span>
+                    <span>{isOutgoing ? 'Hide translation' : 'Hide original'}</span>
                   </>
                 ) : (
                   <>
                     <Eye className="w-2.5 h-2.5" />
-                    <span>Show original</span>
+                    <span>{isOutgoing ? 'Show translation' : 'Show original'}</span>
                   </>
                 )}
               </button>
@@ -336,7 +342,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           <button
             onClick={() =>
               onCopy(
-                message.translation?.showOriginal
+                isOutgoing || message.translation?.showOriginal
                   ? message.content
                   : message.translation?.translatedText || message.content
               )

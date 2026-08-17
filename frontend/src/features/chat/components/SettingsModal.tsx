@@ -5,8 +5,6 @@ import {
   X,
   Languages,
   User as UserIcon,
-  Moon,
-  Sun,
   Bell,
   Shield,
   Sparkles,
@@ -25,7 +23,7 @@ interface SettingsModalProps {
   onUpdateUser: (newUser: Partial<User>) => void;
 }
 
-type SettingsSection = 'language' | 'profile' | 'appearance' | 'notifications' | 'privacy' | 'ai';
+type SettingsSection = 'language' | 'profile' | 'notifications' | 'privacy' | 'ai';
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -44,7 +42,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const sections = [
     { id: 'language' as SettingsSection, label: 'Language & Translation', icon: Languages },
     { id: 'profile' as SettingsSection, label: 'Profile', icon: UserIcon },
-    { id: 'appearance' as SettingsSection, label: 'Appearance', icon: Moon },
     { id: 'notifications' as SettingsSection, label: 'Notifications', icon: Bell },
     { id: 'privacy' as SettingsSection, label: 'Privacy & Security', icon: Shield },
     { id: 'ai' as SettingsSection, label: 'AI & Smart Tools', icon: Sparkles },
@@ -268,48 +265,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {/* 3. Appearance Section */}
-            {activeSection === 'appearance' && (
-              <div className="space-y-4">
-                <p className="text-xs text-[#74798C]">
-                  Customize how LinguaChat looks on your device.
-                </p>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => onUpdateSettings({ theme: 'light' })}
-                    className={`flex flex-col items-center gap-3 p-4 rounded-2xl border text-center transition-all ${
-                      settings.theme === 'light'
-                        ? 'border-[#2563EB] bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB]'
-                        : 'border-[#E8EAF0] dark:border-[#2A2E3D] text-[#74798C] hover:bg-[#F7F8FC]'
-                    }`}
-                  >
-                    <Sun className="w-6 h-6 text-amber-500" />
-                    <div>
-                      <p className="text-xs font-bold">Light Theme</p>
-                      <p className="text-[10px] text-[#74798C]">Clean bright surface</p>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={() => onUpdateSettings({ theme: 'dark' })}
-                    className={`flex flex-col items-center gap-3 p-4 rounded-2xl border text-center transition-all ${
-                      settings.theme === 'dark'
-                        ? 'border-[#2563EB] bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB]'
-                        : 'border-[#E8EAF0] dark:border-[#2A2E3D] text-[#74798C] hover:bg-[#F7F8FC]'
-                    }`}
-                  >
-                    <Moon className="w-6 h-6 text-indigo-400" />
-                    <div>
-                      <p className="text-xs font-bold">Dark Charcoal</p>
-                      <p className="text-[10px] text-[#74798C]">Eye-safe dark canvas</p>
-                    </div>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* 4. Notifications */}
+            {/* 3. Notifications */}
             {activeSection === 'notifications' && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
@@ -337,7 +293,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {/* 5. Privacy */}
+            {/* 4. Privacy */}
             {activeSection === 'privacy' && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">

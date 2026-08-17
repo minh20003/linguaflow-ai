@@ -136,12 +136,19 @@ export function toMessages(items: ApiMessage[], users: Map<string, User>, prefer
     if (!message.replyTo || !original) return message;
 
     const originalSender = users.get(original.sender_id);
+    const translatedReply = original.translations.find(
+      (translation) => translation.target_language === preferredLanguage,
+    );
     return {
       ...message,
       replyTo: {
         id: original.id,
         senderName: originalSender?.name || "Message",
-        content: original.deleted_at ? "This message was deleted" : original.original_text,
+        // A quote should match the language this reader sees in the thread;
+        // otherwise the composer preview and the persisted reply disagree.
+        content: original.deleted_at
+          ? "This message was deleted"
+          : translatedReply?.translated_text || original.original_text,
       },
     };
   });

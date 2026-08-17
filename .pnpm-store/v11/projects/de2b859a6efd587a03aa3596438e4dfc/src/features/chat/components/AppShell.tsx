@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WifiOff } from "lucide-react";
-import { clearSession, getAccessToken } from "@/features/auth/lib/session";
+import { clearSession, getAccessToken, getRefreshToken } from "@/features/auth/lib/session";
+import { signOut } from "@/features/auth/api/auth-api";
 import type { AppSettings, Conversation, Message, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
 import { createConversation, deleteMessage, getMe, getMessages, listConversations, listUsers, markRead, toChatUser, toConversation, toLanguageCode, toMessage, toMessages, uploadAttachment, type ApiMessage } from "../api/chat-api";
@@ -42,6 +43,7 @@ export const AppShell: React.FC = () => {
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [callState, setCallState] = useState<{ isOpen: boolean; type: "voice" | "video" }>({ isOpen: false, type: "voice" });
 
@@ -50,6 +52,24 @@ export const AppShell: React.FC = () => {
     setToasts((items) => [...items, { id, title, message, type }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 3500);
   }, []);
+
+  const handleLogout = useCallback(async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    const refreshToken = getRefreshToken();
+
+    try {
+      if (refreshToken) await signOut(refreshToken);
+    } catch {
+      // Local logout must still complete when the network is unavailable.
+    } finally {
+      socket.current?.close();
+      socket.current = null;
+      token.current = null;
+      clearSession();
+      router.replace("/login");
+    }
+  }, [isLoggingOut, router]);
 
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const currentMessages = selectedConversationId ? messagesMap[selectedConversationId] ?? [] : [];
@@ -113,9 +133,16 @@ export const AppShell: React.FC = () => {
             const messages = previous[mapped.conversationId] ?? [];
             const withoutOptimistic = clientMessageId ? messages.filter((item) => item.id !== clientMessageId) : messages;
             const repliedMessage = mapped.replyTo ? withoutOptimistic.find((item) => item.id === mapped.replyTo?.id) : undefined;
+            const replyContent = repliedMessage
+              ? (
+                repliedMessage.senderId === currentUser.id || repliedMessage.translation?.showOriginal
+                  ? repliedMessage.content
+                  : repliedMessage.translation?.translatedText || repliedMessage.content
+              )
+              : undefined;
             const messageWithReply = repliedMessage && mapped.replyTo ? {
               ...mapped,
-              replyTo: { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content },
+              replyTo: { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: replyContent || repliedMessage.content },
             } : mapped;
             return { ...previous, [mapped.conversationId]: withoutOptimistic.some((item) => item.id === mapped.id) ? withoutOptimistic : [...withoutOptimistic, messageWithReply] };
           });
@@ -199,7 +226,7 @@ export const AppShell: React.FC = () => {
 
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
-    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => tab === "settings" ? setIsSettingsOpen(true) : setActiveTab(tab)} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} unreadChatsCount={unreadChatsCount} /></div>
+    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => tab === "settings" ? setIsSettingsOpen(true) : setActiveTab(tab)} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} /></div>
     <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
       {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} />}
       {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} />}

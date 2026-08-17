@@ -75,6 +75,18 @@ export function signIn(email: string, password: string, remember: boolean): Prom
   );
 }
 
+export async function signOut(refreshToken: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!response.ok) {
+    const body = await parseBody<ErrorBody>(response);
+    throw new Error(errorMessage(body, "Unable to sign out. Please try again."));
+  }
+}
+
 export function signUp({
   fullName,
   email,

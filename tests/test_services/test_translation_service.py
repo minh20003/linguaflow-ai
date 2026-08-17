@@ -120,7 +120,7 @@ async def test_translates_for_each_recipient_language(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user.id,
+        sender_id=test_user_two.id,
         text="Deploy xong chua anh?",
         source_language="vi",
     )
@@ -206,9 +206,7 @@ async def test_writes_back_the_detected_source_language(
     await run_translations(
         message=message,
         publisher=RecordingPublisher(),
-        graph_factory=make_graph_factory(
-            {"vi": {"source_language": "en", "translated_text": "API đã sẵn sàng để kiểm thử"}}
-        ),
+        graph_factory=make_graph_factory({"en": {"source_language": "en"}}),
     )
 
     async with session_factory_for_tests()() as session:
@@ -225,7 +223,7 @@ async def test_publishes_nothing_when_the_agent_fails(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user.id,
+        sender_id=test_user_two.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -251,7 +249,7 @@ async def test_publishes_nothing_when_the_translation_is_empty(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user.id,
+        sender_id=test_user_two.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -275,7 +273,7 @@ async def test_a_publisher_failure_does_not_escape_the_task(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user.id,
+        sender_id=test_user_two.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -306,7 +304,7 @@ async def test_rerunning_reuses_the_existing_translation_row(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user.id,
+        sender_id=test_user_two.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -430,16 +428,10 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
 
 
 @pytest.mark.asyncio
-async def test_direct_sender_also_receives_the_translation_of_their_own_message(
+async def test_direct_sender_does_not_receive_translation_of_their_own_message(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """The one-to-one sender needs the translation their reader got (§4.4 rule 3).
-
-    test_user_two reads vi and writes in vi, so grouping by reading language
-    alone would send the English translation only to test_user. Without this the
-    sender has nothing to toggle, rate or edit under their own bubble until the
-    page is reloaded.
-    """
+    """A one-to-one sender retains the original; only the reader gets a translation."""
     conversation = await conversation_factory(test_user_two, [test_user, test_user_two])
     message = await persist_message(
         test_db,
@@ -471,19 +463,14 @@ async def test_direct_sender_also_receives_the_translation_of_their_own_message(
         if payload.get("target_language") == "en"
     ]
     assert len(english_recipients) == 1
-    assert set(english_recipients[0]) == {test_user.id, test_user_two.id}
+    assert set(english_recipients[0]) == {test_user.id}
 
 
 @pytest.mark.asyncio
 async def test_group_sender_is_left_out_of_a_language_they_do_not_read(
     test_db, test_user, test_user_two, test_user_three, conversation_factory
 ):
-    """Groups keep the old routing: no controls there, so nothing extra to send.
-
-    A group message has one translation per language and no single one belongs
-    to the sender's bubble, so §3.10 shows them no controls and §4.4 rule 3
-    stays as it was.
-    """
+    """The sender is excluded from translation routing in group conversations too."""
     conversation = await conversation_factory(
         test_user_two,
         [test_user, test_user_two, test_user_three],
