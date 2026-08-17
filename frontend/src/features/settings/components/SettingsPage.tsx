@@ -17,7 +17,8 @@ import {
   setInterfaceLanguage,
   subscribeToInterfaceLanguage,
 } from "@/shared/lib/ui-language";
-import { useUiText } from "@/shared/lib/use-ui-text";
+import { formatUiText, uiText } from "@/shared/lib/ui-text";
+import { useDocumentMetadata, useUiText } from "@/shared/lib/use-ui-text";
 import LanguagePicker from "@/shared/ui/LanguagePicker";
 import Logo from "@/shared/ui/Logo";
 import ThemeToggle from "@/shared/ui/ThemeToggle";
@@ -53,6 +54,7 @@ function subscribeToActivity(onStoreChange: () => void): () => void {
  * be linked to and returned to, and F-06's privacy controls will land here too.
  */
 export default function SettingsPage() {
+  useDocumentMetadata("meta.title.settings", "meta.desc.settings");
   const me = useMemo(() => getStoredUser(), []);
   const [language, setLanguage] = useState(me?.preferred_language ?? "en");
   // Read through the store rather than copied into state: `saveSession` also
@@ -100,14 +102,18 @@ export default function SettingsPage() {
         },
         isRememberedSession(),
       );
-      setStatus(`Từ giờ bạn đọc tin nhắn bằng ${languageLabel(updated.preferred_language)}.`);
-    } catch (caught) {
+      setStatus(
+        formatUiText(uiLang, "settings.reading.updated", {
+          language: languageLabel(updated.preferred_language),
+        }),
+      );
+    } catch {
       setLanguage(previous);
-      setError((caught as Error).message);
+      setError(uiText(uiLang, "settings.error.saveReading"));
     } finally {
       setSaving(false);
     }
-  }, [language]);
+  }, [language, uiLang]);
 
   /**
    * Change the language of the app itself.
@@ -134,13 +140,13 @@ export default function SettingsPage() {
         },
         isRememberedSession(),
       );
-    } catch (caught) {
+    } catch {
       setInterfaceLanguage(previous);
-      setError((caught as Error).message);
+      setError(uiText(uiLang, "settings.error.saveInterface"));
     } finally {
       setSavingInterface(false);
     }
-  }, []);
+  }, [uiLang]);
 
   const toggleActivity = useCallback((next: boolean) => {
     localStorage.setItem(ACTIVITY_KEY, next ? "1" : "0");

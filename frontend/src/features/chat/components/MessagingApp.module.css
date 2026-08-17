@@ -19,7 +19,7 @@
   gap: var(--s-3);
   width: 100%;
   height: 100svh;
-  padding: var(--s-3) var(--s-3) var(--s-3) 0;
+  padding-block: var(--s-3); padding-inline-end: var(--s-3); padding-inline-start: 0;
   margin-inline: auto;
   overflow: hidden;
   background-color: var(--surface-ground);
@@ -101,7 +101,7 @@
   min-height: 0;
   height: 100%;
   background: var(--surface-ground);
-  border-right: 1px solid var(--rule-strong);
+  border-inline-end: 1px solid var(--rule-strong);
 }
 
 .brandHeader,
@@ -179,7 +179,7 @@
 .accountStrip strong { font-size: var(--fs-small); }
 .accountStrip small { color: var(--ink-muted); font-size: var(--fs-micro); }
 .accountStrip i,
-.presenceDot { display: inline-block; width: 6px; height: 6px; margin-right: var(--s-2); background: var(--success); }
+.presenceDot { display: inline-block; width: 6px; height: 6px; margin-inline-end: var(--s-2); background: var(--success); }
 .accountStrip > button { min-width: 34px; min-height: 34px; color: var(--ink-muted); }
 
 .searchBox {
@@ -225,14 +225,14 @@
   align-items: center;
   gap: var(--s-3);
   padding: var(--s-3) var(--s-5);
-  text-align: left;
+  text-align: start;
   border-top: 1px solid transparent;
   border-bottom: 1px solid transparent;
 }
 .conversationRow:hover { background: var(--surface-sunken); }
 .activeRow { background: var(--surface-label); border-color: var(--rule); }
 .activeRow::before,
-.unreadRow::before { content: ""; position: absolute; inset-block: 9px; left: 0; width: 3px; background: var(--primary); }
+.unreadRow::before { content: ""; position: absolute; inset-block: 9px; inset-inline-start: 0; width: 3px; background: var(--primary); }
 .conversationCopy { min-width: 0; }
 .conversationTop,
 .conversationBottom { display: flex; align-items: baseline; gap: var(--s-2); }
@@ -285,11 +285,11 @@
 .unreadDivider::before,
 .unreadDivider::after { background: var(--danger); opacity: .5; }
 
-.message { position: relative; display: grid; grid-template-columns: minmax(0, 700px) auto; column-gap: var(--s-3); align-items: start; max-width: 900px; padding: var(--s-3) var(--s-4) var(--s-4); border-left: 2px solid var(--rule-strong); }
+.message { position: relative; display: grid; grid-template-columns: minmax(0, 700px) auto; column-gap: var(--s-3); align-items: start; max-width: 900px; padding: var(--s-3) var(--s-4) var(--s-4); border-inline-start: 2px solid var(--rule-strong); }
 .message + .message { margin-top: var(--s-2); }
 .message:hover,
 .message:focus-within { background: var(--surface-label); }
-.myMessage { margin-left: clamp(var(--s-5), 7vw, var(--s-8)); border-left-color: var(--primary); }
+.myMessage { margin-inline-start: clamp(var(--s-5), 7vw, var(--s-8)); border-inline-start-color: var(--primary); }
 .continued { padding-top: var(--s-2); }
 .message header { grid-column: 1; display: flex; align-items: baseline; gap: var(--s-3); margin-bottom: var(--s-2); }
 .message header strong { font-size: var(--fs-small); font-weight: 600; }
@@ -299,7 +299,7 @@
 .message:hover .continuedTime { opacity: 1; }
 .messageBody { grid-column: 1; min-width: 0; }
 .messageBody > p { max-width: 68ch; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.65; }
-.messageBody blockquote { max-width: 58ch; margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); overflow: hidden; border-left: 2px solid var(--rule-strong); color: var(--ink-muted); background: var(--surface-sunken); font-size: var(--fs-small); text-overflow: ellipsis; white-space: nowrap; }
+.messageBody blockquote { max-width: 58ch; margin-bottom: var(--s-3); padding: var(--s-2) var(--s-3); overflow: hidden; border-inline-start: 2px solid var(--rule-strong); color: var(--ink-muted); background: var(--surface-sunken); font-size: var(--fs-small); text-overflow: ellipsis; white-space: nowrap; }
 .translation { max-width: 68ch; margin-top: var(--s-3); padding-top: var(--s-3); border-top: 1px dashed var(--rule-strong); color: var(--ink-secondary); }
 .translation > span { display: block; margin-bottom: var(--s-1); color: var(--ink-muted); font-family: var(--font-body); font-size: var(--fs-micro); text-transform: uppercase; }
 .translation p { overflow-wrap: anywhere; }
@@ -309,25 +309,25 @@
 .message:hover .messageActions,
 .message:focus-within .messageActions { opacity: 1; }
 .messageActions button { min-height: 32px; padding-inline: var(--s-3); color: var(--ink-secondary); font-size: var(--fs-micro); }
-.messageActions button + button { border-left: 1px solid var(--rule); }
+.messageActions button + button { border-inline-start: 1px solid var(--rule); }
 .messageActions button:hover { color: var(--ink); background: var(--surface-sunken); }
-.failedMessage { border-left-color: var(--danger); background: var(--danger-weak); }
+.failedMessage { border-inline-start-color: var(--danger); background: var(--danger-weak); }
 .deletedText { color: var(--ink-muted); font-style: italic; }
-.fileAttachment { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; width: min(100%, 440px); align-items: center; gap: var(--s-3); margin-top: var(--s-3); padding: var(--s-3); border: 1px solid var(--rule-strong); text-align: left; background: var(--surface-label); }
+.fileAttachment { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; width: min(100%, 440px); align-items: center; gap: var(--s-3); margin-top: var(--s-3); padding: var(--s-3); border: 1px solid var(--rule-strong); text-align: start; background: var(--surface-label); }
 .fileAttachment > span:first-child { padding: var(--s-2); color: var(--danger); border: 1px solid var(--danger); font-family: var(--font-body); font-size: var(--fs-micro); }
 .fileAttachment strong,
 .fileAttachment small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fileAttachment small { color: var(--ink-muted); font-size: var(--fs-micro); }
-.typingStatus { margin: var(--s-4) 0 0 var(--s-4); color: var(--ink-muted); font-size: var(--fs-small); }
-.typingStatus span { margin-right: var(--s-2); color: var(--primary); font-family: var(--font-body); letter-spacing: .18em; }
+.typingStatus { margin-block-start: var(--s-4); margin-inline-start: var(--s-4); color: var(--ink-muted); font-size: var(--fs-small); }
+.typingStatus span { margin-inline-end: var(--s-2); color: var(--primary); font-family: var(--font-body); letter-spacing: .18em; }
 
-.emptyConversation { width: min(520px, 100%); min-height: 100%; margin-inline: auto; text-align: left; }
+.emptyConversation { width: min(520px, 100%); min-height: 100%; margin-inline: auto; text-align: start; }
 .emptyGlyph { display: grid; width: 54px; height: 60px; margin-bottom: var(--s-5); place-items: center; border: 1px solid var(--rule-strong); color: var(--ink-secondary); font-family: var(--font-body); font-size: var(--fs-title); }
 .emptyConversation h2 { font-size: var(--fs-title); }
 .emptyConversation p { max-width: 46ch; margin-top: var(--s-2); color: var(--ink-muted); }
 
 .composer { border-top: 1px solid var(--rule-strong); background: var(--surface-label); }
-.composerContext { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--rule); border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.composerContext { display: flex; justify-content: space-between; align-items: center; gap: var(--s-4); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--rule); border-inline-start: 3px solid var(--primary); background: var(--surface-sunken); }
 .composerContext span { min-width: 0; }
 .composerContext strong,
 .composerContext small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -349,11 +349,11 @@
 @media (max-width: 920px) {
   .appShell { --ledger-width: 286px; }
   .timeline { padding-inline: var(--s-5); }
-  .myMessage { margin-left: var(--s-5); }
+  .myMessage { margin-inline-start: var(--s-5); }
   .desktopLabel { display: none; }
   .headerActions button { min-width: 38px; justify-content: center; }
   .composerHint > span { display: none; }
-  .composerHint { justify-content: flex-end; padding-left: var(--s-5); }
+  .composerHint { justify-content: flex-end; padding-inline-start: var(--s-5); }
 }
 
 @media (max-width: 680px) {
@@ -377,7 +377,7 @@
   .headerActions button:nth-child(2) { display: none; }
   .timeline { padding: var(--s-4) var(--s-3) var(--s-5); }
   .message { grid-template-columns: minmax(0, 1fr); padding-inline: var(--s-3); }
-  .myMessage { margin-left: var(--s-4); }
+  .myMessage { margin-inline-start: var(--s-4); }
   .messageActions { position: static; grid-column: 1; grid-row: auto; width: max-content; margin-top: var(--s-2); opacity: 1; }
   .composerMain { grid-template-columns: auto minmax(70px, 1fr) auto; gap: var(--s-2); padding-inline: var(--s-3); }
   .composerLanguage { display: none; }
@@ -473,11 +473,11 @@
    white plate behind cream text in dark mode — the name became invisible. */
 .appShell :global(.cs-conversation-header__user-name) { color: var(--ink); background: transparent; font-family: var(--font-body); font-size: var(--fs-lead); font-weight: 600; }
 .appShell :global(.cs-conversation-header__info) { color: var(--ink-muted); background: transparent; font-family: var(--font-body); font-size: var(--fs-small); }
-.appShell :global(.cs-conversation-header__actions) { gap: var(--s-2); padding-right: var(--s-4); }
+.appShell :global(.cs-conversation-header__actions) { gap: var(--s-2); padding-inline-end: var(--s-4); }
 .appShell :global(.cs-conversation-header__actions button), .appShell :global(.cs-conversation-header__back button) { min-width: 34px; min-height: 34px; padding-inline: var(--s-2); border: 1px solid transparent; border-radius: var(--r-2); color: var(--ink-secondary); }
 .appShell :global(.cs-conversation-header__actions button:hover), .appShell :global(.cs-conversation-header__back button:hover) { border-color: var(--rule); background: var(--surface-sunken); }
 .appShell :global(.cs-conversation-header__back) { display: none; }
-.statusBanner { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--danger); color: var(--ink-secondary); background: var(--danger-weak); font-size: var(--fs-small); }.statusBanner strong,.statusBanner button { color: var(--danger); }.statusBanner button { margin-left: auto; text-decoration: underline; }
+.statusBanner { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) var(--s-5); border-bottom: 1px solid var(--danger); color: var(--ink-secondary); background: var(--danger-weak); font-size: var(--fs-small); }.statusBanner strong,.statusBanner button { color: var(--danger); }.statusBanner button { margin-inline-start: auto; text-decoration: underline; }
 .messageSearch { position: sticky; z-index: 4; top: 0; display: grid; grid-template-columns: minmax(120px, 1fr) auto auto; align-items: center; gap: var(--s-2); margin: calc(var(--s-3) * -1) 0 var(--s-4); padding: var(--s-3); border: 1px solid var(--rule); background: var(--surface-label); }
 .messageSearch label { grid-column: 1 / -1; color: var(--ink-muted); font-size: var(--fs-micro); font-weight: 600; }
 .messageSearch input { min-width: 0; min-height: 36px; padding-inline: var(--s-3); border: 1px solid var(--rule-strong); border-radius: var(--r-2); color: var(--ink); background: var(--surface-card); }
@@ -544,7 +544,7 @@
 .appShell :global(.cs-message__content-wrapper) { max-width: 100%; align-items: flex-start; }
 .appShell :global(.cs-message--outgoing .cs-message__content-wrapper) { align-items: flex-end; }
 .appShell :global(.cs-message__header) { min-height: 14px; margin-bottom: var(--s-1); color: var(--ink-muted); font-family: var(--font-body); font-size: 10px; line-height: 1.2; }
-.appShell :global(.cs-message--outgoing .cs-message__header) { justify-content: flex-end; text-align: right; }
+.appShell :global(.cs-message--outgoing .cs-message__header) { justify-content: flex-end; text-align: end; }
 .appShell :global(.cs-message--outgoing .cs-message__footer) { display: flex; justify-content: flex-end; align-items: center; min-height: 16px; }
 .messageTimestamp { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--ink-muted); font-style: normal; font-weight: 400; letter-spacing: .01em; }
 .appShell :global(.cs-message--outgoing .messageTimestamp) { justify-content: flex-end; width: 100%; }
@@ -558,18 +558,18 @@
    collide with a background because it is relative to whatever ink is there. */
 .deletedMessage { color: inherit; opacity: 0.78; font-style: italic; }
 .match { padding: 0 1px; color: inherit; background: var(--accent-gold); }
-.deliveryIcon { display: inline-flex; min-width: 18px; align-items: center; justify-content: flex-end; margin-left: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: 11px; letter-spacing: -2px; line-height: 1; }
+.deliveryIcon { display: inline-flex; min-width: 18px; align-items: center; justify-content: flex-end; margin-inline-start: var(--s-2); color: var(--ink-muted); font-family: var(--font-body); font-size: 11px; letter-spacing: -2px; line-height: 1; }
 .sending { color: var(--ink-muted); letter-spacing: 0; }.delivered { color: var(--primary); }.read { color: var(--success); }.editedMark { color: var(--ink-muted); font-size: 10px; }
-.replyPreview { margin: 0 0 var(--s-2); padding: var(--s-2) var(--s-3); border-left: 2px solid var(--primary); color: var(--ink-secondary); background: var(--surface-sunken); font-size: var(--fs-small); }
-.fileCard { display: grid; grid-template-columns: auto 1fr auto; width: min(100%, 360px); gap: var(--s-3); align-items: center; padding: var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink); text-align: left; background: var(--surface-card); }.fileCard > span { padding: var(--s-2); border: 1px solid var(--primary); color: var(--primary); font-family: var(--font-body); font-size: var(--fs-micro); }.fileCard strong,.fileCard small { display:block; }.fileCard small { color: var(--ink-muted); font-weight: 400; font-size: var(--fs-micro); }.fileCard b { color: var(--primary); }
+.replyPreview { margin: 0 0 var(--s-2); padding: var(--s-2) var(--s-3); border-inline-start: 2px solid var(--primary); color: var(--ink-secondary); background: var(--surface-sunken); font-size: var(--fs-small); }
+.fileCard { display: grid; grid-template-columns: auto 1fr auto; width: min(100%, 360px); gap: var(--s-3); align-items: center; padding: var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink); text-align: start; background: var(--surface-card); }.fileCard > span { padding: var(--s-2); border: 1px solid var(--primary); color: var(--primary); font-family: var(--font-body); font-size: var(--fs-micro); }.fileCard strong,.fileCard small { display:block; }.fileCard small { color: var(--ink-muted); font-weight: 400; font-size: var(--fs-micro); }.fileCard b { color: var(--primary); }
 .retryButton { color: var(--accent-coral); text-decoration: underline; }
-.messageQuickActions { position: absolute; z-index: 3; top: 50%; left: calc(100% + var(--s-2)); display: flex; gap: 2px; transform: translateY(-50%); opacity: 0; pointer-events: none; }
-.appShell :global(.cs-message--outgoing) .messageQuickActions { right: calc(100% + var(--s-2)); left: auto; }
+.messageQuickActions { position: absolute; z-index: 3; top: 50%; inset-inline-start: calc(100% + var(--s-2)); display: flex; gap: 2px; transform: translateY(-50%); opacity: 0; pointer-events: none; }
+.appShell :global(.cs-message--outgoing) .messageQuickActions { inset-inline-end: calc(100% + var(--s-2)); inset-inline-start: auto; }
 .messageQuickActions button { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); background: var(--surface-card); font-size: var(--fs-small); }
 .messageQuickActions button:hover, .messageQuickActions button:focus-visible { border-color: var(--primary); color: var(--primary); background: var(--primary-light); }
-.messageMenu { position: absolute; z-index: 5; top: calc(50% + 20px); left: calc(100% + var(--s-2)); display: grid; min-width: 96px; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--surface-card); box-shadow: var(--shadow-lg); }
-.appShell :global(.cs-message--outgoing) .messageMenu { right: calc(100% + var(--s-2)); left: auto; }
-.messageMenu button { min-height: 30px; padding-inline: var(--s-2); color: var(--ink-secondary); text-align: left; font-size: var(--fs-micro); }
+.messageMenu { position: absolute; z-index: 5; top: calc(50% + 20px); inset-inline-start: calc(100% + var(--s-2)); display: grid; min-width: 96px; padding: 3px; border: 1px solid var(--rule); border-radius: var(--r-2); background: var(--surface-card); box-shadow: var(--shadow-lg); }
+.appShell :global(.cs-message--outgoing) .messageMenu { inset-inline-end: calc(100% + var(--s-2)); inset-inline-start: auto; }
+.messageMenu button { min-height: 30px; padding-inline: var(--s-2); color: var(--ink-secondary); text-align: start; font-size: var(--fs-micro); }
 .messageMenu button:hover, .messageMenu button:focus-visible { color: var(--primary); background: var(--primary-light); }
 .appShell :global(.cs-message:hover) .messageQuickActions,.appShell :global(.cs-message:focus-within) .messageQuickActions { opacity: 1; pointer-events: auto; }
 
@@ -592,7 +592,7 @@
 /* The switch is the one control here that is not an icon, so it keeps its own
    size and only needs to be told not to stretch — and to sit slightly apart, so
    the three icons read as one group rather than four unrelated controls. */
-.translationTools .translationSwitch { flex: none; margin-right: var(--s-1); }
+.translationTools .translationSwitch { flex: none; margin-inline-end: var(--s-1); }
 
 /* Bare icons rather than boxed buttons: four framed squares under a bubble
    competed with the bubble itself. All three share --feedback-ink, so what
@@ -616,7 +616,7 @@
   position: absolute;
   z-index: 5;
   top: calc(100% + var(--s-1));
-  left: 0;
+  inset-inline-start: 0;
   display: grid;
   gap: var(--s-2);
   width: min(320px, 78vw);
@@ -653,8 +653,11 @@
 .forwardBody { display: grid; gap: var(--s-3); padding: var(--s-4) var(--s-5) var(--s-5); }
 .forwardPreview {
   padding: var(--s-2) var(--s-3);
-  border-left: 2px solid var(--primary);
-  border-radius: 0 var(--r-2) var(--r-2) 0;
+  border-inline-start: 2px solid var(--primary);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+  border-start-end-radius: var(--r-2);
+  border-end-end-radius: var(--r-2);
   color: var(--ink-secondary);
   background: var(--surface-sunken);
   font-size: var(--fs-small);
@@ -668,7 +671,7 @@
   min-height: 52px;
   padding: var(--s-2);
   border-radius: var(--r-2);
-  text-align: left;
+  text-align: start;
 }
 
 .forwardTarget:hover, .forwardTarget:focus-visible { background: var(--surface-sunken); }
@@ -677,23 +680,23 @@
 .forwardTarget small { color: var(--ink-muted); font-size: var(--fs-micro); }
 .appShell :global(.cs-typing-indicator) { color: var(--ink-muted); background: transparent; font-family: var(--font-body); }
 .emptyState { display: grid; min-height: 100%; place-content: center start; max-width: 430px; margin-inline: auto; color: var(--ink-secondary); }.emptyState > span { display: grid; width: 42px; height: 42px; margin-bottom: var(--s-4); place-items: center; border-radius: var(--r-2); color: var(--primary); background: var(--primary-light); }.emptyState h2 { color: var(--ink); font-size: var(--fs-title); }.emptyState p { margin-top: var(--s-2); }
-.composerWrap { border-top: 1px solid var(--rule); background: var(--surface-card); }.replyBar { display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); padding:var(--s-2) var(--s-5); border-left:3px solid var(--primary); color:var(--ink-secondary); background:var(--surface-sunken); }.replyBar strong,.replyBar small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.replyBar strong{font-size:var(--fs-small)}.replyBar small{font-size:var(--fs-micro)}.replyBar button{font-size:var(--fs-lead)}
+.composerWrap { border-top: 1px solid var(--rule); background: var(--surface-card); }.replyBar { display:flex; align-items:center; justify-content:space-between; gap:var(--s-3); padding:var(--s-2) var(--s-5); border-inline-start:3px solid var(--primary); color:var(--ink-secondary); background:var(--surface-sunken); }.replyBar strong,.replyBar small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.replyBar strong{font-size:var(--fs-small)}.replyBar small{font-size:var(--fs-micro)}.replyBar button{font-size:var(--fs-lead)}
 .appShell :global(.cs-input-toolbox) { order: 2; }
 .appShell :global(.cs-message-input) { order: 3; }
 .composerToolbox { display: flex; align-items: center; gap: var(--s-3); min-height: 34px; padding: var(--s-1) var(--s-4); border-top: 1px solid var(--rule); color: var(--ink-secondary); background: var(--surface-card); }
 .fileInput { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.fileUploadPreview { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--rule); border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.fileUploadPreview { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--rule); border-inline-start: 3px solid var(--primary); background: var(--surface-sunken); }
 .fileType { display: grid; min-width: 38px; min-height: 34px; place-items: center; padding-inline: var(--s-1); border: 1px solid var(--primary); color: var(--primary); background: var(--surface-card); font-family: var(--font-body); font-size: 10px; }
 .fileUploadPreview > div { min-width: 0; }.fileUploadPreview strong,.fileUploadPreview small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.fileUploadPreview strong { color: var(--ink); font-size: var(--fs-small); }.fileUploadPreview small { color: var(--ink-muted); font-size: var(--fs-micro); }
 .uploadProgress { display: block; height: 3px; margin-top: var(--s-2); overflow: hidden; background: var(--rule); }.uploadProgress > span { display: block; height: 100%; background: var(--primary); transition: width 160ms linear; }
 .sendFileAction { min-height: 30px; padding-inline: var(--s-3); border-radius: var(--r-2); color: #fff; background: var(--primary); font-size: var(--fs-micro); font-weight: 600; }.sendFileAction:hover { background: var(--primary-hover); }
-.composerToolboxActive { min-height: 54px; border-left: 3px solid var(--primary); background: var(--surface-sunken); }
+.composerToolboxActive { min-height: 54px; border-inline-start: 3px solid var(--primary); background: var(--surface-sunken); }
 .composerContext { min-width: 0; flex: 1; }
 .composerToolbox strong, .composerToolbox small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composerToolbox strong { color: var(--ink); font-size: var(--fs-small); }
 .composerToolbox small { color: var(--ink-muted); font-size: var(--fs-micro); }
 .cancelAction { width: 32px; height: 32px; border-radius: var(--r-2); color: var(--ink-secondary); font-size: var(--fs-lead); }
-.appShell :global(.cs-message-input) { gap: 0; margin: var(--s-3) var(--s-4); padding: 0; border: 0; color: var(--ink); background: var(--surface-card); }.appShell :global(.cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input__content-editor-container), .appShell :global(.cs-message-input__content-editor) { color: var(--ink); background: transparent; font-family: var(--font-body); }.appShell :global(.cs-message-input__tools:last-child) { order: 3; margin-left: var(--s-2); }.appShell :global(.cs-message-input:focus-within .cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input:focus-within .cs-message-input__tools:first-child) { border-color: var(--primary); background: var(--surface-card); }.appShell :global(.cs-button--send) { display: inline-grid; width: 36px; height: 36px; place-items: center; border-radius: var(--r-2); color: var(--primary); }.appShell :global(.cs-button--send:hover:not(:disabled)), .appShell :global(.cs-button--send:focus-visible) { background: var(--primary-light); }.appShell :global(.cs-button--attachment) { display: inline-grid; width: 36px; height: 36px; margin: 0; place-items: center; border-radius: var(--r-2); color: var(--ink-secondary); }.appShell :global(.cs-button--attachment:hover:not(:disabled)), .appShell :global(.cs-button--attachment:focus-visible) { color: var(--primary); background: var(--primary-light); }
+.appShell :global(.cs-message-input) { gap: 0; margin: var(--s-3) var(--s-4); padding: 0; border: 0; color: var(--ink); background: var(--surface-card); }.appShell :global(.cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input__content-editor-container), .appShell :global(.cs-message-input__content-editor) { color: var(--ink); background: transparent; font-family: var(--font-body); }.appShell :global(.cs-message-input__tools:last-child) { order: 3; margin-inline-start: var(--s-2); }.appShell :global(.cs-message-input:focus-within .cs-message-input__content-editor-wrapper), .appShell :global(.cs-message-input:focus-within .cs-message-input__tools:first-child) { border-color: var(--primary); background: var(--surface-card); }.appShell :global(.cs-button--send) { display: inline-grid; width: 36px; height: 36px; place-items: center; border-radius: var(--r-2); color: var(--primary); }.appShell :global(.cs-button--send:hover:not(:disabled)), .appShell :global(.cs-button--send:focus-visible) { background: var(--primary-light); }.appShell :global(.cs-button--attachment) { display: inline-grid; width: 36px; height: 36px; margin: 0; place-items: center; border-radius: var(--r-2); color: var(--ink-secondary); }.appShell :global(.cs-button--attachment:hover:not(:disabled)), .appShell :global(.cs-button--attachment:focus-visible) { color: var(--primary); background: var(--primary-light); }
 
 
 .modalBackdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: var(--s-4); background: rgb(17 40 64 / 42%); }
@@ -728,7 +731,7 @@
 .memberOption strong, .memberOption small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memberOption strong { color: var(--ink); font-size: var(--fs-small); }.memberOption small { color: var(--ink-muted); font-size: var(--fs-micro); }
 .groupModal footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-3); }
-.groupModal footer > span { margin-right: auto; color: var(--ink-muted); font-size: var(--fs-micro); }
+.groupModal footer > span { margin-inline-end: auto; color: var(--ink-muted); font-size: var(--fs-micro); }
 .groupModal footer button { min-height: 36px; padding-inline: var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-2); color: var(--ink-secondary); background: var(--surface-card); font-size: var(--fs-small); }
 .groupModal footer button[type="submit"] { border-color: var(--primary); color: #fff; background: var(--primary); font-weight: 600; }
 .groupModal footer button:disabled { border-color: var(--rule); color: var(--ink-disabled); background: var(--surface-sunken); cursor: not-allowed; }
@@ -755,9 +758,9 @@
   /* Same reason as .messageRow above: the wrapper does not take padding. */
   .appShell :global(.cs-message-group) { max-width: 96%; }
   .messageQuickActions { position: static; margin-top: var(--s-1); transform: none; opacity: 1; pointer-events: auto; }
-  .appShell :global(.cs-message--outgoing) .messageQuickActions { margin-left: auto; }
-  .messageMenu { top: calc(100% + var(--s-1)); left: auto; right: 0; }
-  .appShell :global(.cs-message--outgoing) .messageMenu { right: 0; left: auto; }
+  .appShell :global(.cs-message--outgoing) .messageQuickActions { margin-inline-start: auto; }
+  .messageMenu { top: calc(100% + var(--s-1)); inset-inline-start: auto; inset-inline-end: 0; }
+  .appShell :global(.cs-message--outgoing) .messageMenu { inset-inline-end: 0; inset-inline-start: auto; }
   .messageSearch { margin-inline: calc(var(--s-2) * -1); }
   .statusBanner { align-items: flex-start; flex-direction: column; gap: var(--s-1); padding-inline: var(--s-3); }
   .composerToolbox { padding-inline: var(--s-3); }
@@ -787,7 +790,7 @@
   position: absolute;
   z-index: 20;
   bottom: 0;
-  left: calc(100% + var(--s-2));
+  inset-inline-start: calc(100% + var(--s-2));
   min-width: 208px;
   padding: var(--s-2);
   border: 1px solid var(--rule-strong);
@@ -814,7 +817,7 @@
   color: var(--ink);
   font-size: var(--fs-small);
   line-height: 36px;
-  text-align: left;
+  text-align: start;
 }
 
 .accountMenuItem:hover { background: var(--surface-sunken); }
@@ -826,7 +829,7 @@
   min-width: 0;
   border: 0;
   background: transparent;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 

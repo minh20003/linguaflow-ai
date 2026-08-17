@@ -41,7 +41,7 @@ import {
 } from "@/shared/lib/chat-api";
 import { DEFAULT_LANGUAGE, languageLabel, type LanguageCode } from "@/shared/lib/constants";
 import { formatUiText, uiText, type UiTextKey } from "@/shared/lib/ui-text";
-import { useInterfaceLanguage } from "@/shared/lib/use-ui-text";
+import { useDocumentMetadata, useInterfaceLanguage } from "@/shared/lib/use-ui-text";
 import { useWebSocket, type MessageDeleted, type MessageUpdated, type MessageRead, type RealtimeMessage, type TranslationCompleted, type TypingNotice } from "@/shared/lib/use-websocket";
 import EmojiPicker from "@/shared/ui/EmojiPicker";
 import Logo from "@/shared/ui/Logo";
@@ -647,6 +647,7 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
 });
 
 export default function MessagingApp() {
+  useDocumentMetadata("meta.title.chat", "meta.desc.chat");
   const router = useRouter();
   const lang = useInterfaceLanguage();
 

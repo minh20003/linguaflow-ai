@@ -9,6 +9,7 @@ import type { LanguageCode } from "@/shared/lib/constants";
 import { MIN_PASSWORD_LENGTH, formMessage } from "@/shared/lib/form-messages";
 import { mainLabel } from "@/shared/lib/i18n";
 import { uiText } from "@/shared/lib/ui-text";
+import { useDocumentMetadata } from "@/shared/lib/use-ui-text";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
@@ -29,6 +30,7 @@ type ErrorState = { lang: LanguageCode; message: string };
  * with a field for the person to type the one they were given.
  */
 export default function PasswordRecoveryForm() {
+  useDocumentMetadata("meta.title.forgotPassword", "meta.desc.forgotPassword");
   const { lang } = useLanguage();
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");

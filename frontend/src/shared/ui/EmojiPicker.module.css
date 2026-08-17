@@ -27,7 +27,7 @@
   position: absolute;
   z-index: 30;
   bottom: calc(100% + var(--s-2));
-  left: 0;
+  inset-inline-start: 0;
   padding: var(--s-3);
   border: 1px solid var(--rule-strong);
   border-radius: var(--r-3);

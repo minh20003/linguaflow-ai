@@ -42,34 +42,6 @@ async function responseBody(response: Response) {
 }
 
 /**
- * The readable half of an error response, whatever shape FastAPI sent.
- *
- * FastAPI answers a rejected body with `detail` as an **array of objects**, not
- * a string. Passing that straight to `new Error()` stringifies it to
- * "[object Object]", which is what every caller here used to show: the account
- * could not be created and the reason was unreadable. A 4xx raised by our own
- * code sends `detail` as a plain string, so both shapes have to be handled.
- *
- * The server writes these in English. They are shown as a last resort, when the
- * client had no rule of its own to catch the problem first — a localised
- * message from the form beats anything recovered here.
- */
-function errorDetail(payload: Record<string, unknown> | null, fallback: string): string {
-  const detail = payload?.detail;
-  if (typeof detail === "string" && detail.trim()) return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((item) => (typeof item === "object" && item !== null ? String((item as { msg?: unknown }).msg ?? "") : ""))
-      // Pydantic prefixes its own text with "Value error, "; the reader does
-      // not need to know which validator produced the complaint.
-      .map((message) => message.replace(/^Value error,\s*/u, ""))
-      .filter(Boolean);
-    if (messages.length) return messages.join(" ");
-  }
-  return fallback;
-}
-
-/**
  * Login with the backend, then load the authenticated account profile.
  * The backend currently has no username/display_name fields, so the UI derives
  * both from the email until that profile contract is available.
@@ -82,7 +54,7 @@ export async function login(email: string, password: string, remember = false): 
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(errorDetail(payload, "Email hoặc mật khẩu không đúng."));
+    throw new Error("login_failed");
   }
   return payload as unknown as LoginResponse;
 }
@@ -106,7 +78,7 @@ export async function register(data: RegisterData): Promise<LoginResponse> {
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(errorDetail(payload, "Không thể tạo tài khoản."));
+    throw new Error("register_failed");
   }
   return payload as unknown as LoginResponse;
 }
@@ -119,7 +91,7 @@ export async function refreshSession(refreshToken: string): Promise<LoginRespons
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.access_token || !payload.user) {
-    throw new Error(errorDetail(payload, "Phiên đăng nhập đã hết hạn."));
+    throw new Error("session_expired");
   }
   return payload as unknown as LoginResponse;
 }
@@ -139,11 +111,11 @@ export async function requestPasswordReset(email: string): Promise<{ message: st
     body: JSON.stringify({ email }),
   });
   const payload = await responseBody(response);
-  if (!response.ok) throw new Error(errorDetail(payload, "Không thể gửi yêu cầu đặt lại mật khẩu."));
+  if (!response.ok) throw new Error("reset_request_failed");
   return {
     // Narrowed rather than cast: `responseBody` now says `unknown` per field,
     // which is the truth — the shape depends on the environment (§3.9).
-    message: typeof payload?.message === "string" ? payload.message : "Đã tiếp nhận yêu cầu.",
+    message: typeof payload?.message === "string" ? payload.message : "request_accepted",
     reset_token: typeof payload?.reset_token === "string" ? payload.reset_token : undefined,
   };
 }
@@ -155,8 +127,7 @@ export async function resetPassword(token: string, newPassword: string): Promise
     body: JSON.stringify({ token, new_password: newPassword }),
   });
   if (!response.ok) {
-    const payload = await responseBody(response);
-    throw new Error(errorDetail(payload, "Liên kết đặt lại mật khẩu không hợp lệ."));
+    throw new Error("reset_password_failed");
   }
 }
 
@@ -174,7 +145,7 @@ export async function uploadConversationAttachment(
   );
   const payload = await responseBody(response);
   if (!response.ok || !payload?.id) {
-    throw new Error(errorDetail(payload, "Không thể tải tệp lên."));
+    throw new Error("upload_failed");
   }
   return payload as unknown as AttachmentUpload;
 }
@@ -193,7 +164,7 @@ export async function updateLanguage(code: string, accessToken: string): Promise
   });
   const payload = await responseBody(response);
   if (!response.ok || !payload?.id) {
-    throw new Error(errorDetail(payload, "Không đổi được ngôn ngữ."));
+    throw new Error("update_language_failed");
   }
   return payload as unknown as AuthUser;
 }
@@ -214,7 +185,7 @@ export async function updateInterfaceLanguage(
     body: JSON.stringify({ interface_language: interfaceLanguage }),
   });
   const payload = await responseBody(response);
-  if (!response.ok) throw new Error(errorDetail(payload, "Không đổi được ngôn ngữ giao diện."));
+  if (!response.ok) throw new Error("update_interface_language_failed");
   return payload as unknown as AuthUser;
 }
 
@@ -227,6 +198,6 @@ export async function updateInterfaceLanguage(
  */
 export async function listLanguages(): Promise<string[]> {
   const response = await fetch(`${API_BASE}/api/v1/languages`);
-  if (!response.ok) throw new Error("Không tải được danh sách ngôn ngữ.");
+  if (!response.ok) throw new Error("list_languages_failed");
   return (await response.json()) as string[];
 }

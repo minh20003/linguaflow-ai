@@ -91,8 +91,7 @@ async function request<T>(path: string, token?: string, init?: RequestInit): Pro
     headers: { "Content-Type": "application/json", ...headersFor(token), ...init?.headers },
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail || `Yêu cầu thất bại (${response.status}).`);
+    throw new Error(`request_failed_${response.status}`);
   }
   // A 204 carries no body, and parsing one as JSON throws.
   if (response.status === 204) return null as T;
@@ -171,12 +170,9 @@ export function uploadAttachment(
         resolve(JSON.parse(request.responseText) as AttachmentSummary);
         return;
       }
-      const detail = (() => {
-        try { return (JSON.parse(request.responseText) as { detail?: string }).detail; } catch { return null; }
-      })();
-      reject(new Error(detail || `Không tải tệp lên được (${request.status}).`));
+      reject(new Error("upload_failed"));
     };
-    request.onerror = () => reject(new Error("Không tải tệp lên được."));
+    request.onerror = () => reject(new Error("upload_failed"));
     request.send(body);
   });
 }
@@ -189,7 +185,7 @@ export function uploadAttachment(
  */
 export async function downloadAttachment(downloadUrl: string): Promise<Blob> {
   const response = await fetch(`${API_BASE}${downloadUrl}`, { headers: authHeaders() });
-  if (!response.ok) throw new Error("Không tải được tệp đính kèm.");
+  if (!response.ok) throw new Error("download_failed");
   return response.blob();
 }
 

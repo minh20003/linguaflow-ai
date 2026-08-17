@@ -4,10 +4,14 @@ import MessagingApp from "@/features/chat/components/MessagingApp";
 import RequireAuth from "@/features/auth/components/RequireAuth";
 
 export const metadata: Metadata = {
-  title: "Tin nhắn — LinguaFlow",
-  description: "Trò chuyện và dịch tin nhắn theo thời gian thực.",
+  title: "Messages — LinguaFlow",
+  description: "Real-time chat and translation across languages.",
 };
 
 export default function ChatPage() {
-  return <RequireAuth><MessagingApp /></RequireAuth>;
+  return (
+    <RequireAuth>
+      <MessagingApp />
+    </RequireAuth>
+  );
 }

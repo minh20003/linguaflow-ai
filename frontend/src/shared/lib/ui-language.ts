@@ -34,7 +34,13 @@ export function readInterfaceLanguage(): LanguageCode {
 }
 
 function syncDocumentLanguage(code: LanguageCode): void {
+  if (typeof document === "undefined") return;
   document.documentElement.lang = code;
+  document.documentElement.dir = code === "ar" ? "rtl" : "ltr";
+}
+
+if (typeof window !== "undefined") {
+  syncDocumentLanguage(readInterfaceLanguage());
 }
 
 /**
