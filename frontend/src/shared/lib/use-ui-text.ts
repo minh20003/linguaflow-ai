@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
 import type { LanguageCode } from "./constants";
 import { readInterfaceLanguage, subscribeToInterfaceLanguage } from "./ui-language";
@@ -28,3 +28,34 @@ export function useUiText(): (key: UiTextKey) => string {
   const lang = useInterfaceLanguage();
   return useCallback((key: UiTextKey) => uiText(lang, key), [lang]);
 }
+
+/**
+ * Synchronizes client document.title and meta description to the active interface language.
+ */
+export function useDocumentMetadata(titleKey: UiTextKey, descKey?: UiTextKey): void {
+  const t = useUiText();
+  const lang = useInterfaceLanguage();
+
+  useEffect(() => {
+    const title = t(titleKey);
+    if (title && document.title !== title) {
+      document.title = title;
+    }
+    if (descKey) {
+      const desc = t(descKey);
+      if (desc) {
+        let meta = document.querySelector('meta[name="description"]');
+        if (!meta) {
+          meta = document.createElement("meta");
+          meta.setAttribute("name", "description");
+          document.head.appendChild(meta);
+        }
+        if (meta.getAttribute("content") !== desc) {
+          meta.setAttribute("content", desc);
+        }
+      }
+    }
+  }, [t, lang, titleKey, descKey]);
+}
+
+

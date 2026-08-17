@@ -16,6 +16,7 @@ import {
   isValidUsername,
   suggestUsername,
 } from "@/shared/lib/form-messages";
+import { useDocumentMetadata } from "@/shared/lib/use-ui-text";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
@@ -40,6 +41,7 @@ function getPasswordStrength(pw: string): Strength | null {
 }
 
 export default function RegisterForm() {
+  useDocumentMetadata("meta.title.register", "meta.desc.register");
   /* The shared AuthCardHead picker controls the interface. Registration uses
      that one first-run selection to initialize the separate reading preference,
      so this form deliberately has no second language control. */

@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useId, useState } from "react";
+import { mainLabel } from "@/shared/lib/i18n";
+import { useInterfaceLanguage } from "@/shared/lib/use-ui-text";
 import styles from "./Input.module.css";
 
 interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
@@ -21,8 +23,8 @@ export default function Input({
   altLabel,
   altLang,
   error,
-  showText = "Hiện",
-  hideText = "Ẩn",
+  showText,
+  hideText,
   type = "text",
   className = "",
   id,
@@ -31,10 +33,14 @@ export default function Input({
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const errorId = `${inputId}-error`;
+  const lang = useInterfaceLanguage();
 
   const [revealed, setRevealed] = useState(false);
   const isPassword = type === "password";
   const inputType = isPassword && revealed ? "text" : type;
+
+  const resolvedShowText = showText ?? mainLabel("show", lang);
+  const resolvedHideText = hideText ?? mainLabel("hide", lang);
 
   return (
     <div className={[styles.field, className].filter(Boolean).join(" ")}>
@@ -57,7 +63,7 @@ export default function Input({
             aria-pressed={revealed}
             aria-controls={inputId}
           >
-            {revealed ? hideText : showText}
+            {revealed ? resolvedHideText : resolvedShowText}
           </button>
         )}
       </div>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import RequireAuth from "@/features/auth/components/RequireAuth";
 import { getStoredUser } from "@/shared/lib/auth-session";
 import { fetchStats, type StatsResponse } from "@/shared/lib/stats-api";
-import { useInterfaceLanguage, useUiText } from "@/shared/lib/use-ui-text";
+import { useDocumentMetadata, useInterfaceLanguage, useUiText } from "@/shared/lib/use-ui-text";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -20,6 +20,7 @@ function Entries({ entries }: { entries: Record<string, number> }) {
 }
 
 function AdminStats() {
+  useDocumentMetadata("meta.title.admin", "meta.desc.admin");
   const t = useUiText();
   const language = useInterfaceLanguage();
   const [user] = useState(() => getStoredUser());

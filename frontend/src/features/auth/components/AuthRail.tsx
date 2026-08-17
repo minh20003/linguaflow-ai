@@ -1,20 +1,23 @@
 "use client";
 
-import React from "react";
+import { useLanguage } from "./LanguageContext";
+import { uiText } from "@/shared/lib/ui-text";
 import styles from "./AuthRail.module.css";
 
 export default function AuthRail() {
+  const { lang } = useLanguage();
+
   return (
     // The brand name is already in the card header above; repeating it here
     // said the name twice and the product's actual point zero times.
-    <aside className={styles.rail} aria-label="Giới thiệu LinguaFlow">
+    <aside className={styles.rail} aria-label={uiText(lang, "auth.rail.ariaLabel")}>
       <div className={styles.intro}>
-        <h2 className={styles.heading}>Bạn viết tiếng của mình. Họ đọc tiếng của họ.</h2>
+        <h2 className={styles.heading}>{uiText(lang, "auth.rail.heading")}</h2>
         <p className={styles.description}>
-          Mỗi tin nhắn được dịch theo ngữ cảnh của cuộc trò chuyện, nên cách xưng hô
-          và thuật ngữ giữ đúng ý bạn muốn nói.
+          {uiText(lang, "auth.rail.description")}
         </p>
       </div>
     </aside>
   );
 }
+

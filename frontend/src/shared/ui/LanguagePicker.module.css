@@ -26,7 +26,7 @@
   background: var(--surface-card);
   font-family: var(--font-body);
   font-size: var(--fs-body);
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 
@@ -65,8 +65,7 @@
   position: absolute;
   z-index: 20;
   top: calc(100% + var(--s-1));
-  left: 0;
-  right: 0;
+  inset-inline: 0;
   max-height: calc(var(--row-height) * var(--visible-rows) + var(--list-padding) * 2);
   overflow-y: auto;
   padding: var(--list-padding);

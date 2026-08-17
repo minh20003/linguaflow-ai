@@ -20,7 +20,7 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "LinguaFlow",
   description:
-    "Nhắn tin bằng tiếng của bạn, người kia đọc bằng tiếng của họ. Dịch tự động 14 ngôn ngữ.",
+    "Chat in your language, they read in theirs. Real-time translation across 14 languages.",
 };
 
 export default function RootLayout({
@@ -36,6 +36,7 @@ export default function RootLayout({
     // it would otherwise raise is suppressed here rather than worked around.
     <html
       lang="en"
+      dir="ltr"
       className={`${plusJakarta.variable} ${plexMono.variable}`}
       suppressHydrationWarning
     >
@@ -52,6 +53,9 @@ export default function RootLayout({
                   ];
                   if (supportedLanguages.indexOf(interfaceLanguage) !== -1) {
                     document.documentElement.lang = interfaceLanguage;
+                    document.documentElement.dir = interfaceLanguage === 'ar' ? 'rtl' : 'ltr';
+                  } else {
+                    document.documentElement.dir = 'ltr';
                   }
 
                   // Only an explicit choice is written. "system" deliberately

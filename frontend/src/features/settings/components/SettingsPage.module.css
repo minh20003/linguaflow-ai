@@ -17,7 +17,7 @@
   align-items: center;
   gap: var(--s-2);
   padding-block: var(--s-4);
-  border-right: 1px solid var(--rail-border);
+  border-inline-end: 1px solid var(--rail-border);
   background: var(--surface-rail);
   color: var(--ink-on-rail);
 }

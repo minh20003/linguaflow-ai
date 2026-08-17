@@ -11,6 +11,7 @@ import type { LanguageCode } from "@/shared/lib/constants";
 import { formMessage } from "@/shared/lib/form-messages";
 import { mainLabel } from "@/shared/lib/i18n";
 import { uiText } from "@/shared/lib/ui-text";
+import { useDocumentMetadata } from "@/shared/lib/use-ui-text";
 import { useLanguage } from "./LanguageContext";
 import styles from "./AuthForm.module.css";
 
@@ -21,6 +22,7 @@ type FieldErrors = { email?: string; password?: string };
 type FieldErrorState = { lang: LanguageCode; fields: FieldErrors };
 
 export default function LoginForm() {
+  useDocumentMetadata("meta.title.login", "meta.desc.login");
   const router = useRouter();
   /* The rail's choice drives the labels here too, not just the sub-labels —
      otherwise picking 中文 leaves the form in Vietnamese (§1.3). */

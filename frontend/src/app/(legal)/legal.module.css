@@ -41,7 +41,7 @@
   margin-bottom: var(--s-6);
   padding: var(--s-4);
   border: 1px solid var(--rule-strong);
-  border-left: 3px solid var(--accent-warm);
+  border-inline-start: 3px solid var(--accent-warm);
   border-radius: var(--r-2);
   background: var(--surface-label);
   font-size: var(--fs-small);
@@ -66,7 +66,7 @@
 
 .sheet ul {
   margin-top: var(--s-3);
-  padding-left: var(--s-5);
+  padding-inline-start: var(--s-5);
   display: grid;
   gap: var(--s-2);
 }
@@ -82,7 +82,7 @@
 .table td {
   padding: var(--s-3);
   border: 1px solid var(--rule);
-  text-align: left;
+  text-align: start;
   vertical-align: top;
 }
 
