@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { User } from '../types';
+import { User, LanguageCode } from '../types';
+import { interactionText, tx } from '../i18n';
 import { Search, MessageSquare, Phone, Video, Globe, UserPlus } from 'lucide-react';
 
 interface ContactsPanelProps {
@@ -7,6 +8,7 @@ interface ContactsPanelProps {
   onOpenNewChat: () => void;
   users: User[];
   onSearchUsers: (query: string) => void;
+  language: LanguageCode;
 }
 
 export const ContactsPanel: React.FC<ContactsPanelProps> = ({
@@ -14,6 +16,7 @@ export const ContactsPanel: React.FC<ContactsPanelProps> = ({
   onOpenNewChat,
   users,
   onSearchUsers,
+  language,
 }) => {
   const [search, setSearch] = useState('');
   const contacts = users;
@@ -34,7 +37,7 @@ export const ContactsPanel: React.FC<ContactsPanelProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between px-5 pt-5 pb-3">
         <h1 className="text-2xl font-bold text-[#1E2230] dark:text-[#F5F6FA] tracking-tight">
-          Contacts
+          {tx(language, 'Contacts')}
         </h1>
         <button
           onClick={onOpenNewChat}
@@ -52,7 +55,7 @@ export const ContactsPanel: React.FC<ContactsPanelProps> = ({
             type="text"
             value={search}
             onChange={(e) => { setSearch(e.target.value); onSearchUsers(e.target.value); }}
-            placeholder="Search contacts..."
+            placeholder={interactionText(language, 'Search contacts...')}
             className="w-full h-10 pl-9.5 pr-4 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] rounded-xl border border-transparent focus:border-[#2563EB]/30 focus:bg-white dark:focus:bg-[#1C1F27] focus:outline-none"
           />
         </div>

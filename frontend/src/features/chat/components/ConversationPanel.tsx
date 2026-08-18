@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Conversation } from '../types';
+import { Conversation, LanguageCode } from '../types';
+import { t } from '../i18n';
 import { ConversationItem } from './ConversationItem';
 import {
   Search,
@@ -17,6 +18,7 @@ interface ConversationPanelProps {
   onSelectConversation: (conversation: Conversation) => void;
   onOpenNewChat: () => void;
   onMarkAllAsRead: () => void;
+  language: LanguageCode;
 }
 
 type FilterType = 'all' | 'unread' | 'groups';
@@ -27,6 +29,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   onSelectConversation,
   onOpenNewChat,
   onMarkAllAsRead,
+  language,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
@@ -65,11 +68,11 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
       <div className="flex items-center justify-between px-5 pt-5 pb-3">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold text-[#1E2230] dark:text-[#F5F6FA] tracking-tight">
-            Chats
+            {t(language, 'chats')}
           </h1>
           {totalUnreadCount > 0 && (
             <span className="px-2 py-0.5 text-xs font-bold text-[#2563EB] bg-[#EFF6FF] dark:bg-[#2563EB]/20 rounded-full">
-              {totalUnreadCount} new
+              {totalUnreadCount} {t(language, 'new')}
             </span>
           )}
         </div>
@@ -97,14 +100,14 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#1E2230] dark:text-[#E2E5F0] rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left transition-colors"
               >
                 <CheckCheck className="w-4 h-4 text-[#2563EB]" />
-                <span>Mark all as read</span>
+                <span>{t(language, 'markRead')}</span>
               </button>
               <button
                 onClick={() => setMenuOpen(false)}
                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#1E2230] dark:text-[#E2E5F0] rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left transition-colors"
               >
                 <BellOff className="w-4 h-4 text-[#74798C]" />
-                <span>Mute notifications</span>
+                <span>{t(language, 'mute')}</span>
               </button>
             </div>
           )}
@@ -130,7 +133,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search conversations..."
+            placeholder={t(language, 'search')}
             className="w-full h-10 pl-9.5 pr-8 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] dark:placeholder-[#74798C] rounded-xl border border-transparent focus:border-[#2563EB]/30 focus:bg-white dark:focus:bg-[#1C1F27] focus:outline-none transition-all"
           />
           {searchQuery && (
@@ -156,7 +159,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               : 'text-[#74798C] dark:text-[#9DA3B4] hover:bg-[#F7F8FC] dark:hover:bg-[#232630]'
           }`}
         >
-          All
+          {t(language, 'all')}
         </button>
 
         <button
@@ -168,7 +171,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               : 'text-[#74798C] dark:text-[#9DA3B4] hover:bg-[#F7F8FC] dark:hover:bg-[#232630]'
           }`}
         >
-          <span>Unread</span>
+          <span>{t(language, 'unread')}</span>
           {totalUnreadCount > 0 && (
             <span className="w-2 h-2 rounded-full bg-[#2563EB]" />
           )}
@@ -183,7 +186,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
               : 'text-[#74798C] dark:text-[#9DA3B4] hover:bg-[#F7F8FC] dark:hover:bg-[#232630]'
           }`}
         >
-          Groups
+          {t(language, 'groups')}
         </button>
       </div>
 
@@ -201,10 +204,10 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
         ) : (
           <div className="flex flex-col items-center justify-center h-48 px-4 text-center">
             <p className="text-sm font-medium text-[#74798C] dark:text-[#9DA3B4]">
-              No conversations found
+              {t(language, 'noChats')}
             </p>
             <p className="text-xs text-[#9DA3B4] dark:text-[#74798C] mt-1">
-              Try adjusting your search or filter
+              {t(language, 'adjustSearch')}
             </p>
           </div>
         )}

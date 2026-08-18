@@ -536,6 +536,7 @@ class ChatService:
         text: str,
         attachment_id: str | None = None,
         reply_to_message_id: str | None = None,
+        forwarded_from_message_id: str | None = None,
     ) -> SendMessageResult:
         """Persist an authorized original message before any transport fan-out.
 
@@ -587,6 +588,10 @@ class ChatService:
             reply_to_message_id=await self._resolve_reply_target(
                 conversation_id=conversation_id,
                 reply_to_message_id=reply_to_message_id,
+            ),
+            forwarded_from_message_id=await self._resolve_forward_target(
+                sender_id=sender_id,
+                forwarded_from_message_id=forwarded_from_message_id,
             ),
         )
         self._db.add(message)
@@ -732,6 +737,26 @@ class ChatService:
             select(Message.conversation_id).where(Message.id == reply_to_message_id)
         )
         return reply_to_message_id if parent_conversation == conversation_id else None
+
+    async def _resolve_forward_target(
+        self,
+        *,
+        sender_id: str,
+        forwarded_from_message_id: str | None,
+    ) -> str | None:
+        """Keep a forward link only for a message the sender may read."""
+        if forwarded_from_message_id is None:
+            return None
+        permitted = await self._db.scalar(
+            select(Message.id)
+            .join(ConversationMember, ConversationMember.conversation_id == Message.conversation_id)
+            .where(
+                Message.id == forwarded_from_message_id,
+                Message.deleted_at.is_(None),
+                ConversationMember.user_id == sender_id,
+            )
+        )
+        return forwarded_from_message_id if permitted else None
 
     async def _claim_attachment(
         self,

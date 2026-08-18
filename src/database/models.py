@@ -230,6 +230,11 @@ class Message(Base):
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # A forward is a new message (and is translated for its new recipients),
+    # while this link lets clients label its provenance.
+    forwarded_from_message_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
     edited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

@@ -4,10 +4,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation";
 import { WifiOff } from "lucide-react";
 import { clearSession, getAccessToken, getRefreshToken } from "@/features/auth/lib/session";
-import { signOut } from "@/features/auth/api/auth-api";
+import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/features/auth/api/auth-api";
 import type { AppSettings, Conversation, Message, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
-import { createConversation, deleteMessage, getMe, getMessages, listConversations, listUsers, markRead, toChatUser, toConversation, toLanguageCode, toMessage, toMessages, uploadAttachment, type ApiMessage } from "../api/chat-api";
+import { createConversation, deleteMessage, getMe, getMessages, listConversations, listUsers, markRead, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessages, uploadAttachment, type ApiMessage } from "../api/chat-api";
 import { newClientMessageId, socketUrl } from "../api/chat-socket";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -19,6 +19,7 @@ import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
 import { CallModal } from "./CallModal";
 import { ToastContainer } from "./ToastContainer";
+import { ForwardMessageModal } from "./ForwardMessageModal";
 
 const EMPTY_USER: User = { id: "", email: "", name: "", username: "", avatar: "", nativeLanguage: "en", onlineStatus: "offline" };
 
@@ -46,6 +47,7 @@ export const AppShell: React.FC = () => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [callState, setCallState] = useState<{ isOpen: boolean; type: "voice" | "video" }>({ isOpen: false, type: "voice" });
+  const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
 
   const addToast = useCallback((title: string, message?: string, type: ToastItem["type"] = "info") => {
     const id = `toast_${Date.now()}`;
@@ -100,7 +102,7 @@ export const AppShell: React.FC = () => {
       const contacts = conversationUsers(list).filter((contact) => contact.id !== user.id);
       setCurrentUser(user);
       setUsers(contacts);
-      setSettings((value) => ({ ...value, preferredLanguage: user.nativeLanguage }));
+      setSettings((value) => ({ ...value, preferredLanguage: user.nativeLanguage, interfaceLanguage: toLanguageCode(profile.interface_language) }));
       setConversations(list.map((item) => toConversation(item, user.id)));
       if (list[0]) {
         const members = new Map([user, ...contacts].map((contact) => [contact.id, contact]));
@@ -127,7 +129,7 @@ export const AppShell: React.FC = () => {
         if (eventType === "message_created" || eventType === "message_received") {
           const realtime = payload.message as Record<string, unknown>;
           const clientMessageId = payload.client_message_id as string | undefined;
-          const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null };
+          const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null, forwarded_from_message_id: realtime.forwarded_from_message_id as string | null };
           const mapped = toMessage(message, usersById, settings.preferredLanguage);
           setMessagesMap((previous) => {
             const messages = previous[mapped.conversationId] ?? [];
@@ -158,7 +160,7 @@ export const AppShell: React.FC = () => {
           const translatedText = String(payload.translated_text ?? payload.content ?? "");
           const sourceLanguage = toLanguageCode(String(payload.source_language || "en"));
           const status = payload.status === "failed" || !translatedText ? "failed" : "success";
-          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, translation: { originalText: item.content, originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status } } : item)])));
+          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, translation: { translationId: String(payload.translation_id), originalText: item.content, originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status } } : item)])));
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
         if (eventType === "message_updated" || eventType === "message_deleted") {
@@ -174,6 +176,7 @@ export const AppShell: React.FC = () => {
   }, [addToast, currentUser.id, refreshConversations, settings.preferredLanguage, usersById]);
 
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
+  useEffect(() => { document.documentElement.lang = settings.interfaceLanguage; }, [settings.interfaceLanguage]);
 
   const selectConversation = async (conversation: Conversation) => {
     setSelectedConversationId(conversation.id); setMobileView("chat");
@@ -183,13 +186,13 @@ export const AppShell: React.FC = () => {
     } catch (error) { addToast("Could not load messages", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
-  const send = (text: string, replyToMessageId?: string, attachmentId?: string) => {
-    if (!selectedConversationId || socket.current?.readyState !== WebSocket.OPEN) { addToast("Reconnecting", "Your message will send when realtime reconnects.", "warning"); return; }
+  const send = (text: string, replyToMessageId?: string, attachmentId?: string, forwardedFromMessageId?: string, destinationConversationId = selectedConversationId) => {
+    if (!destinationConversationId || socket.current?.readyState !== WebSocket.OPEN) { addToast("Reconnecting", "Your message will send when realtime reconnects.", "warning"); return; }
     const clientMessageId = newClientMessageId();
     const repliedMessage = replyToMessageId ? currentMessages.find((message) => message.id === replyToMessageId) : undefined;
-    const optimistic: Message = { id: clientMessageId, senderId: currentUser.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, conversationId: selectedConversationId, content: text, timestamp: "Now", status: "sending", replyTo: repliedMessage ? { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content } : undefined };
-    setMessagesMap((previous) => ({ ...previous, [selectedConversationId]: [...(previous[selectedConversationId] ?? []), optimistic] }));
-    socket.current.send(JSON.stringify({ type: "send_message", client_message_id: clientMessageId, conversation_id: selectedConversationId, text, reply_to_message_id: replyToMessageId, attachment_id: attachmentId }));
+    const optimistic: Message = { id: clientMessageId, senderId: currentUser.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, conversationId: destinationConversationId, content: text, timestamp: "Now", status: "sending", forwardedFromMessageId, replyTo: repliedMessage ? { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content } : undefined };
+    setMessagesMap((previous) => ({ ...previous, [destinationConversationId]: [...(previous[destinationConversationId] ?? []), optimistic] }));
+    socket.current.send(JSON.stringify({ type: "send_message", client_message_id: clientMessageId, conversation_id: destinationConversationId, text, reply_to_message_id: replyToMessageId, attachment_id: attachmentId, forwarded_from_message_id: forwardedFromMessageId }));
   };
 
   const startConversation = async (user: User) => {
@@ -221,6 +224,86 @@ export const AppShell: React.FC = () => {
     try { setUsers((await listUsers(token.current, query.trim())).map(toChatUser)); }
     catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
   };
+
+  const rateTranslation = async (messageId: string, translationId: string, rating: 1 | 5) => {
+    if (!token.current) return;
+    try {
+      await submitTranslationFeedback(token.current, translationId, rating);
+      setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [
+        conversationId,
+        messages.map((message) => message.id === messageId && message.translation
+          ? { ...message, translation: { ...message.translation, rating } }
+          : message),
+      ])));
+      addToast("Translation feedback saved", rating === 5 ? "Marked helpful." : "Marked unhelpful.", "success");
+    } catch (error) {
+      addToast("Could not save feedback", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const editTranslation = async (messageId: string, translationId: string, editedText: string) => {
+    if (!token.current) return;
+    try {
+      const result = await submitTranslationEdit(token.current, translationId, editedText);
+      setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [
+        conversationId,
+        messages.map((message) => message.id === messageId && message.translation
+          ? { ...message, translation: { ...message.translation, editedText: result.edited_text } }
+          : message),
+      ])));
+      addToast("Translation suggestion saved", "Your correction is private to your account.", "success");
+    } catch (error) {
+      addToast("Could not save suggestion", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
+    const requestedInterfaceLanguage = value.interfaceLanguage;
+    if (requestedInterfaceLanguage && requestedInterfaceLanguage !== settings.interfaceLanguage && token.current) {
+      void updateInterfaceLanguage(token.current, requestedInterfaceLanguage)
+        .then(() => setSettings((previous) => ({ ...previous, interfaceLanguage: requestedInterfaceLanguage })))
+        .catch((error: unknown) => addToast("Could not save interface language", error instanceof Error ? error.message : undefined, "warning"));
+    }
+    const requestedLanguage = value.preferredLanguage;
+    if (!requestedLanguage || requestedLanguage === settings.preferredLanguage) {
+      setSettings((previous) => ({ ...previous, ...value }));
+      return;
+    }
+    if (!token.current) {
+      addToast("Could not save language", "Please sign in again.", "warning");
+      return;
+    }
+
+    // The reading language is a server-side preference: it determines which
+    // translation jobs the backend creates. Do not update local state first,
+    // otherwise a failed request leaves the UI claiming a language the API does
+    // not know about.
+    void updatePreferredLanguage(token.current, requestedLanguage)
+      .then(async (profile) => {
+        const preferredLanguage = toLanguageCode(profile.preferred_language);
+        // Product policy: the language chosen for reading messages is also the
+        // language of every system label. Persist both preferences together.
+        await updateInterfaceLanguage(token.current!, preferredLanguage);
+        setCurrentUser((previous) => ({ ...previous, nativeLanguage: preferredLanguage }));
+        setSettings((previous) => ({ ...previous, ...value, preferredLanguage, interfaceLanguage: preferredLanguage }));
+
+        // Existing results are returned in the reader's persisted language.
+        // Reload the active history so any translation already stored for this
+        // language becomes visible immediately.
+        if (selectedConversationId && token.current) {
+          const history = await getMessages(token.current, selectedConversationId);
+          setMessagesMap((previous) => ({
+            ...previous,
+            [selectedConversationId]: toMessages(history, usersById, preferredLanguage),
+          }));
+        }
+        addToast("Language updated", "New messages will be translated in your selected language.", "success");
+      })
+      .catch((error: unknown) => {
+        addToast("Could not save language", error instanceof Error ? error.message : undefined, "warning");
+      });
+  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, usersById]);
+
   const unreadChatsCount = conversations.reduce((total, item) => total + item.unreadCount, 0);
   if (!currentUser.id) return <div className="h-screen bg-[#F7F8FC]" />;
 
@@ -228,15 +311,16 @@ export const AppShell: React.FC = () => {
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
     <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => tab === "settings" ? setIsSettingsOpen(true) : setActiveTab(tab)} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} /></div>
     <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
-      {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} />}
-      {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} />}
-      {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} />}
+      {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} language={settings.preferredLanguage} />}
+      {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.preferredLanguage} />}
+      {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.preferredLanguage} />}
     </div>
-    <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}><ChatView conversation={selectedConversation} messages={currentMessages} currentUser={currentUser} onBack={() => setMobileView("list")} onSendMessage={send} onSendAttachment={attach} onTyping={(isTyping) => selectedConversationId && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "typing", conversation_id: selectedConversationId, is_typing: isTyping }))} onReact={() => addToast("Not available", "Reactions are not supported by the backend yet.", "info")} onCopy={(text) => void navigator.clipboard.writeText(text)} onToggleOriginal={(id) => setMessagesMap((items) => ({ ...items, [selectedConversationId!]: (items[selectedConversationId!] ?? []).map((message) => message.id === id && message.translation ? { ...message, translation: { ...message.translation, showOriginal: !message.translation.showOriginal } } : message) }))} onRetryTranslation={() => addToast("Translation", "Translations are generated automatically by the backend.", "info")} onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))} onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")} onOpenNewChat={() => setIsNewChatOpen(true)} onStartCall={(type) => setCallState({ isOpen: true, type })} /></div>
-    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} />
-    <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} />
-    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={(value) => setSettings((previous) => ({ ...previous, ...value }))} currentUser={currentUser} onUpdateUser={(value) => setCurrentUser((previous) => ({ ...previous, ...value }))} />
+    <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}><ChatView conversation={selectedConversation} messages={currentMessages} currentUser={currentUser} onBack={() => setMobileView("list")} onSendMessage={send} onSendAttachment={attach} onTyping={(isTyping) => selectedConversationId && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "typing", conversation_id: selectedConversationId, is_typing: isTyping }))} onReact={() => addToast("Not available", "Reactions are not supported by the backend yet.", "info")} onCopy={(text) => void navigator.clipboard.writeText(text)} onToggleOriginal={(id) => setMessagesMap((items) => ({ ...items, [selectedConversationId!]: (items[selectedConversationId!] ?? []).map((message) => message.id === id && message.translation ? { ...message, translation: { ...message.translation, showOriginal: !message.translation.showOriginal } } : message) }))} onRetryTranslation={() => addToast("Translation", "Translations are generated automatically by the backend.", "info")} onRateTranslation={rateTranslation} onEditTranslation={editTranslation} onForward={setForwardingMessage} onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))} onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")} onOpenNewChat={() => setIsNewChatOpen(true)} onStartCall={(type) => setCallState({ isOpen: true, type })} language={settings.preferredLanguage} /></div>
+    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
+    <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
+    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => setCurrentUser((previous) => ({ ...previous, ...value }))} />
     {selectedConversation && <CallModal isOpen={callState.isOpen} type={callState.type} conversation={selectedConversation} onEndCall={() => setCallState({ isOpen: false, type: "voice" })} />}
     <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
+    <ForwardMessageModal message={forwardingMessage} conversations={conversations} onClose={() => setForwardingMessage(null)} onStartNewChat={() => { setForwardingMessage(null); setIsNewChatOpen(true); }} onSelect={(target) => { if (!forwardingMessage) return; send(forwardingMessage.content, undefined, undefined, forwardingMessage.id, target.id); setForwardingMessage(null); addToast("Message forwarded", `Sent to ${target.name}.`, "success"); }} language={settings.preferredLanguage} />
   </div>;
 };

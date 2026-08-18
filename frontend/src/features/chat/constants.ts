@@ -15,6 +15,7 @@ export const CHAT_LANGUAGES: LanguageOption[] = [
 
 export const DEFAULT_CHAT_SETTINGS: AppSettings = {
   preferredLanguage: "en",
+  interfaceLanguage: "en",
   autoTranslate: true,
   showOriginalByDefault: false,
   translationTone: "natural",

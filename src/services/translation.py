@@ -217,7 +217,7 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        recipients_by_language = await _recipients_by_language(
+        conversation_type, recipients_by_language = await _recipients_by_language(
             session, snapshot["conversation_id"], snapshot["sender_id"]
         )
 
@@ -249,7 +249,7 @@ async def _recipients_by_language(
     session: AsyncSession,
     conversation_id: str,
     sender_id: str,
-) -> dict[str, list[str]]:
+) -> tuple[str | None, dict[str, list[str]]]:
     """Group message recipients, excluding the sender, by reading language.
 
     The sender's bubble always shows the original text. Excluding them here
@@ -259,6 +259,7 @@ async def _recipients_by_language(
     rows = await session.execute(
         select(ConversationMember.user_id, User.preferred_language, Conversation.type)
         .join(User, User.id == ConversationMember.user_id)
+        .join(Conversation, Conversation.id == ConversationMember.conversation_id)
         .where(
             ConversationMember.conversation_id == conversation_id,
             ConversationMember.user_id != sender_id,

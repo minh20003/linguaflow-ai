@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { User, Conversation } from '../types';
+import { User, LanguageCode } from '../types';
+import { interactionText } from '../i18n';
 import { X, Search, Check, Users, ArrowRight, ArrowLeft, Globe } from 'lucide-react';
 
 interface CreateGroupModalProps {
@@ -8,6 +9,7 @@ interface CreateGroupModalProps {
   onCreateGroup: (name: string, memberIds: string[]) => void;
   users: User[];
   onSearchUsers: (query: string) => void;
+  language: LanguageCode;
 }
 
 export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
@@ -16,6 +18,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   onCreateGroup,
   users,
   onSearchUsers,
+  language,
 }) => {
   const [step, setStep] = useState<1 | 2>(1);
   const [search, setSearch] = useState('');
@@ -69,7 +72,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               </button>
             )}
             <h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-              {step === 1 ? 'Select Group Members' : 'Group Details'}
+              {interactionText(language, step === 1 ? 'Select Group Members' : 'Group Details')}
             </h3>
           </div>
           <button
@@ -121,7 +124,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                   type="text"
                   value={search}
                   onChange={(e) => { setSearch(e.target.value); onSearchUsers(e.target.value); }}
-                  placeholder="Search people to add..."
+                  placeholder={interactionText(language, 'Search people to add...')}
                   className="w-full h-10 pl-10 pr-4 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] rounded-xl border border-transparent focus:border-[#2563EB]/40 focus:outline-none"
                 />
               </div>
@@ -198,12 +201,12 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
               <div className="flex items-center justify-center w-20 h-20 rounded-full bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB] ring-4 ring-[#EFF6FF] dark:ring-[#2563EB]/20">
                 <Users className="w-8 h-8" />
               </div>
-              <p className="text-xs text-[#74798C]">Group icon</p>
+              <p className="text-xs text-[#74798C]">{interactionText(language, 'Group icon')}</p>
             </div>
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                Group Name *
+                {interactionText(language, 'Group Name')} *
               </label>
               <input
                 type="text"
@@ -216,13 +219,13 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                Description (Optional)
+                {interactionText(language, 'Description (Optional)')}
               </label>
               <textarea
                 rows={2}
                 value={groupDesc}
                 onChange={(e) => setGroupDesc(e.target.value)}
-                placeholder="What is this group for?"
+                placeholder={interactionText(language, 'What is this group for?')}
                 className="w-full p-3 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] rounded-xl border border-transparent focus:border-[#2563EB]/40 focus:outline-none resize-none"
               />
             </div>
@@ -240,7 +243,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                   : 'bg-[#F4F5F8] dark:bg-[#232630] text-[#8A8F9E] cursor-not-allowed opacity-60'
               }`}
             >
-              Create Group
+              {interactionText(language, 'Create Group')}
             </button>
           </div>
         )}

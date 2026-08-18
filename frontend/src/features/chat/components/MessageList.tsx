@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { Message, User, Conversation } from '../types';
+import { Message, User, Conversation, LanguageCode } from '../types';
+import { interactionText } from '../i18n';
 import { MessageBubble } from './MessageBubble';
 
 interface MessageListProps {
@@ -11,7 +12,11 @@ interface MessageListProps {
   onCopy: (text: string) => void;
   onToggleOriginal: (messageId: string) => void;
   onRetryTranslation: (messageId: string) => void;
+  onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
+  onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
+  onForward: (message: Message) => void;
   onDeleteMessage?: (messageId: string) => void;
+  language: LanguageCode;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -23,7 +28,11 @@ export const MessageList: React.FC<MessageListProps> = ({
   onCopy,
   onToggleOriginal,
   onRetryTranslation,
+  onRateTranslation,
+  onEditTranslation,
+  onForward,
   onDeleteMessage,
+  language,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const isGroup = conversation.type === 'group';
@@ -42,7 +51,7 @@ export const MessageList: React.FC<MessageListProps> = ({
       {/* Encryption & Security Greeting Banner */}
       <div className="flex justify-center my-3">
         <div className="px-3.5 py-1.5 rounded-full text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4] bg-[#F4F5F8] dark:bg-[#232630] border border-[#E8EAF0] dark:border-[#2A2E3D] text-center max-w-md">
-          ✨ Messages are translated in real-time. Speak your native language freely.
+          ✨ {interactionText(language, 'Messages are translated in real-time. Speak your native language freely.')}
         </div>
       </div>
 
@@ -87,7 +96,11 @@ export const MessageList: React.FC<MessageListProps> = ({
               onCopy={onCopy}
               onToggleOriginal={onToggleOriginal}
               onRetryTranslation={onRetryTranslation}
+              onRateTranslation={onRateTranslation}
+              onEditTranslation={onEditTranslation}
+              onForward={onForward}
               onDeleteMessage={onDeleteMessage}
+              language={language}
             />
           </React.Fragment>
         );

@@ -18,10 +18,14 @@ interface ChatViewProps {
   onCopy: (text: string) => void;
   onToggleOriginal: (messageId: string) => void;
   onRetryTranslation: (messageId: string) => void;
+  onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
+  onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
+  onForward: (message: Message) => void;
   onDeleteMessage?: (messageId: string) => void;
   onToggleMute: (conversationId: string) => void;
   onOpenNewChat: () => void;
   onStartCall: (type: 'voice' | 'video') => void;
+  language: User['nativeLanguage'];
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -36,10 +40,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onCopy,
   onToggleOriginal,
   onRetryTranslation,
+  onRateTranslation,
+  onEditTranslation,
+  onForward,
   onDeleteMessage,
   onToggleMute,
   onOpenNewChat,
   onStartCall,
+  language,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
@@ -98,6 +106,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           isDetailsOpen={isDetailsOpen}
           onStartCall={onStartCall}
           onSearchInChat={() => {}}
+          language={language}
         />
 
         {/* Full-width Messages Container */}
@@ -110,7 +119,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onCopy={onCopy}
           onToggleOriginal={onToggleOriginal}
           onRetryTranslation={onRetryTranslation}
+          onRateTranslation={onRateTranslation}
+          onEditTranslation={onEditTranslation}
+          onForward={onForward}
           onDeleteMessage={onDeleteMessage}
+          language={language}
         />
 
         {/* Full-width Composer */}
@@ -121,6 +134,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onCancelReply={() => setReplyTo(null)}
           onSendAttachment={onSendAttachment}
           onTyping={onTyping}
+          language={language}
         />
       </main>
 
@@ -130,6 +144,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         onToggleMute={onToggleMute}
+        language={language}
       />
     </div>
   );

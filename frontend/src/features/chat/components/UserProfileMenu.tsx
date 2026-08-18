@@ -1,6 +1,12 @@
 import React, { useRef, useEffect } from 'react';
 import { User, AppSettings } from '../types';
 import { LogOut, Settings, User as UserIcon, Globe, Shield, Sparkles, Moon, Sun } from 'lucide-react';
+import { tx } from '../i18n';
+
+const LANGUAGE_LABELS: Record<User['nativeLanguage'], string> = {
+  en: 'English (US)', vi: 'Tiếng Việt', ja: '日本語', ko: '한국어', zh: '中文',
+  es: 'Español', fr: 'Français', de: 'Deutsch', th: 'ไทย', id: 'Bahasa Indonesia',
+};
 
 interface UserProfileMenuProps {
   user: User;
@@ -68,7 +74,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
           <div className="flex items-center gap-1.5 mt-1">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-[#2563EB]/10 text-[#2563EB] dark:bg-[#2563EB]/20">
               <Globe className="w-2.5 h-2.5" />
-              English (US)
+              {LANGUAGE_LABELS[settings.preferredLanguage]}
             </span>
           </div>
         </div>
@@ -85,7 +91,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors text-left"
         >
           <UserIcon className="w-4 h-4 text-[#74798C]" />
-          <span>My Profile</span>
+          <span>{tx(settings.preferredLanguage, 'My Profile')}</span>
         </button>
 
         <button
@@ -99,10 +105,10 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
             ) : (
               <Moon className="w-4 h-4 text-[#74798C]" />
             )}
-            <span>Appearance</span>
+            <span>{tx(settings.preferredLanguage, 'Appearance')}</span>
           </div>
           <span className="text-[11px] text-[#74798C] uppercase font-medium">
-            {settings.theme === 'dark' ? 'Dark' : 'Light'}
+            {tx(settings.preferredLanguage, settings.theme === 'dark' ? 'Dark' : 'Light')}
           </span>
         </button>
 
@@ -115,7 +121,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors text-left"
         >
           <Settings className="w-4 h-4 text-[#74798C]" />
-          <span>Language & Settings</span>
+          <span>{tx(settings.preferredLanguage, 'Language & Settings')}</span>
         </button>
       </div>
 
@@ -128,7 +134,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
         className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-60 disabled:cursor-wait transition-colors text-left"
       >
         <LogOut className="w-4 h-4" />
-        <span>{isLoggingOut ? 'Logging out…' : 'Log out'}</span>
+        <span>{tx(settings.preferredLanguage, isLoggingOut ? 'Logging out…' : 'Log out')}</span>
       </button>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppSettings, User, LanguageCode } from '../types';
 import { CHAT_LANGUAGES } from '../constants';
+import { settingText, t } from '../i18n';
 import {
   X,
   Languages,
@@ -26,6 +27,8 @@ interface SettingsModalProps {
 
 type SettingsSection = 'language' | 'profile' | 'notifications' | 'privacy' | 'ai';
 
+const copy = settingText;
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -34,6 +37,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentUser,
   onUpdateUser,
 }) => {
+  const language = settings.preferredLanguage;
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
@@ -41,12 +45,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   if (!isOpen) return null;
 
   const sections = [
-    { id: 'language' as SettingsSection, label: 'Language & Translation', icon: Languages },
-    { id: 'profile' as SettingsSection, label: 'Profile', icon: UserIcon },
+    { id: 'language' as SettingsSection, label: t(language, 'language'), icon: Languages },
+    { id: 'profile' as SettingsSection, label: t(language, 'profile'), icon: UserIcon },
 
-    { id: 'notifications' as SettingsSection, label: 'Notifications', icon: Bell },
-    { id: 'privacy' as SettingsSection, label: 'Privacy & Security', icon: Shield },
-    { id: 'ai' as SettingsSection, label: 'AI & Smart Tools', icon: Sparkles },
+    { id: 'notifications' as SettingsSection, label: t(language, 'notifications'), icon: Bell },
+    { id: 'privacy' as SettingsSection, label: t(language, 'privacy'), icon: Shield },
+    { id: 'ai' as SettingsSection, label: t(language, 'aiTools'), icon: Sparkles },
   ];
 
   const handleSaveProfile = () => {
@@ -67,7 +71,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div>
             <div className="flex items-center gap-2 px-3 py-2 mb-2">
               <h3 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                Settings
+                {t(language, 'settings')}
               </h3>
             </div>
 
@@ -117,7 +121,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Preferred Language */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                    Preferred Language
+                    {copy(language, 'Preferred Language')}
                   </label>
                   <select
                     id="settings-language-select"
@@ -134,7 +138,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ))}
                   </select>
                   <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] pt-0.5">
-                    Messages in other languages will automatically appear in your preferred language.
+                    {copy(language, 'Messages in other languages will automatically appear in your preferred language.')}
                   </p>
                 </div>
 
@@ -142,10 +146,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      Automatic Translation
+                      {copy(language, 'Automatic Translation')}
                     </h5>
                     <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">
-                      Translate foreign incoming messages instantly
+                      {copy(language, 'Translate foreign incoming messages instantly')}
                     </p>
                   </div>
                   <button
@@ -168,10 +172,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      Show Original by Default
+                      {copy(language, 'Show Original by Default')}
                     </h5>
                     <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">
-                      Always show the untranslated text alongside translations
+                      {copy(language, 'Always show the untranslated text alongside translations')}
                     </p>
                   </div>
                   <button
@@ -195,7 +199,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Translation Tone */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                    Translation Tone
+                    {copy(language, 'Translation Tone')}
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     {(['natural', 'formal', 'friendly'] as const).map((tone) => (
@@ -208,7 +212,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             : 'border-[#E8EAF0] dark:border-[#2A2E3D] text-[#74798C] hover:bg-[#F7F8FC]'
                         }`}
                       >
-                        {tone}
+                        {copy(language, tone)}
                       </button>
                     ))}
                   </div>
@@ -236,7 +240,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                    Display Name
+                    {copy(language, 'Display Name')}
                   </label>
                   <input
                     type="text"
@@ -248,7 +252,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                    Bio
+                    {copy(language, 'Bio')}
                   </label>
                   <textarea
                     rows={2}
@@ -262,7 +266,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onClick={handleSaveProfile}
                   className="px-4 py-2 bg-[#2563EB] text-white text-xs font-semibold rounded-xl hover:bg-[#1D4ED8] shadow-sm transition-all"
                 >
-                  Save Profile Changes
+                  {copy(language, 'Save Profile Changes')}
                 </button>
               </div>
             )}
@@ -273,9 +277,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      Sound Notifications
+                      {copy(language, 'Sound Notifications')}
                     </h5>
-                    <p className="text-xs text-[#74798C]">Play audio chime on incoming messages</p>
+                    <p className="text-xs text-[#74798C]">{copy(language, 'Play audio chime on incoming messages')}</p>
                   </div>
                   <button
                     onClick={() =>
@@ -301,9 +305,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      Read Receipts
+                      {copy(language, 'Read Receipts')}
                     </h5>
-                    <p className="text-xs text-[#74798C]">Let contacts see when you read their messages</p>
+                    <p className="text-xs text-[#74798C]">{copy(language, 'Let contacts see when you read their messages')}</p>
                   </div>
                   <button
                     onClick={() =>
@@ -329,9 +333,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      AI Smart Assistance
+                      {copy(language, 'AI Smart Assistance')}
                     </h5>
-                    <p className="text-xs text-[#74798C]">Enable quick rewrites, tone polish & auto grammar</p>
+                    <p className="text-xs text-[#74798C]">{copy(language, 'Enable quick rewrites, tone polish & auto grammar')}</p>
                   </div>
                   <button
                     onClick={() =>

@@ -31,12 +31,16 @@ export interface User {
 }
 
 export interface TranslationData {
+  translationId: string;
   originalText: string;
   originalLanguage: LanguageCode;
   translatedText: string;
   targetLanguage: LanguageCode;
   status: 'idle' | 'pending' | 'success' | 'failed';
   showOriginal?: boolean;
+  rating?: 1 | 5;
+  correction?: string;
+  editedText?: string;
 }
 
 export interface MessageReaction {
@@ -70,6 +74,7 @@ export interface Message {
   timestamp: string;
   status: 'sending' | 'sent' | 'delivered' | 'read';
   replyTo?: MessageReply;
+  forwardedFromMessageId?: string;
   reactions?: MessageReaction[];
   attachments?: MessageAttachment[];
   dateDivider?: string;
@@ -96,6 +101,7 @@ export interface Conversation {
 
 export interface AppSettings {
   preferredLanguage: LanguageCode;
+  interfaceLanguage: LanguageCode;
   autoTranslate: boolean;
   showOriginalByDefault: boolean;
   translationTone: 'natural' | 'formal' | 'casual' | 'friendly';

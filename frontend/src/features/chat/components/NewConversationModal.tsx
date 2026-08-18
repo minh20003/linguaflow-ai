@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { User } from '../types';
+import { User, LanguageCode } from '../types';
+import { tx } from '../i18n';
 import { Search, X, MessageSquare, Users, Globe, Plus } from 'lucide-react';
 
 interface NewConversationModalProps {
@@ -9,6 +10,7 @@ interface NewConversationModalProps {
   onCreateGroupClick: () => void;
   users: User[];
   onSearchUsers: (query: string) => void;
+  language: LanguageCode;
 }
 
 export const NewConversationModal: React.FC<NewConversationModalProps> = ({
@@ -18,6 +20,7 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
   onCreateGroupClick,
   users,
   onSearchUsers,
+  language,
 }) => {
   const [search, setSearch] = useState('');
 
@@ -42,7 +45,7 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E8EAF0] dark:border-[#2A2E3D]">
           <h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-            New Conversation
+            {tx(language, 'New Conversation')}
           </h3>
           <button
             onClick={onClose}
@@ -79,7 +82,7 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
               <Users className="w-4 h-4" />
             </div>
             <div>
-              <p className="font-bold">Create a New Group</p>
+              <p className="font-bold">{tx(language, 'Create a New Group')}</p>
               <p className="text-[11px] font-normal text-[#2563EB]/80">
                 Chat with up to 250 international peers
               </p>
@@ -90,7 +93,7 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
         {/* Users List */}
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
           <p className="text-[11px] font-bold uppercase tracking-wider text-[#74798C] px-2 mb-1">
-            Suggested Contacts
+            {tx(language, 'Suggested Contacts')}
           </p>
 
           {filteredUsers.map((user) => (

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Conversation, User } from '../types';
+import { tx } from '../i18n';
 import {
   Search,
   Phone,
@@ -18,6 +19,7 @@ interface ChatHeaderProps {
   isDetailsOpen: boolean;
   onStartCall: (type: 'voice' | 'video') => void;
   onSearchInChat: () => void;
+  language: User['nativeLanguage'];
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -27,6 +29,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   isDetailsOpen,
   onStartCall,
   onSearchInChat,
+  language,
 }) => {
   const isGroup = conversation.type === 'group';
 
@@ -83,17 +86,17 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
           <div className="flex items-center gap-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
             {isGroup ? (
-              <span>{conversation.memberCount || 8} members</span>
+              <span>{conversation.memberCount || 8} {tx(language, 'Members').toLowerCase()}</span>
             ) : conversation.isTyping ? (
               <span className="text-[#2563EB] font-medium animate-pulse">
                 typing...
               </span>
             ) : conversation.isOnline ? (
               <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                Online
+                {tx(language, 'Online')}
               </span>
             ) : (
-              <span>Last seen {conversation.recipient?.lastSeen || 'recently'}</span>
+              <span>{conversation.recipient?.lastSeen || tx(language, 'Last seen recently')}</span>
             )}
           </div>
         </div>

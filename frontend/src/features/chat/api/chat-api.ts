@@ -26,6 +26,9 @@ interface ApiTranslation {
   translation_id: string;
   target_language: string;
   translated_text: string;
+  my_rating?: number | null;
+  my_correction?: string | null;
+  my_edit?: { edited_text: string } | null;
 }
 
 export interface ApiMessage {
@@ -39,6 +42,7 @@ export interface ApiMessage {
   created_at: string;
   deleted_at: string | null;
   reply_to_message_id: string | null;
+  forwarded_from_message_id?: string | null;
   attachment?: { id: string; filename: string; content_type: string; size: number; download_url: string } | null;
 }
 
@@ -103,15 +107,20 @@ export function toMessage(item: ApiMessage, users: Map<string, User>, preferredL
     conversationId: item.conversation_id,
     content: item.deleted_at ? "This message was deleted" : item.original_text,
     translation: translation ? {
+      translationId: translation.translation_id,
       originalText: item.original_text,
       originalLanguage: toLanguageCode(item.source_language),
       translatedText: translation.translated_text,
       targetLanguage: toLanguageCode(translation.target_language),
       status: "success",
+      rating: translation.my_rating === 1 || translation.my_rating === 5 ? translation.my_rating : undefined,
+      correction: translation.my_correction ?? undefined,
+      editedText: translation.my_edit?.edited_text,
     } : undefined,
     timestamp: time(item.created_at),
     status: "delivered",
     replyTo: item.reply_to_message_id ? { id: item.reply_to_message_id, senderName: "Reply", content: "" } : undefined,
+    forwardedFromMessageId: item.forwarded_from_message_id ?? undefined,
     attachments: item.attachment ? [{
       id: item.attachment.id,
       type: item.attachment.content_type.startsWith("image/") ? "image" : "file",
@@ -177,4 +186,18 @@ export function deleteMessage(token: string, conversationId: string, messageId: 
 export function uploadAttachment(token: string, conversationId: string, file: File) {
   const form = new FormData(); form.append("file", file);
   return request<{ id: string }>(`/api/v1/conversations/${conversationId}/attachments`, token, { method: "POST", body: form });
+}
+export function submitTranslationFeedback(token: string, translationId: string, rating: 1 | 5) {
+  return request<{ feedback_id: string }>(`/api/v1/translations/${translationId}/feedback`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rating }),
+  });
+}
+export function submitTranslationEdit(token: string, translationId: string, editedText: string) {
+  return request<{ edit_id: string; edited_text: string }>(`/api/v1/translations/${translationId}/edits`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ edited_text: editedText }),
+  });
 }

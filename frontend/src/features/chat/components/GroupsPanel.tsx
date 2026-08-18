@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Conversation } from '../types';
+import { Conversation, LanguageCode } from '../types';
+import { interactionText, tx } from '../i18n';
 import { UsersRound, Plus, Search, Shield, Globe } from 'lucide-react';
 
 interface GroupsPanelProps {
@@ -7,6 +8,7 @@ interface GroupsPanelProps {
   selectedConversationId: string | null;
   onSelectConversation: (conversation: Conversation) => void;
   onCreateGroupClick: () => void;
+  language: LanguageCode;
 }
 
 export const GroupsPanel: React.FC<GroupsPanelProps> = ({
@@ -14,6 +16,7 @@ export const GroupsPanel: React.FC<GroupsPanelProps> = ({
   selectedConversationId,
   onSelectConversation,
   onCreateGroupClick,
+  language,
 }) => {
   const [search, setSearch] = useState('');
 
@@ -32,7 +35,7 @@ export const GroupsPanel: React.FC<GroupsPanelProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between px-5 pt-5 pb-3">
         <h1 className="text-2xl font-bold text-[#1E2230] dark:text-[#F5F6FA] tracking-tight">
-          Groups
+          {tx(language, 'Groups')}
         </h1>
         <button
           onClick={onCreateGroupClick}
@@ -50,7 +53,7 @@ export const GroupsPanel: React.FC<GroupsPanelProps> = ({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search study groups..."
+            placeholder={interactionText(language, 'Search study groups...')}
             className="w-full h-10 pl-9.5 pr-4 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] rounded-xl border border-transparent focus:border-[#2563EB]/30 focus:bg-white dark:focus:bg-[#1C1F27] focus:outline-none"
           />
         </div>
@@ -82,11 +85,11 @@ export const GroupsPanel: React.FC<GroupsPanelProps> = ({
                     {group.name}
                   </h4>
                   <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] truncate">
-                    {group.memberCount || 8} multilingual members
+                    {group.memberCount || 8} {tx(language, 'multilingual members')}
                   </p>
                   <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold text-[#2563EB]">
                     <Globe className="w-2.5 h-2.5" />
-                    Auto Live Translation Active
+                    {tx(language, 'Auto Live Translation Active')}
                   </span>
                 </div>
               </div>

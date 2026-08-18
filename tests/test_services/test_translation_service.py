@@ -428,10 +428,15 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
 
 
 @pytest.mark.asyncio
-async def test_direct_sender_does_not_receive_translation_of_their_own_message(
+async def test_direct_sender_receives_translation_for_feedback_controls(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """A one-to-one sender retains the original; only the reader gets a translation."""
+    """A direct-message sender also receives the reader's translation result.
+
+    The sender still displays the original text by default; this event gives the
+    bubble's translation toggle, rating and correction controls their durable
+    translation id without requiring a page refresh.
+    """
     conversation = await conversation_factory(test_user_two, [test_user, test_user_two])
     message = await persist_message(
         test_db,
@@ -463,7 +468,7 @@ async def test_direct_sender_does_not_receive_translation_of_their_own_message(
         if payload.get("target_language") == "en"
     ]
     assert len(english_recipients) == 1
-    assert set(english_recipients[0]) == {test_user.id}
+    assert set(english_recipients[0]) == {test_user.id, test_user_two.id}
 
 
 @pytest.mark.asyncio

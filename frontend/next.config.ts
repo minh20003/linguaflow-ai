@@ -6,7 +6,9 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://127.0.0.1:3001/api/:path*",
+        // The local FastAPI server listens on 8000. Production sets
+        // NEXT_PUBLIC_API_URL, so browser requests go straight to Railway.
+        destination: "http://127.0.0.1:8000/api/:path*",
       },
     ];
   },

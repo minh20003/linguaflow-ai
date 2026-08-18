@@ -7,6 +7,7 @@ export interface AuthUser {
   display_name: string;
   role: string;
   preferred_language: string;
+  interface_language: string;
   created_at: string;
 }
 
@@ -130,5 +131,17 @@ export function updatePreferredLanguage(
       body: JSON.stringify({ preferred_language: preferredLanguage }),
     },
     "Unable to save your preferred language.",
+  );
+}
+
+export function updateInterfaceLanguage(accessToken: string, interfaceLanguage: string): Promise<AuthUser> {
+  return request<AuthUser>(
+    "/api/v1/auth/me/interface-language",
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ interface_language: interfaceLanguage }),
+    },
+    "Unable to save your interface language.",
   );
 }

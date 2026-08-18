@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { LanguageOnboarding } from "../components/LanguageOnboarding";
 import { SignUpForm } from "../components/SignUpForm";
 import { SUPPORTED_LANGUAGES } from "../constants/languages";
-import { updatePreferredLanguage } from "../api/auth-api";
+import { updateInterfaceLanguage, updatePreferredLanguage } from "../api/auth-api";
 import { getAccessToken, updateStoredUser } from "../lib/session";
 import type { AuthScreen, UserProfile } from "../types";
 
@@ -33,7 +33,8 @@ export function RegisterScreen() {
     const token = getAccessToken();
     if (language && token) {
       try {
-        const updatedUser = await updatePreferredLanguage(token, language.code);
+        await updatePreferredLanguage(token, language.code);
+        const updatedUser = await updateInterfaceLanguage(token, language.code);
         updateStoredUser(updatedUser);
       } catch {
         // Registration is complete even if the optional preference update is unavailable.

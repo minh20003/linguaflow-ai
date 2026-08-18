@@ -8,7 +8,8 @@ import {
   Paperclip,
   Reply
 } from 'lucide-react';
-import { MessageReply } from '../types';
+import { LanguageCode, MessageReply } from '../types';
+import { interactionText } from '../i18n';
 
 interface MessageComposerProps {
   recipientName: string;
@@ -17,6 +18,7 @@ interface MessageComposerProps {
   onCancelReply: () => void;
   onSendAttachment?: (file: File) => void;
   onTyping?: (isTyping: boolean) => void;
+  language: LanguageCode;
 }
 
 const COMMON_EMOJIS = ['😊', '😂', '👍', '❤️', '🔥', '🎉', '🙌', '✨', '☕', '🍜', '🌍', '👏'];
@@ -28,6 +30,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   onCancelReply,
   onSendAttachment,
   onTyping,
+  language,
 }) => {
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -81,7 +84,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             <Reply className="w-3.5 h-3.5 text-[#2563EB] flex-shrink-0" />
             <div className="min-w-0">
               <span className="font-semibold text-[#2563EB] block truncate">
-                Replying to {replyTo.senderName}
+                {interactionText(language, 'Replying to')} {replyTo.senderName}
               </span>
               <span className="text-[#74798C] dark:text-[#9DA3B4] truncate block">
                 {replyTo.content}
@@ -132,7 +135,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#1E2230] dark:text-[#E2E5F0] rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left"
               >
                 <Paperclip className="w-4 h-4 text-blue-500" />
-                <span>Document or File</span>
+                <span>{interactionText(language, 'Document or File')}</span>
               </button>
               <input
                 ref={fileInputRef}
@@ -157,7 +160,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             }}
             onBlur={() => onTyping?.(false)}
             onKeyDown={handleKeyDown}
-            placeholder={`Message ${recipientName}...`}
+            placeholder={`${interactionText(language, 'Message')} ${recipientName}...`}
             className="w-full bg-transparent resize-none text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] dark:placeholder-[#74798C] focus:outline-none max-h-32 py-0.5 px-1 leading-relaxed"
           />
         </div>

@@ -637,6 +637,7 @@ async def get_conversation_messages(
                 if message.id in attachments else None
             ),
             reply_to_message_id=message.reply_to_message_id,
+            forwarded_from_message_id=message.forwarded_from_message_id,
         )
         for message in messages
     ]

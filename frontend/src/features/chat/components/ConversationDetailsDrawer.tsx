@@ -1,5 +1,6 @@
 import React from 'react';
-import { Conversation, User } from '../types';
+import { Conversation, LanguageCode } from '../types';
+import { tx } from '../i18n';
 import {
   X,
   Bell,
@@ -17,6 +18,7 @@ interface ConversationDetailsDrawerProps {
   onClose: () => void;
   onToggleMute: (conversationId: string) => void;
   onTogglePin?: (conversationId: string) => void;
+  language: LanguageCode;
 }
 
 export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps> = ({
@@ -25,6 +27,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   onClose,
   onToggleMute,
   onTogglePin,
+  language,
 }) => {
   if (!isOpen) return null;
 
@@ -39,7 +42,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-[#E8EAF0] dark:border-[#232630]">
         <h3 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-          {isGroup ? 'Group Information' : 'Contact Details'}
+          {tx(language, isGroup ? 'Group Information' : 'Contact Details')}
         </h3>
         <button
           id="close-details-drawer-btn"
@@ -85,14 +88,14 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
         {conversation.recipient && (
           <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB] text-xs font-semibold rounded-full">
             <Globe className="w-3.5 h-3.5" />
-            <span>Native Language: {conversation.recipient.nativeLanguage.toUpperCase()}</span>
+            <span>{tx(language, 'Native Language')}: {conversation.recipient.nativeLanguage.toUpperCase()}</span>
           </div>
         )}
 
         {isGroup && (
           <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB] text-xs font-semibold rounded-full">
             <UsersRound className="w-3.5 h-3.5" />
-            <span>{conversation.memberCount || 8} Global Members</span>
+            <span>{conversation.memberCount || 8} {tx(language, 'Global Members')}</span>
           </div>
         )}
       </div>
@@ -109,10 +112,10 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
             ) : (
               <Bell className="w-4 h-4 text-[#74798C]" />
             )}
-            <span>Mute Notifications</span>
+            <span>{tx(language, 'Mute Notifications')}</span>
           </div>
           <span className="font-medium text-[#74798C]">
-            {conversation.isMuted ? 'Muted' : 'Off'}
+            {tx(language, conversation.isMuted ? 'Muted' : 'Off')}
           </span>
         </button>
 
@@ -123,10 +126,10 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
           >
             <div className="flex items-center gap-3">
               <Pin className="w-4 h-4 text-[#74798C]" />
-              <span>Pin Conversation</span>
+              <span>{tx(language, 'Pin Conversation')}</span>
             </div>
             <span className="font-medium text-[#74798C]">
-              {conversation.isPinned ? 'Pinned' : 'No'}
+              {tx(language, conversation.isPinned ? 'Pinned' : 'No')}
             </span>
           </button>
         )}
@@ -137,7 +140,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
         <div className="p-4 border-b border-[#E8EAF0] dark:border-[#232630]">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-[#74798C] dark:text-[#9DA3B4]">
-              Members ({conversation.members.length})
+              {tx(language, 'Members')} ({conversation.members.length})
             </span>
           </div>
           <div className="space-y-2">
@@ -155,7 +158,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
                       {member.name}
                     </p>
                     <p className="text-[10px] text-[#74798C] dark:text-[#9DA3B4] truncate">
-                      {member.role || 'Member'}
+                      {member.role || tx(language, 'Member')}
                     </p>
                   </div>
                 </div>
@@ -173,12 +176,12 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
         {isGroup ? (
           <button className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
             <LogOut className="w-4 h-4" />
-            <span>Leave Group</span>
+            <span>{tx(language, 'Leave Group')}</span>
           </button>
         ) : (
           <button className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
             <ShieldAlert className="w-4 h-4" />
-            <span>Block Contact</span>
+            <span>{tx(language, 'Block Contact')}</span>
           </button>
         )}
       </div>
