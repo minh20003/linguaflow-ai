@@ -26,16 +26,23 @@ from src.agents.context_provider import (
 )
 from src.agents.guardrails import (
     MAX_INPUT_CHARS,
+    classify_leak_source,
     detect_language_code,
+    discloses_prompt_instructions,
+    find_context_echo,
+    find_dropped_identifiers,
+    find_leaked_identifiers,
     is_input_too_long,
     is_supported_language_code,
     is_untranslated_output,
+    looks_like_a_refusal,
+    strip_translation_scaffolding,
 )
 from src.agents.prompts import (
     DETECT_LANGUAGE_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
-    TRANSLATE_USER_PROMPT,
-    build_context_block,
+    build_user_prompt,
+    new_prompt_nonce,
 )
 from src.agents.state import AgentState
 from src.services.fallback_translator import FALLBACK_MODEL_NAME, translate_with_secondary_provider
@@ -297,10 +304,18 @@ async def translate(state: AgentState) -> dict:
             **_telemetry(state, fallback_reason="oversized_input"),
         }
 
-    system_prompt = TRANSLATE_SYSTEM_PROMPT.format(target_language=target_language)
-    user_prompt = TRANSLATE_USER_PROMPT.format(
-        context_block=build_context_block(state.get("context_messages", [])),
+    # Both prompts share one nonce: the system prompt names the tag the message
+    # will arrive in, so the model can tell the delimiter from a forged copy of
+    # it in the message body (ADR-12).
+    nonce = new_prompt_nonce()
+    system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
+        target_language=target_language,
+        nonce=nonce,
+    )
+    user_prompt = build_user_prompt(
         original_text=original_text,
+        context_messages=state.get("context_messages", []),
+        nonce=nonce,
     )
 
     # Any latency already recorded by detect_language is carried forward so the
@@ -338,14 +353,23 @@ async def translate(state: AgentState) -> dict:
     # is what the provider says it actually ran, and the two can differ.
     model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "")
 
+    # "Return the translated text only" is an instruction, and instructions are
+    # requests. Whatever the provider wrapped around the translation is removed
+    # here, so the recipient reads the same thing whichever model served them.
+    raw_text = extract_text(response)
+    translated_text = strip_translation_scaffolding(raw_text, original_text)
+
     return {
-        "translated_text": extract_text(response),
+        "translated_text": translated_text,
         "model": str(model_name),
         "latency_ms": total_latency_ms(),
         **_telemetry(
             state,
             translate_ms=_elapsed_ms(started),
             llm_calls=_running_total(state, "llm_calls", 1),
+            # Prompt-tuning evidence: a rising rate means the format rules are
+            # losing, and the stripper is the only thing keeping the output clean.
+            scaffolding_stripped=translated_text != raw_text.strip(),
             model_served=call_info.model_served,
             finish_reason=call_info.finish_reason,
             request_id=call_info.request_id,
@@ -364,7 +388,7 @@ async def validate_output(state: AgentState) -> dict:
     original_text = (state.get("original_text") or "").strip()
     translated_text = (state.get("translated_text") or "").strip()
 
-    def fallback(reason: str, code: str = "") -> dict:
+    def fallback(reason: str, code: str = "", **measurements: object) -> dict:
         """Build the state update that returns the original text unchanged.
 
         Args:
@@ -372,6 +396,8 @@ async def validate_output(state: AgentState) -> dict:
             code: Machine-readable cause for the telemetry. Empty means the
                 cause was already recorded by the node that failed, which knows
                 more about it than this one does.
+            measurements: Extra telemetry the failing check wants to report
+                alongside the reason, such as where a leaked value came from.
         """
         logger.info("Falling back to the original text: %s", reason)
         recorded = state.get("telemetry", {}).get("fallback_reason", "")
@@ -385,6 +411,7 @@ async def validate_output(state: AgentState) -> dict:
                 state,
                 outcome="original",
                 fallback_reason=code or recorded or "llm_error",
+                **measurements,
             ),
         }
         # ``error`` carries only reasons the request could not be processed —
@@ -412,6 +439,57 @@ async def validate_output(state: AgentState) -> dict:
             "too_long",
         )
 
+    if discloses_prompt_instructions(translated_text):
+        return fallback(
+            "translation recites the agent's own instructions",
+            "prompt_disclosure",
+        )
+
+    # The model answering as itself — "I'm sorry, I can't help with that" — is
+    # what a message about credentials, security or anything else that reads as
+    # a sensitive request provokes. Written in the target language it passes
+    # every other rule here, and the sender's meaning is lost silently
+    # (ADR-13, amended).
+    if looks_like_a_refusal(translated_text, original_text):
+        return fallback(
+            "translation is the model declining rather than translating",
+            "refusal",
+        )
+
+    # The model is shown other participants' messages as context, so an output
+    # carrying an identifier the message itself never contained came either from
+    # that context or from nowhere. Neither is deliverable (ADR-21).
+    context_messages = state.get("context_messages", []) or []
+    leaked = find_leaked_identifiers(translated_text, original_text)
+    if leaked:
+        # Count only. The values are the very thing that must not spread, and a
+        # server log is read by people the conversation never included.
+        leak_source = classify_leak_source(leaked, context_messages)
+        logger.warning(
+            "Translation introduced %d identifier(s) absent from the source (%s)",
+            len(leaked),
+            leak_source,
+        )
+        return fallback(
+            "translation contains an identifier the message did not",
+            "leaked_identifier",
+            leak_source=leak_source,
+        )
+
+    # The same rule from the other side: a model that decides a phone number or
+    # a link is too sensitive to repeat produces fluent output of the right
+    # length in the right language, with the one detail the recipient needed
+    # taken out of it (ADR-21).
+    dropped = find_dropped_identifiers(translated_text, original_text)
+    if dropped:
+        logger.warning(
+            "Translation dropped %d identifier(s) the message contained", len(dropped)
+        )
+        return fallback(
+            "translation is missing an identifier the message contained",
+            "dropped_identifier",
+        )
+
     # A refusal, an untranslated echo, and the model answering instead of
     # translating all leave source-language text in the output. The length rule
     # above misses all three when the response is short — "I can't help with
@@ -425,10 +503,28 @@ async def validate_output(state: AgentState) -> dict:
             "wrong_language",
         )
 
+    # Measured, not enforced. This is the one leak channel with a plausible
+    # innocent explanation — chat repeats itself — so the rate is observed on
+    # real traffic before it is allowed to discard a translation (ADR-21).
+    echo = find_context_echo(translated_text, original_text, context_messages)
+    if echo is None:
+        return {
+            "is_valid": True,
+            "is_fallback": False,
+            **_telemetry(state, outcome="llm"),
+        }
+
+    logger.warning(
+        "Translation repeats %d characters written in another message of the "
+        "conversation; delivering it anyway while the rule is being measured",
+        len(echo),
+    )
     return {
         "is_valid": True,
         "is_fallback": False,
-        **_telemetry(state, outcome="llm"),
+        **_telemetry(
+            state, outcome="llm", context_echo=True, context_echo_chars=len(echo)
+        ),
     }
 
 
@@ -474,7 +570,9 @@ async def fallback_translate(state: AgentState) -> dict:
         }
 
     # This output reaches the recipient without passing back through
-    # validate_output, so it is verified here or not at all.
+    # validate_output, so it is verified here or not at all. Only the language
+    # check is repeated: the secondary provider is sent the message and nothing
+    # else, so it has no conversation context to leak and no prompt to recite.
     if is_untranslated_output(translated, source_language, target_language):
         logger.warning("Discarded secondary translation: still reads as the source")
         return {
