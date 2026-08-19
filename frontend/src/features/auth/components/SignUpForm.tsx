@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
-import { GoogleIcon } from './GoogleIcon';
+import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
-import { signUp } from '../api/auth-api';
+import { signUp, signInWithGoogle } from '../api/auth-api';
 import { saveSession } from '../lib/session';
 
 interface SignUpFormProps {
@@ -92,9 +92,20 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
     }
   };
 
-  const handleGoogleSignUp = () => {
-    setFormError('Google sign-up is not configured for this server yet.');
-  };
+  const handleGoogleSignUp = useCallback(async (credential: string) => {
+    setFormError(null);
+    setIsLoading(true);
+    try {
+      const session = await signInWithGoogle(credential);
+      saveSession(session, true);
+      onSuccess({ name: session.user.display_name, email: session.user.email, preferredLanguage: session.user.preferred_language });
+      onNavigate('language-onboarding');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to sign in with Google.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onNavigate, onSuccess]);
 
   return (
     <motion.div
@@ -128,16 +139,11 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       </AnimatePresence>
 
       {/* Continue with Google */}
-      <button
-        id="google-signup-button"
-        type="button"
-        onClick={handleGoogleSignUp}
+      <GoogleSignInButton
         disabled={isLoading}
-        className="w-full h-11 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700 text-sm font-semibold transition-all flex items-center justify-center gap-3 shadow-2xs active:scale-[0.99] disabled:opacity-60 cursor-pointer"
-      >
-        <GoogleIcon className="w-4.5 h-4.5" />
-        <span>Continue with Google</span>
-      </button>
+        onCredential={handleGoogleSignUp}
+        onError={setFormError}
+      />
 
       {/* Divider */}
       <div className="relative my-5">

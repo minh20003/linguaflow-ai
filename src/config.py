@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     openai_api_key: str = ""
 
+    # Google Identity Services authentication. This is an OAuth client ID, not
+    # a secret; the browser needs the same value to request an ID token.
+    google_oauth_client_id: str = ""
+
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
     # Deadline for one whole translation run, covering detection, the LLM call

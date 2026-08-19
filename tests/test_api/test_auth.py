@@ -2,6 +2,9 @@
 
 import pytest
 
+from src.api import routes
+from src.config import get_settings
+
 
 @pytest.mark.asyncio
 async def test_register_persists_account_and_returns_session(client):
@@ -45,6 +48,27 @@ async def test_register_rejects_duplicate_email_and_username(client):
     duplicate_username = {**payload, "email": "another@example.com"}
     assert (await client.post("/api/v1/auth/register", json=duplicate_email)).status_code == 409
     assert (await client.post("/api/v1/auth/register", json=duplicate_username)).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_google_login_creates_then_reuses_verified_account(client, monkeypatch):
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client.apps.googleusercontent.com")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        routes,
+        "_google_profile",
+        lambda _credential, _client_id: ("google-subject-123", "google@example.com", "Google User"),
+    )
+    try:
+        first = await client.post("/api/v1/auth/google", json={"credential": "x" * 24})
+        second = await client.post("/api/v1/auth/google", json={"credential": "x" * 24})
+    finally:
+        get_settings.cache_clear()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["user"]["email"] == "google@example.com"
+    assert first.json()["user"]["id"] == second.json()["user"]["id"]
 
 
 @pytest.mark.asyncio

@@ -21,3 +21,6 @@ pnpm-debug.log*
 # OS/editor files
 .DS_Store
 *.swp
+.vercel
+.env*
+!.env.example

@@ -40,6 +40,9 @@ asyncpg>=0.30.0
 python-jose[cryptography]>=3.3.0,<3.5.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.0.0
+# Verifies Google Identity Services ID tokens on the API.  The browser only
+# receives the public OAuth client ID; token verification always happens here.
+google-auth>=2.0.0
 
 # Dev tools
 ruff>=0.8.0

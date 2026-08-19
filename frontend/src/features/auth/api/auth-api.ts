@@ -134,6 +134,14 @@ export function updatePreferredLanguage(
   );
 }
 
+export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
+  return request<AuthSession>(
+    "/api/v1/auth/google",
+    { method: "POST", body: JSON.stringify({ credential, remember }) },
+    "Unable to sign in with Google. Please try again.",
+  );
+}
+
 export function updateInterfaceLanguage(accessToken: string, interfaceLanguage: string): Promise<AuthUser> {
   return request<AuthUser>(
     "/api/v1/auth/me/interface-language",

@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
-import { GoogleIcon } from './GoogleIcon';
+import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
-import { signIn } from '../api/auth-api';
+import { signIn, signInWithGoogle } from '../api/auth-api';
 import { saveSession } from '../lib/session';
 
 interface SignInFormProps {
@@ -64,9 +64,19 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
     }
   };
 
-  const handleGoogleSignIn = () => {
-    setErrorMessage('Google sign-in is not configured for this server yet.');
-  };
+  const handleGoogleSignIn = useCallback(async (credential: string) => {
+    setErrorMessage(null);
+    setIsLoading(true);
+    try {
+      const session = await signInWithGoogle(credential, rememberMe);
+      saveSession(session, rememberMe);
+      onSuccess({ name: session.user.display_name, email: session.user.email, preferredLanguage: session.user.preferred_language });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in with Google.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onSuccess, rememberMe]);
 
   return (
     <motion.div
@@ -100,16 +110,11 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       </AnimatePresence>
 
       {/* Continue with Google */}
-      <button
-        id="google-signin-button"
-        type="button"
-        onClick={handleGoogleSignIn}
+      <GoogleSignInButton
         disabled={isLoading}
-        className="w-full h-11 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-700 text-sm font-semibold transition-all flex items-center justify-center gap-3 shadow-2xs active:scale-[0.99] disabled:opacity-60 cursor-pointer"
-      >
-        <GoogleIcon className="w-4.5 h-4.5" />
-        <span>Continue with Google</span>
-      </button>
+        onCredential={handleGoogleSignIn}
+        onError={setErrorMessage}
+      />
 
       {/* Divider */}
       <div className="relative my-5">

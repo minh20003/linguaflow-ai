@@ -3,6 +3,7 @@
 import logging
 import mimetypes
 import re
+import secrets
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,7 @@ from src.schemas.auth import (
     AuthResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleLoginRequest,
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
@@ -211,6 +213,83 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+    return await _issue_auth_response(user, db, remember=request.remember)
+
+
+def _google_profile(credential: str, client_id: str) -> tuple[str, str, str]:
+    """Verify a Google ID token and return its immutable identity and profile.
+
+    This is intentionally server-side: accepting a decoded browser JWT without
+    verifying its signature/audience would allow anybody to sign in as anyone.
+    """
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+
+    claims = id_token.verify_oauth2_token(credential, google_requests.Request(), client_id)
+    subject = claims.get("sub")
+    email = claims.get("email")
+    if not subject or not email or not claims.get("email_verified"):
+        raise ValueError("Google did not return a verified email address")
+    name = str(claims.get("name") or email.split("@", 1)[0]).strip()
+    return str(subject), str(email).strip().lower(), name[:100]
+
+
+def _google_username(email: str, subject: str) -> str:
+    """Make a deterministic, valid local username for a new Google account."""
+    base = re.sub(r"[^a-z0-9_-]+", "-", email.split("@", 1)[0].lower()).strip("-") or "google-user"
+    return f"{base[:40]}-{subject[-8:]}"[:50]
+
+
+@router.post("/auth/google", response_model=AuthResponse)
+async def login_with_google(
+    request: GoogleLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Create or sign in a user after validating a Google ID token."""
+    settings = get_settings()
+    if not settings.google_oauth_client_id:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google sign-in is not configured")
+
+    try:
+        # Key discovery can make an HTTPS request, so keep the async server
+        # event loop responsive while Google's verifier does that work.
+        import asyncio
+        subject, email, display_name = await asyncio.to_thread(
+            _google_profile, request.credential, settings.google_oauth_client_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google credential") from exc
+    except Exception:
+        logger.exception("Google token verification failed")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google sign-in is temporarily unavailable")
+
+    result = await db.execute(select(User).where(User.google_subject == subject))
+    user = result.scalar_one_or_none()
+    if user is None:
+        # Verified Google ownership of the same email is sufficient to link a
+        # password account. It avoids duplicate accounts for the same person.
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if user is not None:
+            user.google_subject = subject
+        else:
+            user = User(
+                email=email,
+                username=_google_username(email, subject),
+                display_name=display_name,
+                # The schema retains a non-null password hash for legacy email
+                # login. A random unknown value means this account cannot be
+                # accessed through password login unless a reset flow is added.
+                password_hash=get_password_hash(secrets.token_urlsafe(48)),
+                google_subject=subject,
+            )
+            db.add(user)
+            try:
+                await db.flush()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Unable to create Google account") from exc
 
     return await _issue_auth_response(user, db, remember=request.remember)
 
