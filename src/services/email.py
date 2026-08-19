@@ -1,10 +1,10 @@
 """Email sending service and localized OTP templates (Batch F)."""
 
 import asyncio
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 import logging
 import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import NamedTuple
 
 from src.config import get_settings

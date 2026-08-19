@@ -1,7 +1,9 @@
 """Tests for authentication API endpoints."""
 
 import re
+
 import pytest
+
 from src.services.email import _memory_sender
 
 

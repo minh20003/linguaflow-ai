@@ -1,6 +1,7 @@
 """Tests for the interface language, separate from the reading one (§1.2)."""
 
 import re
+
 import pytest
 
 from src.database.models import User
