@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { ForgotPasswordScreen } from "@/features/auth/screens/ForgotPasswordScreen";
+import PasswordRecoveryForm from "@/features/auth/components/PasswordRecoveryForm";
 
 export const metadata: Metadata = {
-  title: "Reset password — LinguaChat",
-  description: "Request password reset instructions for your LinguaChat account.",
+  title: "Account recovery — LinguaFlow",
+  description: "Reset your LinguaFlow account password.",
 };
 
 export default function ForgotPasswordPage() {
-  return <ForgotPasswordScreen />;
+  return <PasswordRecoveryForm />;
 }

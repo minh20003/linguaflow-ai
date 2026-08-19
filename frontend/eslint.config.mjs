@@ -12,27 +12,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    ".test-dist/**",
   ]),
-  {
-    files: ["src/features/chat/**/*.{ts,tsx}"],
-    rules: {
-      // The migrated chat keeps its proven UI markup and client-side state flow.
-      "@next/next/no-img-element": "off",
-      "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-unused-vars": "off",
-      "react-hooks/purity": "off",
-      "react-hooks/set-state-in-effect": "off",
-      "react/no-unescaped-entities": "off",
-    },
-  },
-  {
-    files: ["src/features/auth/**/*.{ts,tsx}"],
-    rules: {
-      // Preserve the supplied authentication copy and punctuation verbatim.
-      "react/no-unescaped-entities": "off",
-    },
-  },
 ]);
 
 export default eslintConfig;
