@@ -54,6 +54,7 @@ export function GoogleSignInButton({ disabled = false, onCredential, onError }: 
   useEffect(() => {
     if (!clientId) return;
     let cancelled = false;
+    let resizeObserver: ResizeObserver | undefined;
     void loadGoogleScript()
       .then(() => {
         if (cancelled || !host.current || !window.google) return;
@@ -64,23 +65,51 @@ export function GoogleSignInButton({ disabled = false, onCredential, onError }: 
             else onError("Google did not return a sign-in credential.");
           },
         });
-        host.current.replaceChildren();
-        window.google.accounts.id.renderButton(host.current, {
-          type: "standard",
-          theme: "outline",
-          size: "large",
-          text: "continue_with",
-          shape: "rectangular",
-          width: Math.max(host.current.clientWidth, 280),
-        });
-        setReady(true);
+        let renderedWidth = 0;
+        const render = () => {
+          if (cancelled || !host.current || !window.google) return;
+          const width = Math.floor(host.current.clientWidth);
+          if (width < 200 || width === renderedWidth) return;
+          renderedWidth = width;
+          host.current.replaceChildren();
+          window.google.accounts.id.renderButton(host.current, {
+            type: "standard",
+            theme: "outline",
+            size: "large",
+            text: "continue_with",
+            shape: "pill",
+            logo_alignment: "left",
+            width,
+          });
+          setReady(true);
+        };
+        render();
+        resizeObserver = new ResizeObserver(render);
+        resizeObserver.observe(host.current);
       })
       .catch(() => onError("Unable to load Google sign-in. Please try again."));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      resizeObserver?.disconnect();
+    };
   }, [clientId, onCredential, onError]);
 
   if (!clientId) {
     return <p className="text-xs text-slate-500">Google sign-in is not configured for this deployment.</p>;
   }
-  return <div className={disabled || !ready ? "pointer-events-none opacity-60" : ""} ref={host} />;
+  return (
+    <div
+      className={`relative flex h-11 w-full items-center justify-center overflow-hidden rounded-xl bg-white transition-opacity ${
+        disabled ? "pointer-events-none opacity-60" : ""
+      }`}
+    >
+      {!ready && (
+        <div className="absolute inset-0 animate-pulse rounded-xl border border-slate-200 bg-slate-50" />
+      )}
+      <div
+        ref={host}
+        className={`h-11 w-full transition-opacity ${ready ? "opacity-100" : "opacity-0"}`}
+      />
+    </div>
+  );
 }
