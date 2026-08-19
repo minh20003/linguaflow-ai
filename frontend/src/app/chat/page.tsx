@@ -1,19 +1,17 @@
-import type { Metadata, Viewport } from "next";
-import { AppShell } from "@/features/chat/components/AppShell";
-import "@/features/chat/styles/chat.css";
+import type { Metadata } from "next";
+import "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
+import MessagingApp from "@/features/chat/components/MessagingApp";
+import RequireAuth from "@/features/auth/components/RequireAuth";
 
 export const metadata: Metadata = {
-  title: "Tin nhắn — LinguaChat",
-  description: "Trò chuyện và dịch tin nhắn theo thời gian thực.",
-};
-
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
+  title: "Messages — LinguaFlow",
+  description: "Real-time chat and translation across languages.",
 };
 
 export default function ChatPage() {
-  return <AppShell />;
+  return (
+    <RequireAuth>
+      <MessagingApp />
+    </RequireAuth>
+  );
 }

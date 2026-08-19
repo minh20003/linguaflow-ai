@@ -1,0 +1,62 @@
+.stage {
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding-block: clamp(var(--s-3), 3svh, var(--s-6));
+  padding-inline: clamp(var(--s-5), 5vw, var(--s-8));
+  background-color: var(--surface-ground);
+  background-image:
+    radial-gradient(circle at 12% 15%, rgba(89, 62, 103, 0.08), transparent 28rem),
+    radial-gradient(circle at 92% 90%, rgba(132, 73, 95, 0.08), transparent 25rem);
+}
+
+
+.card {
+  width: 100%;
+  max-width: 740px;
+  background: var(--surface-label);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.panel {
+  padding-block: clamp(var(--s-4), 3svh, var(--s-6));
+  padding-inline: clamp(var(--s-5), 4vw, var(--s-7));
+  /* Cột form không được đẩy thẻ rộng ra khi nhãn phụ dài. */
+  min-width: 0;
+}
+
+/* ─── 560–879px: thẻ chiếm toàn bộ chiều rộng trừ lề; dải xuống hàng ngang ── */
+@media (max-width: 879px) {
+  .stage {
+    padding: var(--s-5);
+  }
+
+  .body {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── <560px: bỏ thẻ. Viền thẻ giữa màn hình hẹp là viền vô nghĩa. ────────── */
+@media (max-width: 559px) {
+  .stage {
+    padding: var(--s-4);
+    place-items: start stretch;
+  }
+
+  .card {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+  }
+
+  .panel {
+    padding: var(--s-6) 0 0;
+  }
+}
