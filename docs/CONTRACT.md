@@ -121,7 +121,9 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 
 | Method | Path | Request Body | Response | Trạng thái |
 |---|---|---|---|---|
-| `POST` | `/auth/register` | `{"email": str, "password": str, "username": str \| null, "display_name": str \| null, "preferred_language": str}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
+| `POST` | `/auth/register` | `{"email": str, "password": str, "username": str \| null, "display_name": str \| null, "preferred_language": str}` | `202 Accepted`, `{"pending_id": str, "email": str, "expires_in_seconds": int, "cooldown_seconds": int}`, xem §3.11 | Đã hiện thực |
+| `POST` | `/auth/register/verify` | `{"pending_id": str, "otp": str}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}`, xem §3.11 | Đã hiện thực |
+| `POST` | `/auth/register/resend` | `{"pending_id": str}` | `{"pending_id": str, "expires_in_seconds": int, "cooldown_seconds": int}`, xem §3.11 | Đã hiện thực |
 | `POST` | `/auth/login` | `{"email": str, "password": str, "remember": bool}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
 | `POST` | `/auth/refresh` | `{"refresh_token": str}` | Như `/auth/login` | Đã hiện thực |
 | `POST` | `/auth/logout` | `{"refresh_token": str}` | `204 No Content` | Đã hiện thực |
@@ -368,6 +370,52 @@ Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi v
 **Hiển thị.** Bóng chat luôn hiện `translated_text`. Bản góp ý của chính mình nằm sau nút bút chì: bấm để mở, bấm lần nữa để đóng. Người dùng vì thế đối chiếu được hai bản, thay vì bị thay thầm nội dung đang đọc.
 
 `404` khi `translation_id` không tồn tại; `409` khi tin nhắn tương ứng đã bị gỡ (§3.6).
+
+### 3.11. Xác thực đăng ký tài khoản qua Email OTP (Batch F)
+
+Quy trình đăng ký tài khoản được bảo vệ qua 2 bước bằng mã OTP gửi về email:
+
+1. **Bước 1: Khởi tạo yêu cầu (`POST /api/v1/auth/register`)**
+   - Payload: `{"email": str, "password": str, "username": str, "display_name": str, "preferred_language": str}`.
+   - Server kiểm tra trùng lặp email/username (`409 Conflict`), mã hóa mật khẩu và sinh mã OTP 6 chữ số ASCII (`^[0-9]{6}$`).
+   - Lưu vào bảng `pending_registrations` (chỉ lưu bcrypt hash của OTP, không bao giờ lưu OTP thô).
+   - Bảo toàn ngôn ngữ: lưu đồng thời `preferred_language` và `interface_language` (hỗ trợ đầy đủ 14 ngôn ngữ).
+   - Gửi email chứa mã OTP được bản địa hóa theo ngôn ngữ đã chọn.
+   - Trả về mã **`202 Accepted`**:
+     ```json
+     {
+       "pending_id": "uuid",
+       "email": "user@example.com",
+       "expires_in_seconds": 300,
+       "cooldown_seconds": 60,
+       "message": "Verification code sent to your email"
+     }
+     ```
+   - **Tuyệt đối không tạo tài khoản `User` hoặc phiên làm việc `RefreshSession` tại bước này.**
+   - **Lỗi gửi email**: Nếu delivery thất bại (`EmailDeliveryError`), trả về HTTP `500` với mã machine-readable `{"detail": "email_delivery_failed"}` và không hoàn tác (rollback) lượt đếm rate limit đã commit.
+
+2. **Bước 2: Xác nhận OTP (`POST /api/v1/auth/register/verify`)**
+   - Payload: `{"pending_id": str, "otp": str}` (OTP bắt buộc đúng 6 chữ số ASCII).
+   - Thời hạn hiệu lực: chính xác 5 phút (300 giây) kể từ thời điểm phát hành mã gần nhất.
+   - Giới hạn số lần thử: tối đa 3 lần sai (`attempts < 3`); lần thứ 3 sai sẽ khóa phiên đăng ký đó vĩnh viễn (`400 Bad Request`).
+   - Khi mã hợp lệ: thực hiện claim nguyên tử bằng câu lệnh SQL conditional `DELETE ... RETURNING`, tạo tài khoản `User` và cấp phát phiên đăng nhập `AuthResponse` (`access_token`, `refresh_token`, `user`) trong cùng **1 database transaction duy nhất**.
+   - Mã OTP là **dùng một lần (single-use)**; gọi lại với cùng `pending_id` sẽ trả về `400 Bad Request`.
+
+3. **Gửi lại mã OTP (`POST /api/v1/auth/register/resend`)**
+   - Payload: `{"pending_id": str}`.
+   - Áp dụng Cooldown: tối thiểu 60 giây giữa các lần gửi (`429 Too Many Requests` kèm header `Retry-After`).
+   - Rate limit: tối đa 5 lần gửi OTP trong vòng 1 giờ cho cùng một phiên đăng ký (`request_count < 5`).
+   - Khi gửi lại thành công: cập nhật nguyên tử `otp_hash` mới, vô hiệu hóa hoàn toàn mã OTP cũ, đặt lại bộ đếm số lần thử `attempts = 0`, gia hạn `expires_at` thêm 5 phút và gửi email bằng `interface_language` đã lưu.
+   - Trả về mã **`200 OK`**:
+     ```json
+     {
+       "pending_id": "uuid",
+       "expires_in_seconds": 300,
+       "cooldown_seconds": 60,
+       "message": "New verification code sent to your email"
+     }
+     ```
+   - Nếu delivery thất bại (`EmailDeliveryError`), trả về `500` với `{"detail": "email_delivery_failed"}` nhưng vẫn bảo toàn bản ghi `request_count` và cooldown đã commit trong DB.
 
 ## 4. WebSocket Protocol
 

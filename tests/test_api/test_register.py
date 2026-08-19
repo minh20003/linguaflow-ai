@@ -15,38 +15,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.security import get_password_hash
 from src.database.models import User
 
+import re
+from src.services.email import _memory_sender
+
 _next_username = itertools.count()
 
 
 def register_body(**overrides) -> dict:
-    """A valid registration payload, with a unique username unless overridden.
-
-    Every field is supplied even when a test only cares about one of them: a
-    request rejected for a missing username would return 422 just like a
-    request rejected for a short password, and the test would pass while
-    measuring nothing.
-    """
+    """A valid registration payload, with a unique username unless overridden."""
     body = {
         "username": f"user{next(_next_username)}",
-        "email": "new@example.com",
+        "email": f"new_{next(_next_username)}@example.com",
         "password": "a-good-password",
     }
     body.update(overrides)
     return body
 
 
+async def register_and_verify(client, **overrides):
+    """Helper to perform full register + OTP verify flow in tests."""
+    payload = register_body(**overrides)
+    _memory_sender.clear()
+    reg = await client.post("/api/v1/auth/register", json=payload)
+    if reg.status_code != 202:
+        return reg
+    pending_id = reg.json()["pending_id"]
+    otp = re.search(r"\b(\d{6})\b", _memory_sender.sent_emails[0].body_text).group(1)
+    return await client.post(
+        "/api/v1/auth/register/verify", json={"pending_id": pending_id, "otp": otp}
+    )
+
+
 @pytest.mark.asyncio
 async def test_registration_returns_a_session_that_authenticates(client):
     """The client lands in the chat straight after registering, so it needs a session."""
-    response = await client.post(
-        "/api/v1/auth/register",
-        json=register_body(email="new@example.com", preferred_language="vi"),
-    )
+    response = await register_and_verify(client, email="new@example.com", preferred_language="vi")
 
-    assert response.status_code == 201
+    assert response.status_code == 200
     body = response.json()
-    # A refresh token is what makes the session survive the access token
-    # expiring, and revocable at logout.
     assert body["refresh_token"]
     assert body["user"]["email"] == "new@example.com"
 
@@ -63,16 +69,8 @@ async def test_registration_returns_a_session_that_authenticates(client):
 
 @pytest.mark.asyncio
 async def test_registration_defaults_to_english(client):
-    """An omitted preference means English, for both languages.
-
-    Changed on 16/08: the default used to be Vietnamese, from when the product
-    was built for one classroom. English is the language every label table
-    covers in full, so it is what a stranger who has chosen nothing can
-    certainly read (docs/CONTRACT.md §1.3).
-    """
-    response = await client.post(
-        "/api/v1/auth/register", json=register_body(email="default@example.com")
-    )
+    """An omitted preference means English, for both languages."""
+    response = await register_and_verify(client, email="default@example.com")
     token = response.json()["access_token"]
 
     profile = await client.get(
@@ -86,11 +84,9 @@ async def test_registration_defaults_to_english(client):
 @pytest.mark.asyncio
 async def test_registration_never_grants_a_role_from_the_request(client):
     """A client must not be able to make itself an admin."""
-    response = await client.post(
-        "/api/v1/auth/register",
-        json=register_body(email="sneaky@example.com", role="admin"),
-    )
-    token = response.json()["access_token"]
+    verified = await register_and_verify(client, email="sneaky@example.com", role="admin")
+    assert verified.status_code == 200
+    token = verified.json()["access_token"]
 
     profile = await client.get(
         "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
@@ -110,10 +106,8 @@ async def test_duplicate_email_is_rejected(client, test_user):
 @pytest.mark.asyncio
 async def test_email_case_resolves_to_one_account(client):
     """Registering as Mixed@Case must not create an account login cannot reach."""
-    created = await client.post(
-        "/api/v1/auth/register", json=register_body(email="Mixed@Example.com")
-    )
-    assert created.status_code == 201
+    created = await register_and_verify(client, email="Mixed@Example.com", password="a-good-password")
+    assert created.status_code == 200
 
     # A different username, so a 409 can only be about the email.
     duplicate = await client.post(

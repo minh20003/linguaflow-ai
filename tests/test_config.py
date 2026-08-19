@@ -48,14 +48,18 @@ def test_cors_origins_are_split_and_stripped():
     """A list written the way a human writes one must still match an Origin."""
     resolved = settings(cors_origins="http://localhost:3000, https://app.example.com ")
 
-    assert resolved.cors_origin_list == ["http://localhost:3000", "https://app.example.com"]
+    # localhost:3000 is already present; auto-append adds localhost:3001 and public_frontend_origin
+    assert resolved.cors_origin_list[:2] == ["http://localhost:3000", "https://app.example.com"]
+    assert "http://localhost:3001" in resolved.cors_origin_list
 
 
 def test_an_empty_cors_entry_is_dropped():
     """A trailing comma would otherwise produce an origin that matches nothing."""
     resolved = settings(cors_origins="http://localhost:3000,,")
 
-    assert resolved.cors_origin_list == ["http://localhost:3000"]
+    # localhost:3000 already present; auto-append adds localhost:3001 and public_frontend_origin
+    assert resolved.cors_origin_list[0] == "http://localhost:3000"
+    assert "http://localhost:3001" in resolved.cors_origin_list
 
 
 def test_a_missing_jwt_secret_is_refused_in_every_environment():

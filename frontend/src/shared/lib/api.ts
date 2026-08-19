@@ -59,15 +59,37 @@ export async function login(email: string, password: string, remember = false): 
   return payload as unknown as LoginResponse;
 }
 
+export interface PendingRegisterResponse {
+  pending_id: string;
+  email: string;
+  expires_in_seconds: number;
+  cooldown_seconds: number;
+  message: string;
+}
+
+export interface ResendRegisterOtpResponse {
+  pending_id: string;
+  expires_in_seconds: number;
+  cooldown_seconds: number;
+  message: string;
+}
+
+function extractErrorCode(payload: Record<string, unknown> | null): string | null {
+  if (!payload) return null;
+  if (typeof payload.detail === "string") return payload.detail;
+  if (typeof payload.detail === "object" && payload.detail !== null) {
+    const detailObj = payload.detail as Record<string, unknown>;
+    if (typeof detailObj.code === "string") return detailObj.code;
+  }
+  if (typeof payload.code === "string") return payload.code;
+  return null;
+}
+
 /**
- * Create a durable backend account and start an authenticated session.
+ * Request registration and receive a pending identity awaiting email OTP verification (Batch F).
  */
-export async function register(data: RegisterData): Promise<LoginResponse> {
+export async function register(data: RegisterData): Promise<PendingRegisterResponse> {
   const username = data.username.trim();
-  // The display name is the caller's to decide. This used to overwrite it with
-  // the username, from when the form had no separate field for it — which
-  // silently discarded whatever the new "Họ và tên" box collected. The username
-  // remains the fallback for callers that send no name at all.
   const displayName = data.display_name?.trim() || username;
   const registrationData = { ...data, username, display_name: displayName };
 
@@ -77,10 +99,81 @@ export async function register(data: RegisterData): Promise<LoginResponse> {
     body: JSON.stringify(registrationData),
   });
   const payload = await responseBody(response);
-  if (!response.ok || !payload?.access_token || !payload.user) {
+  if (!response.ok || !payload?.pending_id) {
+    if (response.status === 409) {
+      throw new Error("duplicate_account");
+    }
+    if (response.status === 429) {
+      throw new Error("rate_limit_exceeded");
+    }
+    if (response.status === 500) {
+      const code = extractErrorCode(payload);
+      if (code === "email_delivery_failed") {
+        throw new Error("email_delivery_failed");
+      }
+    }
     throw new Error("register_failed");
   }
+  return payload as unknown as PendingRegisterResponse;
+}
+
+/**
+ * Verify 6-digit numeric OTP and receive the authenticated session (Batch F).
+ */
+export async function verifyRegisterOtp(
+  pendingId: string,
+  otp: string,
+): Promise<LoginResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/register/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pending_id: pendingId, otp: otp.trim() }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok || !payload?.access_token || !payload.user) {
+    if (response.status === 400) {
+      const detail = typeof payload?.detail === "string" ? payload.detail : "";
+      if (detail.includes("expired")) {
+        throw new Error("otp_expired");
+      }
+      if (detail.includes("Maximum verification") || detail.includes("exceeded")) {
+        throw new Error("otp_max_attempts");
+      }
+      throw new Error("otp_invalid");
+    }
+    if (response.status === 409) {
+      throw new Error("duplicate_account");
+    }
+    throw new Error("verify_failed");
+  }
   return payload as unknown as LoginResponse;
+}
+
+/**
+ * Request a replacement 6-digit OTP for a pending registration (Batch F).
+ */
+export async function resendRegisterOtp(
+  pendingId: string,
+): Promise<ResendRegisterOtpResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/register/resend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pending_id: pendingId }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok || !payload?.pending_id) {
+    if (response.status === 429) {
+      throw new Error("rate_limit_exceeded");
+    }
+    if (response.status === 500) {
+      const code = extractErrorCode(payload);
+      if (code === "email_delivery_failed") {
+        throw new Error("email_delivery_failed");
+      }
+    }
+    throw new Error("resend_failed");
+  }
+  return payload as unknown as ResendRegisterOtpResponse;
 }
 
 export async function refreshSession(refreshToken: string): Promise<LoginResponse> {

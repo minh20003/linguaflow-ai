@@ -13,7 +13,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Values that look configured but are not. Everything here has been copied out
@@ -113,6 +113,16 @@ class Settings(BaseSettings):
     refresh_expire_days: int = Field(default=30, ge=1, le=90)
     password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
 
+    # Email & OTP Verification (Batch F)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "LinguaFlow"
+    smtp_use_tls: bool = True
+    email_provider: Literal["smtp", "console", "memory"] = "memory"
+
     @field_validator("database_url")
     @classmethod
     def database_url_must_name_an_async_driver(cls, v: str) -> str:
@@ -181,6 +191,33 @@ class Settings(BaseSettings):
                     f"{generate}"
                 )
         return v
+
+    @model_validator(mode="after")
+    def validate_production_and_email_config(self) -> "Settings":
+        """Enforce production email safety and validate required SMTP fields."""
+        if self.app_env == "production":
+            if self.email_provider in ("memory", "console"):
+                raise ValueError(
+                    f"EMAIL_PROVIDER='{self.email_provider}' is not allowed in production. "
+                    "Production requires EMAIL_PROVIDER='smtp' with valid SMTP credentials."
+                )
+            if self.email_provider == "smtp":
+                missing = []
+                if not self.smtp_host or not self.smtp_host.strip():
+                    missing.append("SMTP_HOST")
+                if not self.smtp_port:
+                    missing.append("SMTP_PORT")
+                if not self.smtp_user or not self.smtp_user.strip():
+                    missing.append("SMTP_USER")
+                if not self.smtp_password or not self.smtp_password.strip():
+                    missing.append("SMTP_PASSWORD")
+                if not self.smtp_from_email or not self.smtp_from_email.strip():
+                    missing.append("SMTP_FROM_EMAIL")
+                if missing:
+                    raise ValueError(
+                        f"Production SMTP configuration is missing required fields: {', '.join(missing)}"
+                    )
+        return self
 
 
 def configure_logging(settings: Settings | None = None) -> None:
