@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // The standalone bundle is required by the Docker frontend image. Vercel
+  // provides its own Next.js runtime and expects the default build output.
+  ...(process.env.VERCEL ? {} : { output: "standalone" }),
   async rewrites() {
     return [
       {
