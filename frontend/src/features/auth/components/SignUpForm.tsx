@@ -118,7 +118,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       {/* Title & Subtitle */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Create your account</h2>
-        <p className="text-sm text-slate-500 mt-1">Start chatting in 10+ languages effortlessly.</p>
+        <p className="text-sm text-slate-500 mt-1">Chat across 10+ languages with automatic translation.</p>
       </div>
 
       {/* Error Alert */}
@@ -151,7 +151,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
           <div className="w-full border-t border-slate-200" />
         </div>
         <div className="relative flex justify-center text-xs">
-          <span className="bg-white px-3 text-slate-400 font-medium">or continue with email</span>
+          <span className="bg-white px-3 text-slate-400 font-medium">Or continue with email</span>
         </div>
       </div>
 
@@ -343,7 +343,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             </>
           ) : (
             <>
-              <span>Create Account</span>
+              <span>Create account</span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}

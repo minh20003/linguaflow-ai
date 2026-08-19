@@ -122,7 +122,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
           <div className="w-full border-t border-slate-200" />
         </div>
         <div className="relative flex justify-center text-xs">
-          <span className="bg-white px-3 text-slate-400 font-medium">or continue with email</span>
+          <span className="bg-white px-3 text-slate-400 font-medium">Or continue with email</span>
         </div>
       </div>
 
@@ -219,11 +219,11 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
           {isLoading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Signing in...</span>
+              <span>Signing in…</span>
             </>
           ) : (
             <>
-              <span>Sign In</span>
+              <span>Sign in</span>
               <ArrowRight className="w-4 h-4" />
             </>
           )}

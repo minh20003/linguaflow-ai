@@ -69,7 +69,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({
             {user.name}
           </h4>
           <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] truncate">
-            @{user.username}
+            {user.email}
           </p>
           <div className="flex items-center gap-1.5 mt-1">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-[#2563EB]/10 text-[#2563EB] dark:bg-[#2563EB]/20">

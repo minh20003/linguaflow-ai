@@ -234,7 +234,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <h5 className="font-bold text-sm text-[#1E2230] dark:text-[#F5F6FA]">
                       {currentUser.name}
                     </h5>
-                    <p className="text-xs text-[#74798C]">@{currentUser.username}</p>
+                    <p className="text-xs text-[#74798C]">{currentUser.email}</p>
                   </div>
                 </div>
 
