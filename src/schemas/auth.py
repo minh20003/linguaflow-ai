@@ -120,6 +120,49 @@ class RegisterRequest(BaseModel):
         return normalized
 
 
+class PendingRegisterResponse(BaseModel):
+    """Response returned when registration request creates a pending OTP state."""
+
+    pending_id: str
+    email: str
+    expires_in_seconds: int = 300
+    cooldown_seconds: int = 60
+    message: str = "Verification code sent to your email"
+
+
+class VerifyRegisterRequest(BaseModel):
+    """Request schema for verifying a pending registration with a 6-digit numeric OTP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pending_id: str = Field(..., min_length=1, max_length=100)
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
+    @field_validator("otp")
+    @classmethod
+    def validate_ascii_digits(cls, value: str) -> str:
+        if not (len(value) == 6 and all(c in "0123456789" for c in value)):
+            raise ValueError("OTP must be exactly 6 ASCII digits (0-9)")
+        return value
+
+
+class ResendRegisterOtpRequest(BaseModel):
+    """Request schema for requesting a replacement OTP for a pending registration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pending_id: str = Field(..., min_length=1, max_length=100)
+
+
+class ResendRegisterOtpResponse(BaseModel):
+    """Response returned when replacement OTP is generated and sent."""
+
+    pending_id: str
+    expires_in_seconds: int = 300
+    cooldown_seconds: int = 60
+    message: str = "New verification code sent to your email"
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=32)
 

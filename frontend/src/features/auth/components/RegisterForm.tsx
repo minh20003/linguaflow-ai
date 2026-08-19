@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Button from "@/shared/ui/Button";
 import Input from "@/shared/ui/Input";
-import { register } from "@/shared/lib/api";
+import { register, resendRegisterOtp, verifyRegisterOtp } from "@/shared/lib/api";
 import { saveSession } from "@/shared/lib/auth-session";
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/shared/lib/constants";
 import { mainLabel } from "@/shared/lib/i18n";
@@ -41,11 +42,20 @@ function getPasswordStrength(pw: string): Strength | null {
 }
 
 export default function RegisterForm() {
+  const router = useRouter();
   useDocumentMetadata("meta.title.register", "meta.desc.register");
   /* The shared AuthCardHead picker controls the interface. Registration uses
      that one first-run selection to initialize the separate reading preference,
      so this form deliberately has no second language control. */
   const { lang } = useLanguage();
+
+  const [step, setStep] = useState<"form" | "otp">("form");
+  const [pendingId, setPendingId] = useState("");
+  const [registeredEmail, setRegisteredEmail] = useState("");
+  const [cooldownSeconds, setCooldownSeconds] = useState(60);
+  const [otp, setOtp] = useState("");
+  const [resending, setResending] = useState(false);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
   const [fullName, setFullName] = useState("");
   const [username, setUsername] = useState("");
@@ -61,6 +71,14 @@ export default function RegisterForm() {
 
   const strength = getPasswordStrength(password);
 
+  useEffect(() => {
+    if (step !== "otp" || cooldownSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [step, cooldownSeconds]);
+
   function validate(): boolean {
     const e: FieldErrors = {};
 
@@ -74,9 +92,6 @@ export default function RegisterForm() {
     } else if (normalizedUsername.length < MIN_USERNAME_LENGTH) {
       e.username = formMessage(lang, "usernameTooShort", { n: MIN_USERNAME_LENGTH });
     } else if (!isValidUsername(normalizedUsername)) {
-      // The rule first, then something they can actually type. A name with a
-      // space is the ordinary case here, and the server's own message for it
-      // arrives in English inside a 422 body.
       const suggestion = suggestUsername(normalizedUsername) || suggestUsername(normalizedFullName);
       e.username = suggestion
         ? `${formMessage(lang, "usernameCharset")} ${formMessage(lang, "example", { s: suggestion })}`
@@ -107,28 +122,102 @@ export default function RegisterForm() {
     return Object.keys(e).length === 0;
   }
 
-  async function handleSubmit(ev: React.FormEvent) {
+  async function handleRegisterSubmit(ev: React.FormEvent) {
     ev.preventDefault();
     setError(null);
+    setSuccessNotice(null);
     if (!validate()) return;
 
     setLoading(true);
     try {
       const result = await register({
         username: username.trim(),
-        // The name people are called by, kept apart from the handle they sign
-        // in with — one has spaces and diacritics, the other cannot.
         display_name: fullName.trim(),
-        email,
+        email: email.trim(),
         password,
         preferred_language: lang,
       });
-      saveSession(result, true);
-      window.location.href = "/chat";
-    } catch {
-      setError({ lang, message: formMessage(lang, "registerFailed") });
+      setPendingId(result.pending_id);
+      setRegisteredEmail(result.email || email.trim());
+      setPassword("");
+      setConfirmPassword("");
+      setCooldownSeconds(result.cooldown_seconds || 60);
+      setOtp("");
+      setStep("otp");
+    } catch (err) {
+      const code = (err as Error)?.message;
+      if (code === "duplicate_account") {
+        setError({ lang, message: formMessage(lang, "duplicateAccount") });
+      } else if (code === "rate_limit_exceeded") {
+        setError({ lang, message: formMessage(lang, "otpRateLimit") });
+      } else if (code === "email_delivery_failed") {
+        setError({ lang, message: formMessage(lang, "emailDeliveryFailed") });
+      } else {
+        setError({ lang, message: formMessage(lang, "registerFailed") });
+      }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleVerifySubmit(ev: React.FormEvent) {
+    ev.preventDefault();
+    setError(null);
+    setSuccessNotice(null);
+    const cleanOtp = otp.trim();
+    if (!cleanOtp) {
+      setError({ lang, message: formMessage(lang, "otpRequired") });
+      return;
+    }
+    if (!/^\d{6}$/.test(cleanOtp)) {
+      setError({ lang, message: formMessage(lang, "otpInvalidFormat") });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await verifyRegisterOtp(pendingId, cleanOtp);
+      saveSession(result, true);
+      router.push("/chat");
+    } catch (err) {
+      const code = (err as Error)?.message;
+      if (code === "otp_expired") {
+        setError({ lang, message: formMessage(lang, "otpExpired") });
+      } else if (code === "otp_max_attempts") {
+        setError({ lang, message: formMessage(lang, "otpMaxAttempts") });
+      } else if (code === "otp_invalid") {
+        setError({ lang, message: formMessage(lang, "otpInvalid") });
+      } else if (code === "duplicate_account") {
+        setError({ lang, message: formMessage(lang, "duplicateAccount") });
+      } else {
+        setError({ lang, message: formMessage(lang, "registerFailed") });
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResend() {
+    if (cooldownSeconds > 0 || resending) return;
+    setResending(true);
+    setError(null);
+    setSuccessNotice(null);
+    try {
+      const res = await resendRegisterOtp(pendingId);
+      setCooldownSeconds(res.cooldown_seconds || 60);
+      setOtp("");
+      setSuccessNotice(uiText(lang, "auth.otp.resent"));
+    } catch (err) {
+      const code = (err as Error)?.message;
+      if (code === "rate_limit_exceeded") {
+        setError({ lang, message: formMessage(lang, "otpRateLimit") });
+      } else if (code === "email_delivery_failed") {
+        setError({ lang, message: formMessage(lang, "emailDeliveryFailed") });
+      } else {
+        setError({ lang, message: formMessage(lang, "registerFailed") });
+      }
+    } finally {
+      setResending(false);
     }
   }
 
@@ -137,8 +226,79 @@ export default function RegisterForm() {
       ? { ...previous, fields: { ...previous.fields, [field]: undefined } }
       : previous);
 
+  if (step === "otp") {
+    return (
+      <form className={styles.form} onSubmit={handleVerifySubmit} noValidate>
+        <div className={styles.welcome}>
+          <h1 className={styles.loginTitle}>{uiText(lang, "auth.otp.title")}</h1>
+          <p className={styles.loginDescription}>
+            {formatUiText(lang, "auth.otp.description", { email: registeredEmail, minutes: 5 })}
+          </p>
+        </div>
+
+        <hr className={styles.divider} />
+
+        {visibleError && (
+          <div className={styles.formError} role="alert">
+            <span className={styles.errorMark} aria-hidden="true">
+              !
+            </span>
+            {visibleError}
+          </div>
+        )}
+
+        {successNotice && (
+          <div style={{ color: "var(--success)", fontSize: "var(--fs-small)" }} role="status">
+            {successNotice}
+          </div>
+        )}
+
+        <div className={styles.fields}>
+          <Input
+            id="register-otp"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            label={uiText(lang, "auth.otp.label")}
+            placeholder="000000"
+            value={otp}
+            maxLength={6}
+            onChange={(e) => {
+              const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+              setOtp(digits);
+              setError(null);
+            }}
+          />
+        </div>
+
+        <Button type="submit" size="lg" fullWidth loading={loading} disabled={otp.length !== 6}>
+          <span className={styles.actionMain}>{uiText(lang, "auth.otp.verify")}</span>
+        </Button>
+
+        <div className={styles.row}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={handleResend}
+            disabled={cooldownSeconds > 0 || resending}
+            loading={resending}
+          >
+            {cooldownSeconds > 0
+              ? formatUiText(lang, "auth.otp.resendWait", { s: cooldownSeconds })
+              : uiText(lang, "auth.otp.resend")}
+          </Button>
+        </div>
+
+        <p className={styles.footer}>
+          {uiText(lang, "auth.alreadyHaveAccount")} <Link href="/login">{mainLabel("signIn", lang)}</Link>
+        </p>
+      </form>
+    );
+  }
+
   return (
-    <form className={styles.form} onSubmit={handleSubmit} noValidate>
+    <form className={styles.form} onSubmit={handleRegisterSubmit} noValidate>
       <h1 className={styles.lede}>
         <span>{uiText(lang, "auth.register.oneAccount")}</span>
         <span>{formatUiText(lang, "auth.register.languagesReadable", { count: SUPPORTED_LANGUAGES.length })}</span>

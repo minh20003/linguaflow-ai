@@ -3,6 +3,7 @@
 import logging
 import mimetypes
 import re
+import secrets
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +40,7 @@ from src.database.models import (
     Conversation,
     Feedback,
     PasswordResetToken,
+    PendingRegistration,
     RefreshSession,
     TranslationResult,
     User,
@@ -50,13 +52,18 @@ from src.schemas.auth import (
     ForgotPasswordResponse,
     LoginRequest,
     LogoutRequest,
+    PendingRegisterResponse,
     RefreshRequest,
     RegisterRequest,
+    ResendRegisterOtpRequest,
+    ResendRegisterOtpResponse,
     ResetPasswordRequest,
     UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
     UserResponse,
+    VerifyRegisterRequest,
 )
+from src.services.email import EmailDeliveryError, send_registration_otp_email
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -142,40 +149,422 @@ async def _issue_auth_response(
     )
 
 
-@router.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+import math
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """Ensure a datetime object is timezone-aware with UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _generate_otp() -> str:
+    """Generate a zero-padded 6-digit numeric OTP."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+@router.post(
+    "/auth/register",
+    response_model=PendingRegisterResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-) -> AuthResponse:
-    """Create a durable account and start its first authenticated session."""
+) -> PendingRegisterResponse:
+    """Validate registration and create a pending identity awaiting email OTP verification (Batch F)."""
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
-    existing = duplicate.scalar_one_or_none()
-    if existing is not None:
-        detail = "Email is already registered" if existing.email == request.email else "Username is already registered"
+    existing_user = duplicate.scalar_one_or_none()
+    if existing_user is not None:
+        detail = "Email is already registered" if existing_user.email == request.email else "Username is already registered"
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
+    now = datetime.now(UTC)
+    otp = _generate_otp()
+    otp_hash = get_password_hash(otp)
+    password_hash = get_password_hash(request.password)
     display_name = (request.display_name or request.username).strip()
-    user = User(
+    cooldown_threshold = now - timedelta(seconds=60)
+    window_threshold = now - timedelta(seconds=3600)
+
+    # Check for existing pending registration by email or username
+    pending_query = await db.execute(
+        select(PendingRegistration).where(
+            (PendingRegistration.email == request.email) | (PendingRegistration.username == request.username)
+        )
+    )
+    existing_pending = pending_query.scalars().first()
+
+    if existing_pending is not None:
+        is_window_expired = PendingRegistration.rate_window_started_at <= window_threshold
+        stmt = (
+            update(PendingRegistration)
+            .where(
+                PendingRegistration.id == existing_pending.id,
+                PendingRegistration.last_sent_at <= cooldown_threshold,
+                (PendingRegistration.rate_window_started_at <= window_threshold)
+                | (PendingRegistration.request_count < 5),
+            )
+            .values(
+                email=request.email,
+                username=request.username,
+                display_name=display_name,
+                password_hash=password_hash,
+                preferred_language=request.preferred_language,
+                interface_language=request.preferred_language,
+                otp_hash=otp_hash,
+                attempts=0,
+                expires_at=now + timedelta(minutes=5),
+                last_sent_at=now,
+                rate_window_started_at=case(
+                    (is_window_expired, now),
+                    else_=PendingRegistration.rate_window_started_at,
+                ),
+                request_count=case(
+                    (is_window_expired, 1),
+                    else_=PendingRegistration.request_count + 1,
+                ),
+            )
+            .execution_options(synchronize_session=False)
+            .returning(
+                PendingRegistration.id,
+                PendingRegistration.email,
+            )
+        )
+        update_res = await db.execute(stmt)
+        updated_row = update_res.mappings().one_or_none()
+        if updated_row is not None:
+            await db.commit()
+            pending_id = updated_row["id"]
+        else:
+            # Conditional update failed: check if due to cooldown or rate limit
+            pending = await db.get(PendingRegistration, existing_pending.id)
+            if pending is not None:
+                last_sent = _ensure_utc(pending.last_sent_at)
+                remaining_cooldown = math.ceil(60 - (now - last_sent).total_seconds())
+                if remaining_cooldown > 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Please wait before requesting another code.",
+                        headers={"Retry-After": str(max(1, remaining_cooldown))},
+                    )
+                win_start = _ensure_utc(pending.rate_window_started_at)
+                if pending.request_count >= 5 and (now - win_start).total_seconds() < 3600:
+                    retry_after = math.ceil(3600 - (now - win_start).total_seconds())
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Too many verification requests. Please try again later.",
+                        headers={"Retry-After": str(max(1, retry_after))},
+                    )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Please wait before requesting another code.",
+                headers={"Retry-After": "60"},
+            )
+    else:
+        pending = PendingRegistration(
+            email=request.email,
+            username=request.username,
+            display_name=display_name,
+            password_hash=password_hash,
+            preferred_language=request.preferred_language,
+            interface_language=request.preferred_language,
+            otp_hash=otp_hash,
+            expires_at=now + timedelta(minutes=5),
+            attempts=0,
+            last_sent_at=now,
+            rate_window_started_at=now,
+            request_count=1,
+        )
+        db.add(pending)
+        try:
+            await db.commit()
+            pending_id = pending.id
+        except IntegrityError as exc:
+            await db.rollback()
+            # Concurrent insertion raced for this email/username:
+            # check the newly inserted row and apply cooldown/rate limits
+            raced_pending = (
+                await db.execute(
+                    select(PendingRegistration).where(
+                        (PendingRegistration.email == request.email)
+                        | (PendingRegistration.username == request.username)
+                    )
+                )
+            ).scalars().first()
+            if raced_pending is not None:
+                last_sent = _ensure_utc(raced_pending.last_sent_at)
+                remaining = math.ceil(60 - (now - last_sent).total_seconds())
+                if remaining > 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Please wait before requesting another code.",
+                        headers={"Retry-After": str(max(1, remaining))},
+                    )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email or username is already registered",
+            ) from exc
+
+    # Delivery occurs strictly AFTER database commit
+    try:
+        await send_registration_otp_email(
+            to_email=request.email,
+            otp=otp,
+            language=request.preferred_language,
+        )
+    except EmailDeliveryError as exc:
+        logger.error("Email delivery failed for pending registration %s: %s", pending_id, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="email_delivery_failed",
+        ) from None
+
+    return PendingRegisterResponse(
+        pending_id=pending_id,
         email=request.email,
-        username=request.username,
-        display_name=display_name,
-        password_hash=get_password_hash(request.password),
-        preferred_language=request.preferred_language,
-        # One language question at sign-up, two settings behind it. Someone who
-        # picks Japanese wants to read Japanese *and* see a Japanese menu; the
-        # two only part company later, if they go and change one of them
-        # (docs/CONTRACT.md §1.3).
-        interface_language=request.preferred_language,
+        expires_in_seconds=300,
+        cooldown_seconds=60,
+        message="Verification code sent to your email",
+    )
+
+
+@router.post("/auth/register/resend", response_model=ResendRegisterOtpResponse)
+async def resend_register_otp(
+    request: ResendRegisterOtpRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ResendRegisterOtpResponse:
+    """Request a replacement 6-digit OTP for a pending registration."""
+    now = datetime.now(UTC)
+    otp = _generate_otp()
+    otp_hash = get_password_hash(otp)
+    cooldown_threshold = now - timedelta(seconds=60)
+    window_threshold = now - timedelta(seconds=3600)
+
+    is_window_expired = PendingRegistration.rate_window_started_at <= window_threshold
+    stmt = (
+        update(PendingRegistration)
+        .where(
+            PendingRegistration.id == request.pending_id,
+            PendingRegistration.last_sent_at <= cooldown_threshold,
+            (PendingRegistration.rate_window_started_at <= window_threshold)
+            | (PendingRegistration.request_count < 5),
+        )
+        .values(
+            otp_hash=otp_hash,
+            attempts=0,
+            expires_at=now + timedelta(minutes=5),
+            last_sent_at=now,
+            rate_window_started_at=case(
+                (is_window_expired, now),
+                else_=PendingRegistration.rate_window_started_at,
+            ),
+            request_count=case(
+                (is_window_expired, 1),
+                else_=PendingRegistration.request_count + 1,
+            ),
+        )
+        .execution_options(synchronize_session=False)
+        .returning(
+            PendingRegistration.id,
+            PendingRegistration.email,
+            PendingRegistration.interface_language,
+        )
+    )
+    update_res = await db.execute(stmt)
+    row = update_res.mappings().one_or_none()
+    if row is not None:
+        await db.commit()
+        # Delivery occurs strictly AFTER database commit
+        try:
+            await send_registration_otp_email(
+                to_email=row["email"],
+                otp=otp,
+                language=row["interface_language"],
+            )
+        except EmailDeliveryError as exc:
+            logger.error("Email delivery failed for pending registration %s: %s", row["id"], type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="email_delivery_failed",
+            ) from None
+
+        return ResendRegisterOtpResponse(
+            pending_id=row["id"],
+            expires_in_seconds=300,
+            cooldown_seconds=60,
+            message="New verification code sent to your email",
+        )
+
+    # If update matched 0 rows, check reasons (not found, cooldown, or rate limit)
+    pending = await db.get(PendingRegistration, request.pending_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pending registration not found or already verified",
+        )
+
+    last_sent = _ensure_utc(pending.last_sent_at)
+    remaining_cooldown = math.ceil(60 - (now - last_sent).total_seconds())
+    if remaining_cooldown > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Please wait before requesting another code.",
+            headers={"Retry-After": str(max(1, remaining_cooldown))},
+        )
+
+    win_start = _ensure_utc(pending.rate_window_started_at)
+    if pending.request_count >= 5 and (now - win_start).total_seconds() < 3600:
+        retry_after = math.ceil(3600 - (now - win_start).total_seconds())
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many verification requests. Please try again later.",
+            headers={"Retry-After": str(max(1, retry_after))},
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Please wait before requesting another code.",
+        headers={"Retry-After": "60"},
+    )
+
+
+@router.post("/auth/register/verify", response_model=AuthResponse)
+async def verify_register_otp(
+    request: VerifyRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Verify 6-digit OTP, consume pending registration, and create authenticated user account."""
+    pending = await db.get(PendingRegistration, request.pending_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification session",
+        )
+
+    now = datetime.now(UTC)
+    expires_at = _ensure_utc(pending.expires_at)
+
+    if pending.attempts >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum verification attempts exceeded. Please request a new code.",
+        )
+
+    if now >= expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired. Please request a new code.",
+        )
+
+    if not verify_password(request.otp, pending.otp_hash):
+        update_stmt = (
+            update(PendingRegistration)
+            .where(
+                PendingRegistration.id == request.pending_id,
+                PendingRegistration.otp_hash == pending.otp_hash,
+                PendingRegistration.expires_at > now,
+                PendingRegistration.attempts < 3,
+            )
+            .values(attempts=PendingRegistration.attempts + 1)
+            .execution_options(synchronize_session=False)
+            .returning(PendingRegistration.attempts)
+        )
+        update_res = await db.execute(update_stmt)
+        new_attempts = update_res.scalar_one_or_none()
+        await db.commit()
+
+        if new_attempts is None or new_attempts >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum verification attempts exceeded. Please request a new code.",
+            )
+        remaining = max(0, 3 - new_attempts)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
+        )
+
+    # Atomic conditional DELETE ... RETURNING
+    delete_stmt = (
+        delete(PendingRegistration)
+        .where(
+            PendingRegistration.id == request.pending_id,
+            PendingRegistration.otp_hash == pending.otp_hash,
+            PendingRegistration.expires_at > now,
+            PendingRegistration.attempts < 3,
+        )
+        .execution_options(synchronize_session=False)
+        .returning(
+            PendingRegistration.id,
+            PendingRegistration.email,
+            PendingRegistration.username,
+            PendingRegistration.display_name,
+            PendingRegistration.password_hash,
+            PendingRegistration.preferred_language,
+            PendingRegistration.interface_language,
+        )
+    )
+    delete_res = await db.execute(delete_stmt)
+    consumed = delete_res.mappings().one_or_none()
+    if consumed is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code already used or invalid.",
+        )
+
+    # Check for existing user conflict
+    duplicate = await db.execute(
+        select(User).where((User.email == consumed["email"]) | (User.username == consumed["username"]))
+    )
+    existing = duplicate.scalar_one_or_none()
+    if existing is not None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already registered",
+        )
+
+    # Create User and initial RefreshSession in the same single transaction
+    user = User(
+        email=consumed["email"],
+        username=consumed["username"],
+        display_name=consumed["display_name"],
+        password_hash=consumed["password_hash"],
+        preferred_language=consumed["preferred_language"],
+        interface_language=consumed["interface_language"],
+        role="member",
     )
     db.add(user)
     try:
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or username is already registered") from exc
-    return await _issue_auth_response(user, db, remember=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already registered",
+        ) from exc
+
+    settings = get_settings()
+    refresh_token = create_refresh_token()
+    refresh_days = settings.refresh_expire_days
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=hash_refresh_token(refresh_token),
+            expires_at=datetime.now(UTC) + timedelta(days=refresh_days),
+        )
+    )
+    await db.commit()
+
+    return AuthResponse(
+        access_token=create_access_token(subject=user.id),
+        refresh_token=refresh_token,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.post("/auth/login", response_model=AuthResponse)

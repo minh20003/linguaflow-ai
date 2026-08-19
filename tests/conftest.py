@@ -8,12 +8,17 @@ import tempfile
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
+os.environ["EMAIL_PROVIDER"] = "memory"
+
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from src.config import get_settings
+get_settings.cache_clear()
 
 from src.api.routes import router as api_router
 from src.api.websocket import get_connection_manager

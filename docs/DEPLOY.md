@@ -119,6 +119,11 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `REFRESH_EXPIRE_DAYS` | 30 | |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | 30 | |
 | `FALLBACK_TRANSLATOR_ENABLED` | `true` | Xem cảnh báo quyền riêng tư ở ADR-15 |
+| `EMAIL_PROVIDER` | `smtp` | `smtp` \| `console` \| `memory`. Ở `APP_ENV=production` bắt buộc dùng `smtp`, cấm `memory`/`console` |
+| `SMTP_HOST`, `SMTP_PORT` | `smtp.gmail.com` / `587` | Bắt buộc ở production khi dùng SMTP |
+| `SMTP_USER`, `SMTP_PASSWORD` | — | Bắt buộc ở production |
+| `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP |
+| `SMTP_USE_TLS` | `true` | Bật STARTTLS cho cổng 587 |
 | `LANGFUSE_*` | rỗng | Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
 
 ### 5.1. Khoá bí mật — cần cấp những gì
@@ -128,9 +133,24 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `JWT_SECRET` | **Có** | Tiến trình dừng ngay lúc khởi động |
 | `GROQ_API_KEY` (hoặc khoá của provider đang chọn) | **Có, trên thực tế** | Server vẫn chạy, nhưng mọi tin nhắn rơi xuống đường dự phòng rồi trả nguyên bản |
 | `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Có, ở production** | Server từ chối khởi động nếu thiếu ở `APP_ENV=production` |
 | `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
 | `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
+
+### 5.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)
+
+- **Production (`APP_ENV=production`)**:
+  - Bắt buộc `EMAIL_PROVIDER=smtp`.
+  - Hệ thống kiểm tra nghiêm ngặt lúc khởi động (fail-fast) và **từ chối chạy** nếu cấu hình là `memory` hoặc `console`, hoặc thiếu bất kỳ biến nào trong: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`.
+  - Không bao giờ silent-drop email nếu SMTP gặp lỗi kết nối/xác thực.
+- **Môi trường Test & Development**:
+  - Mặc định sử dụng `EMAIL_PROVIDER=memory` (hoặc `console` khi phát triển cục bộ).
+  - Memory provider lưu trữ danh sách email gửi đi trong bộ nhớ tiến trình (`_memory_sender.sent_emails`), cho phép test suite chạy độc lập không phụ thuộc vào internet hay dịch vụ SMTP bên ngoài.
+- **Nguyên tắc bảo mật OTP**:
+  - Tuyệt đối **không ghi log** mã OTP plaintext ở bất kỳ cấp độ log nào.
+  - Cơ sở dữ liệu chỉ lưu trữ băm một chiều (bcrypt hash) của mã OTP trong bảng `pending_registrations`.
+  - Validation error 422 tự động redact toàn bộ mật khẩu, mã OTP, token ở mọi độ sâu dữ liệu.
 
 **Nguyên tắc:** `.env` chứa giá trị thật và **không bao giờ được commit**;
 `.env.example` là bản mẫu **được commit** nên mọi giá trị trong đó là công khai
