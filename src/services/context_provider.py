@@ -7,6 +7,12 @@ structurally — the agent depends on the shape, not on this module.
 Context lines are read from `messages.original_text`. Per ADR-01 the `messages`
 table is the single source of context; there is no separate store to fall out of
 sync with it.
+
+Withdrawn messages are excluded. `original_text` survives a withdrawal in the
+database, and the API blanks it out on the way to the client
+(`src/api/routes.py`, `src/services/chat.py`); the agent has to honour the same
+boundary, or a sender who withdrew a message would still see its wording reach
+the model — and, through the model, a recipient.
 """
 
 from __future__ import annotations
@@ -53,9 +59,10 @@ class DatabaseContextProvider:
             limit: Maximum number of messages to return.
 
         Returns:
-            Lines formatted as ``U01: text``, oldest first. Empty when the
-            conversation has no other messages, or on any read failure —
-            missing context degrades the translation but must not block it.
+            Lines formatted as ``U01: text``, oldest first. Withdrawn and
+            text-free messages are left out. Empty when the conversation has no
+            other messages, or on any read failure — missing context degrades
+            the translation but must not block it.
         """
         if not conversation_id or limit <= 0:
             return []
@@ -65,7 +72,15 @@ class DatabaseContextProvider:
         # a sort over the whole conversation.
         query = (
             select(Message)
-            .where(Message.conversation_id == conversation_id)
+            .where(
+                Message.conversation_id == conversation_id,
+                # Withdrawn: nobody can read it in the app any more, so nothing
+                # of it may reach the model either.
+                Message.deleted_at.is_(None),
+                # Attachment-only messages carry no text; an empty line would
+                # cost tokens and tell the model nothing.
+                Message.original_text != "",
+            )
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(limit)
         )

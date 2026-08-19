@@ -3,12 +3,13 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy import select, update
 
-from src.core.security import get_password_hash, verify_password
+from src.core.security import get_password_hash
 from src.database.models import PendingRegistration, RefreshSession, User
-from src.services.email import EMAIL_TEMPLATES, _memory_sender, get_email_sender, send_registration_otp_email
+from src.services.email import EMAIL_TEMPLATES, _memory_sender
 
 
 @pytest.fixture(autouse=True)
@@ -635,8 +636,9 @@ async def test_successful_verify_creates_exactly_one_user_and_one_initial_refres
 
 def test_production_rejects_memory_and_console():
     """Production configuration must reject memory and console email providers."""
-    from src.config import Settings
     import pydantic
+
+    from src.config import Settings
 
     with pytest.raises(pydantic.ValidationError) as exc_memory:
         Settings(
@@ -657,8 +659,9 @@ def test_production_rejects_memory_and_console():
 
 def test_production_smtp_missing_required_config_fails_validation():
     """Production SMTP configuration must fail fast if required credentials/host are missing."""
-    from src.config import Settings
     import pydantic
+
+    from src.config import Settings
 
     with pytest.raises(pydantic.ValidationError) as exc_missing_all:
         Settings(
@@ -714,6 +717,7 @@ def test_memory_provider_remains_usable_in_tests():
 async def test_provider_exception_returns_stable_failure_and_does_not_reset_abuse_budget(client, test_db, monkeypatch):
     """Email delivery failure returns 500 without resetting abuse budget or rolling back pending row."""
     from unittest.mock import AsyncMock
+
     from src.services import email as email_module
 
     # Mock email sender to fail
@@ -777,6 +781,7 @@ async def test_resend_email_delivery_error_returns_typed_code(client, test_db, m
 
     # Mock email sender to fail
     from unittest.mock import AsyncMock
+
     from src.services import email as email_module
 
     mock_send = AsyncMock(side_effect=RuntimeError("SMTP connection dropped"))
@@ -804,6 +809,7 @@ async def test_resend_email_delivery_error_returns_typed_code(client, test_db, m
 async def test_unrelated_exception_not_classified_as_email_delivery_failed(client, test_db, monkeypatch):
     """Unrelated exceptions (RuntimeError, ValueError) during email delivery are NOT classified as email_delivery_failed."""
     from unittest.mock import AsyncMock
+
     from src.api import routes as routes_module
 
     # Mock send_registration_otp_email to raise an unexpected non-EmailDeliveryError exception
@@ -909,7 +915,7 @@ async def test_password_and_otp_absent_from_422_response_bodies(client):
 
 def test_recursive_validation_error_secret_redaction():
     """Recursive sanitization redacts sensitive fields at arbitrary depth while preserving non-sensitive data."""
-    from src.main import _sanitize_sensitive_data, _redact_validation_errors
+    from src.main import _redact_validation_errors, _sanitize_sensitive_data
 
     # 1. Nested credentials dict
     nested_input = {
@@ -1068,6 +1074,7 @@ async def test_resend_delivery_failure_committed_state_and_old_otp_invalid(clien
 
     # Force delivery failure
     from unittest.mock import AsyncMock
+
     from src.services import email as email_module
     mock_send = AsyncMock(side_effect=RuntimeError("SMTP dropped connection"))
     monkeypatch.setattr(email_module._memory_sender, "send", mock_send)
@@ -1096,6 +1103,7 @@ async def test_resend_delivery_failure_committed_state_and_old_otp_invalid(clien
 async def test_initial_registration_provider_failure_explicit_user_and_session_count_zero(client, test_db, monkeypatch):
     """Initial registration EmailDeliveryError commits pending row with strictly 0 users and 0 sessions."""
     from unittest.mock import AsyncMock
+
     from src.services import email as email_module
     mock_send = AsyncMock(side_effect=RuntimeError("SMTP timeout"))
     monkeypatch.setattr(email_module._memory_sender, "send", mock_send)
@@ -1126,6 +1134,7 @@ async def test_secret_logging_proof_password_otp_and_raw_exception_absent(client
     """Captured application logs never contain plaintext password, plaintext OTP, or raw provider exception text."""
     import logging
     from unittest.mock import AsyncMock
+
     from src.services import email as email_module
 
     raw_smtp_error = "RAW_SMTP_SOCKET_TIMEOUT_CONNECTION_ABORTED_XYZ_123"

@@ -7,9 +7,14 @@ reached through the chat flow, not from here; see `src/agents/graph.py`.
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 
 from src.agents.observability import verify_langfuse_credentials
 from src.api.metrics import router as metrics_router
@@ -45,8 +50,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-
-from typing import Any
 
 _SENSITIVE_FIELD_NAMES = frozenset({
     "password",
@@ -90,12 +93,6 @@ def _redact_validation_errors(errors: list[dict]) -> list[dict]:
             item["input"] = _sanitize_sensitive_data(item["input"])
         cleaned.append(item)
     return cleaned
-
-
-from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
-from fastapi.requests import Request
-from fastapi.responses import JSONResponse
 
 
 @app.exception_handler(RequestValidationError)

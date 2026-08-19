@@ -7,6 +7,7 @@ across all feature areas.
 from __future__ import annotations
 
 import itertools
+import re
 
 import pytest
 import pytest_asyncio
@@ -14,8 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import get_password_hash
 from src.database.models import User
-
-import re
 from src.services.email import _memory_sender
 
 _next_username = itertools.count()

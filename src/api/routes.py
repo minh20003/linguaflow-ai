@@ -1,6 +1,7 @@
 """API routes for the application."""
 
 import logging
+import math
 import mimetypes
 import re
 import secrets
@@ -63,7 +64,6 @@ from src.schemas.auth import (
     UserResponse,
     VerifyRegisterRequest,
 )
-from src.services.email import EmailDeliveryError, send_registration_otp_email
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -95,6 +95,7 @@ from src.services.chat import (
     TranslationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.email import EmailDeliveryError, send_registration_otp_email
 from src.services.translation import schedule_translations
 
 logger = logging.getLogger(__name__)
@@ -147,9 +148,6 @@ async def _issue_auth_response(
         refresh_token=refresh_token,
         user=UserResponse.model_validate(user),
     )
-
-
-import math
 
 
 def _ensure_utc(dt: datetime) -> datetime:
