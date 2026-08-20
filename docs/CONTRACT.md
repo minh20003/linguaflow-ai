@@ -154,6 +154,12 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/conversations/{conversation_id}/read` | — | `{"unread_count": 0}` | Đã hiện thực |
 | `GET` | `/conversations` | — | `[ConversationDTO]`, xem §3.5 | Đã hiện thực |
 | `GET` | `/stats?days=` | — | Xem §3.4 | Đã hiện thực |
+| `GET` | `/admin/glossary/proposals?status=&limit=` | — | `[GlossaryProposalDTO]`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/proposals/{proposal_id}/approve` | `{"source_term"?, "target_term"?, "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/proposals/{proposal_id}/reject` | `{"reason": str}` | `GlossaryProposalDTO`, §3.12 | Đã hiện thực |
+| `GET` | `/admin/glossary?include_retired=&limit=` | — | `[GlossaryEntryDTO]`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary` | `{"source_term", "target_term", "source_language", "target_language", "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -437,6 +443,40 @@ Quy trình đăng ký tài khoản được bảo vệ qua 2 bước bằng mã 
      }
      ```
    - Nếu delivery thất bại (`EmailDeliveryError`), trả về `500` với `{"detail": "email_delivery_failed"}` nhưng vẫn bảo toàn bản ghi `request_count` và cooldown đã commit trong DB.
+
+### 3.12. Glossary và hàng đợi duyệt (chỉ quản trị viên)
+
+Sáu endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
+nhận `403 Forbidden`. Gác đặt trên **từng** endpoint chứ không dựa vào tiền tố đường dẫn:
+`users.role` so với chuỗi `"admin"` là toàn bộ mô hình phân quyền của dự án (§5 ghi chú 1),
+không có middleware nào đứng sau, nên một dependency bị quên trông y hệt mã đang chạy đúng.
+
+**`GlossaryProposalDTO` cố ý không mang gì hơn.** Nó có cặp thuật ngữ, `occurrence_count`,
+`distinct_user_count`, `rationale`, và các `citations` đã ẩn danh — **không** có người gửi,
+**không** có `conversation_id`, **không** có `message_id`. Quản trị viên bị cấm đọc nội dung
+hội thoại (`docs/NewFeature.md` sơ đồ 2), và cách giữ điều đó thành sự thật là để DTO
+**không có chỗ nào đặt những thứ ấy vào**. Trong hai con số, `distinct_user_count` mới là
+con số để phán xét: năm lần sửa của một người là sở thích cá nhân, hai lần của hai người là
+một quy ước đang hình thành (ADR-28).
+
+**Duyệt được phép sửa đề xuất ngay lúc duyệt.** Câu trả lời của miner đến từ một model đọc
+các đoạn trích ẩn danh; người duyệt mới là người biết đội mình thật sự nói thế nào. Bắt họ
+từ chối rồi thêm tay lại một thuật ngữ gần đúng là cách nhanh nhất để hàng đợi không còn ai
+làm.
+
+**Từ chối bắt buộc có lý do**, và dòng bị từ chối **giữ lại vĩnh viễn** kèm embedding: đó là
+thứ để miner nhận ra cùng thuật ngữ đó tuần sau viết khác đi và không hỏi lại (ADR-28). Vài
+tháng sau sẽ có người muốn biết vì sao một thuật ngữ trông rất hợp lý lại không bao giờ vào
+được, và chữ "rejected" một mình không trả lời được.
+
+**Quyết định hai lần trên cùng một đề xuất trả `409 Conflict`**, không phải `200`. Hai người
+cùng làm hàng đợi sẽ đều tin mình là người đã duyệt, và quyết định sau âm thầm ghi đè quyết
+định trước — kể cả lý do của nó.
+
+**`DELETE /admin/glossary/{id}` không xoá.** Nó đổi `status` thành `retired`. Một bản dịch
+giao tháng trước được định hình bởi thuật ngữ đang active lúc đó; xoá dòng là xoá mất lời
+giải thích duy nhất cho câu chữ người đọc đang nhìn. Nghỉ hưu thì nó thôi định hình những
+bản dịch mới (§5 ghi chú 16).
 
 ## 4. WebSocket Protocol
 
