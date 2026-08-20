@@ -10,6 +10,16 @@ export interface ConversationMember {
   username: string | null;
   display_name: string | null;
   preferred_language: string;
+  /**
+   * How this member is addressed *in this conversation* (docs/CONTRACT.md §5,
+   * note 15). One of `senior | peer | junior | client`, defaulting to `peer`
+   * until the server has inferred anything.
+   *
+   * Per conversation, not per account: the same person is a junior colleague
+   * in one thread and a client in another. This is where the client reads its
+   * own standing from in order to match it against `TranslationSummary`.
+   */
+  honorific_profile: string;
 }
 
 export interface Conversation {
@@ -35,6 +45,15 @@ export interface Conversation {
 export interface TranslationSummary {
   translation_id: string;
   target_language: string;
+  /**
+   * The standing this wording addresses the reader with.
+   *
+   * Read together with `target_language`, never on its own and never ignored:
+   * one message can hold several translations into one language that differ
+   * only here (docs/CONTRACT.md §3.2). Matching on the language alone picks
+   * whichever happens to come first, which is a wrong register with no error.
+   */
+  honorific_profile: string;
   translated_text: string;
   model: string;
   latency_ms: number;
@@ -267,7 +286,14 @@ export function submitTranslationEdit(
   translationId: string,
   editedText: string,
   token?: string,
-): Promise<TranslationEditSummary & { translation_id: string; message_id: string; target_language: string }> {
+): Promise<
+  TranslationEditSummary & {
+    translation_id: string;
+    message_id: string;
+    target_language: string;
+    honorific_profile: string;
+  }
+> {
   return request(
     `/translations/${encodeURIComponent(translationId)}/edits`,
     token,
