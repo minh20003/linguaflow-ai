@@ -146,7 +146,7 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/conversations` | `{"type": "direct" \| "group", "member_ids": [uuid], "title": str \| null}` | `ConversationDTO`, `201` khi tạo mới và `200` khi dùng lại — xem §3.5 | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `[MessageDTO]` — mảng trần, xem ghi chú §3.2 | Đã hiện thực |
 | `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Đã hiện thực |
-| `POST` | `/translations/{translation_id}/edits` | `{"edited_text": str}` | `TranslationEditDTO`, xem §3.10 | **Đề xuất** |
+| `POST` | `/translations/{translation_id}/edits` | `{"edited_text": str, "consent_to_share": bool}` | `TranslationEditDTO`, xem §3.10 | Đã hiện thực |
 | `PATCH` | `/conversations/{conversation_id}/messages/{message_id}` | `{"text": str}` | `MessageDTO`, xem §3.6 | Đã hiện thực |
 | `DELETE` | `/conversations/{conversation_id}/messages/{message_id}` | — | `204 No Content` | Đã hiện thực |
 | `POST` | `/conversations/{conversation_id}/attachments` | `multipart/form-data`, trường `file` | `AttachmentDTO`, xem §3.7 | Đã hiện thực |
@@ -381,6 +381,8 @@ Không có trường `edited_by`: người viết luôn là tài khoản đang g
 Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại chỉ có một người nhận và một bản dịch: họ nhìn thấy trọn vẹn cả bản gốc lẫn bản dịch nên đánh giá được, và cái họ gạt qua gạt lại là chính hai văn bản đó. Ở `group` thì không: một tin nhắn có nhiều bản dịch, không có "bản dịch của tin này" để mà gạt hay chấm điểm, nên người gửi không thấy nút nào và ai đọc ngôn ngữ nào thì góp ý cho ngôn ngữ ấy.
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
+
+**`consent_to_share` (thêm 20/08).** Mặc định `false`, và phải được hỏi tường minh chứ không suy đoán. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
 
 **Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
 

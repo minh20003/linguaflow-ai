@@ -14,12 +14,13 @@ call is not affordable.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.customization import Customization
-from src.database.models import ConversationProfile
+from src.database.models import ConversationProfile, Message
 from src.services.glossary import lookup_terms
 
 logger = logging.getLogger(__name__)
@@ -89,3 +90,61 @@ class DatabaseCustomizationProvider:
             terms = ()
 
         return Customization(domain=domain, audience=audience, glossary_terms=terms)
+
+
+@dataclass(frozen=True)
+class MessageProfile:
+    """What a message's conversation is about, and what language it was in.
+
+    A small read used off the translation path — by the correction recorder,
+    which needs to stamp a correction with the conditions it was made under.
+    Copied at the time rather than looked up later: a conversation profile is
+    re-inferred as evidence accumulates, and this row is evidence about the
+    conversation *as it was* when somebody objected to a wording.
+    """
+
+    source_language: str = ""
+    domain: str = ""
+    audience: str = ""
+
+
+async def resolve_conversation_profile(
+    session: AsyncSession, message_id: str
+) -> MessageProfile:
+    """Read the source language and inferred profile behind one message.
+
+    Returns empty fields rather than raising. Every caller is doing something
+    optional with the result, and a message whose conversation has never been
+    profiled is the ordinary case, not an error.
+    """
+    if not message_id:
+        return MessageProfile()
+
+    try:
+        row = (
+            await session.execute(
+                select(
+                    Message.source_language,
+                    ConversationProfile.domain,
+                    ConversationProfile.audience,
+                )
+                .select_from(Message)
+                .outerjoin(
+                    ConversationProfile,
+                    ConversationProfile.conversation_id == Message.conversation_id,
+                )
+                .where(Message.id == message_id)
+            )
+        ).first()
+    except Exception as exc:
+        logger.warning("Reading the profile behind a message failed: %s", exc)
+        return MessageProfile()
+
+    if row is None:
+        return MessageProfile()
+    source_language, domain, audience = row
+    return MessageProfile(
+        source_language=source_language or "",
+        domain=domain or "",
+        audience=audience or "",
+    )

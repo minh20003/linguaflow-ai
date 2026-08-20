@@ -1,4 +1,4 @@
-.PHONY: run migrate revision reset-db test lint format typecheck check clean metrics
+.PHONY: run migrate revision reset-db test lint format typecheck check clean metrics glossary-mine
 
 run:
 	uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
@@ -29,6 +29,12 @@ test:
 # quality against the golden set.
 metrics:
 	python scripts/report_metrics.py
+
+# Proposes glossary entries from corrections several people made the same way.
+# Costs quota: one model call per surviving cluster, so run it deliberately
+# rather than on every push. `--no-write` prints what it would create.
+glossary-mine:
+	python scripts/mine_glossary.py --since 7d
 
 lint:
 	ruff check src/ tests/ eval/
