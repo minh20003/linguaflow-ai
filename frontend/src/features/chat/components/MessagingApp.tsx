@@ -95,6 +95,8 @@ type ChatMessage = {
   /** Which language `translatedText` is in — mine when reading, the other
    *  person's when this is my own message in a one-to-one chat (§3.10). */
   translationLanguage?: string;
+  /** Standing the attached translation was written for; see chat-api.ts. */
+  translationProfile?: string;
   /** F-04: the reader flipped this bubble away from its default view. */
   flipped?: boolean;
   /** F-05: this account's own verdict on the translation, if it has one. */
@@ -353,6 +355,7 @@ function toChatMessage(
     translatedText: attached?.translated_text,
     translationId: attached?.translation_id,
     translationLanguage: attached?.target_language,
+    translationProfile: attached?.honorific_profile,
     isFallback: attached?.is_fallback,
     myRating: attached?.my_rating ?? null,
     myCorrection: attached?.my_correction ?? null,
@@ -898,26 +901,40 @@ export default function MessagingApp() {
       if (event.target_language === myLanguage) {
         retranslatePreview(event.conversation_id, event.message_id, event.translated_text);
       }
+      // Which of the two an outgoing bubble wants is decided exactly as
+      // `toChatMessage` decides it on reload. This used to overwrite
+      // unconditionally, so in a one-to-one chat the sender received both
+      // events and whichever arrived last won: the bubble's controls ended up
+      // acting on a translation chosen by network timing, and a reload silently
+      // moved them to the other one.
+      const conversation = conversationItemsRef.current.find(
+        (item) => item.id === event.conversation_id,
+      );
+      const counterpartLanguage = conversation
+        ? counterpartLanguageOf(conversation, myId)
+        : undefined;
       setMessages((current) => {
         const thread = current[event.conversation_id];
         if (!thread) return current;
         return {
           ...current,
-          [event.conversation_id]: thread.map((existing) =>
-            existing.id === event.message_id
-              ? {
-                  ...existing,
-                  translatedText: event.translated_text,
-                  translationId: event.translation_id,
-                  translationLanguage: event.target_language,
-                  isFallback: event.is_fallback,
-                  sourceLanguage: event.source_language,
-                }
-              : existing,
-          ),
+          [event.conversation_id]: thread.map((existing) => {
+            if (existing.id !== event.message_id) return existing;
+            const wanted = existing.author === "me" ? counterpartLanguage : myLanguage;
+            if (!wanted || event.target_language !== wanted) return existing;
+            return {
+              ...existing,
+              translatedText: event.translated_text,
+              translationId: event.translation_id,
+              translationLanguage: event.target_language,
+              translationProfile: event.honorific_profile,
+              isFallback: event.is_fallback,
+              sourceLanguage: event.source_language,
+            };
+          }),
         };
       });
-    }, [myLanguage, retranslatePreview]),
+    }, [myId, myLanguage, retranslatePreview]),
 
     onTyping: useCallback((event: TypingNotice) => {
       setTypingBy((current) => {
@@ -944,6 +961,7 @@ export default function MessagingApp() {
                   translatedText: undefined,
                   translationId: undefined,
                   translationLanguage: undefined,
+                  translationProfile: undefined,
                   translationSettled: false,
                   myRating: null,
                   myCorrection: null,
@@ -1263,6 +1281,7 @@ export default function MessagingApp() {
             translatedText: undefined,
             translationId: undefined,
             translationLanguage: undefined,
+            translationProfile: undefined,
             translationSettled: false,
             // The server dropped the old translation, and the rating and edit
             // went with it — keeping them would show a verdict, and this

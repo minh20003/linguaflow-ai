@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-import tempfile
+import uuid
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock
 
@@ -15,9 +15,43 @@ import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from src.config import get_settings
+
+
+def _derive_test_database_url() -> str:
+    """Name the one database this suite is allowed to destroy.
+
+    Derived from the configured URL rather than hardcoded, so CI — which passes
+    its own service-container URL — needs no second variable. The `_test` suffix
+    carries more weight than it looks: every test drops a schema on the way out,
+    so aiming this at the development database would delete a developer's data
+    between one test and the next.
+    """
+    override = os.environ.get("TEST_DATABASE_URL")
+    if override:
+        return override
+    url = make_url(get_settings().database_url)
+    if not url.drivername.startswith("postgresql"):
+        raise RuntimeError(
+            "The test suite requires PostgreSQL with pgvector (ADR-22), but "
+            f"DATABASE_URL names the {url.drivername!r} driver. Start the "
+            "database with `docker compose up -d postgres` and point DATABASE_URL at it."
+        )
+    return url.set(database=f"{url.database}_test").render_as_string(hide_password=False)
+
+
+TEST_DATABASE_URL = _derive_test_database_url()
+
+# Anything that builds an engine from settings rather than from an injected
+# factory — a background translation task handed no `session_factory`, say —
+# has to land in the test database as well, never in the developer's. Set
+# before the cache is cleared, so the first real read of Settings sees it.
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 get_settings.cache_clear()
 
@@ -34,7 +68,7 @@ from src.services.connection_manager import ConnectionManager
 # Test Database Setup
 # ========================
 
-# These are initialized in test_db fixture, after the temp file is created.
+# These are initialized in the test_db fixture, after the schema is created.
 # Exported for tests that need to verify DB state with a separate session.
 # Use these names consistently throughout.
 test_engine: create_async_engine | None = None
@@ -43,33 +77,98 @@ test_async_session_maker: async_sessionmaker | None = None
 _ws_engine: create_async_engine | None = None
 _ws_session_maker: async_sessionmaker | None = None
 
+# `CREATE DATABASE` and `CREATE EXTENSION` are needed once for the whole run,
+# not once per test, and both are slow enough to be worth not repeating.
+_database_prepared = False
 
-def _init_engines(db_file: str) -> None:
-    """Initialize test setup and WebSocket engines pointing to the same file.
 
-    Using separate engines with separate pools allows concurrent access to the
-    same SQLite file without StaticPool connection contention issues.
-    The SQLite file itself handles locking and consistency.
-    Enabling WAL mode allows concurrent reads during writes.
+async def _ensure_test_database() -> None:
+    """Create the test database and its `vector` extension, once per run.
+
+    The extension belongs to the database, not to a schema, so it is installed
+    here rather than alongside the per-test tables. It has to exist before any
+    `create_all`: a `vector` column on a database without the extension fails at
+    CREATE TABLE with "type vector does not exist", which reads like a typo in
+    the model rather than a missing extension.
+
+    Alembic also creates the extension (ADR-22), but the suite never runs
+    migrations — `Base.metadata.create_all` tests the current models, not the
+    migration history — so the two paths each have to stand on their own.
+    """
+    global _database_prepared
+    if _database_prepared:
+        return
+
+    url = make_url(TEST_DATABASE_URL)
+    maintenance = create_async_engine(
+        url.set(database="postgres").render_as_string(hide_password=False),
+        poolclass=NullPool,
+        isolation_level="AUTOCOMMIT",  # CREATE DATABASE cannot run in a transaction
+    )
+    try:
+        async with maintenance.connect() as conn:
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": url.database},
+            )
+            if not exists:
+                await conn.execute(text(f'CREATE DATABASE "{url.database}"'))
+    finally:
+        await maintenance.dispose()
+
+    engine = create_async_engine(
+        TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT"
+    )
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    finally:
+        await engine.dispose()
+
+    _database_prepared = True
+
+
+async def _run_on_test_database(statement: str) -> None:
+    """Execute one DDL statement against the test database, outside a schema."""
+    engine = create_async_engine(
+        TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT"
+    )
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text(statement))
+    finally:
+        await engine.dispose()
+
+
+def _init_engines(schema: str) -> None:
+    """Point the fixture engine and the WebSocket engine at one private schema.
+
+    Isolation is per schema rather than per database because `CREATE DATABASE`
+    costs roughly a second each and the suite has hundreds of tests, while
+    `CREATE SCHEMA` is close to free. Both engines share the schema so a row
+    written through a fixture is visible to the WebSocket handler, which is the
+    same guarantee the previous SQLite file gave.
+
+    `search_path` also lists `public`, where the `vector` extension installs its
+    type — without it every embedding column fails to resolve.
+
+    NullPool on purpose, and it is not a performance detail: `ws_client` drives
+    the app through starlette's TestClient, which runs it on its own event loop
+    in another thread. An asyncpg connection belongs to the loop that opened it,
+    so a pooled connection handed across that boundary — or disposed from the
+    other side at teardown — fails in ways that surface as unrelated tests going
+    red. Holding no connections between checkouts removes the boundary entirely.
     """
     global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
 
-    url = f"sqlite+aiosqlite:///{db_file}"
-
-    # Enable WAL mode on the database before creating engines.
-    import sqlite3
-    conn = sqlite3.connect(db_file)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.close()
+    connect_args = {"server_settings": {"search_path": f"{schema},public"}}
 
     # Engine for test fixtures (creating users, conversations, etc.)
     test_engine = create_async_engine(
-        url,
+        TEST_DATABASE_URL,
         echo=False,
-        connect_args={
-            "timeout": 30,
-        },
+        poolclass=NullPool,
+        connect_args=connect_args,
     )
     test_async_session_maker = async_sessionmaker(
         test_engine,
@@ -81,11 +180,10 @@ def _init_engines(db_file: str) -> None:
 
     # Separate engine for WebSocket handler.
     _ws_engine = create_async_engine(
-        url,
+        TEST_DATABASE_URL,
         echo=False,
-        connect_args={
-            "timeout": 30,
-        },
+        poolclass=NullPool,
+        connect_args=connect_args,
     )
     _ws_session_maker = async_sessionmaker(
         _ws_engine,
@@ -101,9 +199,9 @@ async def _settle_background_translations() -> None:
 
     Sending or editing a message schedules translation in a task that
     deliberately outlives the request (`schedule_translations`). No test waits
-    for it, so without this the task is still querying when `_close_engines`
-    disposes the engine underneath it: the aiosqlite connection is gone, the
-    task dies mid-statement, and its session is never checked back in.
+    for it, so without this the task is still querying when the schema is
+    dropped underneath it: the connection is gone, the task dies mid-statement,
+    and its session is never checked back in.
     SQLAlchemy then warns from inside the garbage collector, and pytest blames
     whichever test happens to be running at that moment — which is how a change
     in one module could redden a test in another that never touched it.
@@ -148,17 +246,22 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="function")
 async def test_db() -> AsyncGenerator[AsyncSession, None]:
-    """Create a fresh database for each test function.
+    """Create a fresh schema for each test function.
 
     Creates all tables at start, then yields a session for test data setup.
-    After the test, drops all tables and removes the temp file.
+    After the test, drops the whole schema — which is one statement instead of
+    a table-by-table teardown, and cannot leave an orphan behind if a model is
+    added without anybody remembering this fixture.
     """
     global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
 
-    # Create a temp file for this test function's database.
-    fd, db_file = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    _init_engines(db_file)
+    await _ensure_test_database()
+
+    # A name no other test can collide with, short enough to stay under
+    # PostgreSQL's 63-character identifier limit with room to spare.
+    schema = f"test_{uuid.uuid4().hex[:12]}"
+    await _run_on_test_database(f'CREATE SCHEMA "{schema}"')
+    _init_engines(schema)
 
     # Create all tables.
     async with test_engine.begin() as conn:
@@ -175,14 +278,11 @@ async def test_db() -> AsyncGenerator[AsyncSession, None]:
     finally:
         await session.close()
 
-    # Drop all tables and clean up. Background translations first: disposing the
-    # engine under a running task is what strands the connection.
+    # Drop the schema and clean up. Background translations first: dropping
+    # tables under a running task is what strands its connection.
     await _settle_background_translations()
     await _close_engines()
-    try:
-        os.unlink(db_file)
-    except OSError:
-        pass
+    await _run_on_test_database(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
 
 @pytest_asyncio.fixture
@@ -380,22 +480,19 @@ async def _db_for_ws_fixture() -> None:
     """
     global test_engine
     if test_engine is None:
-        fd, db_file = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-        _init_engines(db_file)
+        await _ensure_test_database()
+        schema = f"test_{uuid.uuid4().hex[:12]}"
+        await _run_on_test_database(f'CREATE SCHEMA "{schema}"')
+        _init_engines(schema)
 
         async with test_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        _db_for_ws_fixture._db_file = db_file
         yield
-        if hasattr(_db_for_ws_fixture, '_db_file'):
-            await _settle_background_translations()
-            await _close_engines()
-            try:
-                os.unlink(_db_for_ws_fixture._db_file)
-            except OSError:
-                pass
+
+        await _settle_background_translations()
+        await _close_engines()
+        await _run_on_test_database(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
     else:
         yield
 

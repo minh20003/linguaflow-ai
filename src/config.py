@@ -93,8 +93,14 @@ class Settings(BaseSettings):
     )
 
     # Database. The driver must be async — `create_async_engine` cannot open a
-    # bare `sqlite://` URL, so the default carries the aiosqlite driver.
-    database_url: str = "sqlite+aiosqlite:///./data/app.db"
+    # bare `postgresql://` URL, so the default carries the asyncpg driver.
+    #
+    # PostgreSQL rather than SQLite even for development (ADR-22): the glossary,
+    # the correction log and the message memory are searched by cosine distance
+    # over pgvector columns, and SQLite has no `vector` type at all. Keeping
+    # SQLite for development would mean a second retrieval path that production
+    # never runs. `docker compose up -d postgres` provides it.
+    database_url: str = "postgresql+asyncpg://linguaflow:linguaflow@localhost:5432/linguaflow"
     # PostgreSQL connections opened per process. Kept small on purpose: one
     # WebSocket holds one session for as long as it stays open, so the pool has
     # to be sized against concurrent sockets rather than requests per second.

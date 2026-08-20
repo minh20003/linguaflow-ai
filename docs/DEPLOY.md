@@ -82,13 +82,21 @@ docker compose up --build      # backend + PostgreSQL, giống production
 cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
 ```
 
-Không có Docker thì chạy trực tiếp trên SQLite:
+Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy backend ở ngoài container:
 
 ```bash
-make migrate      # bắt buộc: ứng dụng không còn tự tạo bảng
-make reset-db     # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
+docker compose up -d postgres   # PostgreSQL + pgvector, cổng 5432
+make migrate              # bắt buộc: ứng dụng không còn tự tạo bảng
+make reset-db             # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
 make run
 ```
+
+**Không còn đường chạy trên SQLite** kể từ ADR-22: schema có cột `vector` của
+pgvector, mà SQLite không có kiểu đó nên bảng còn không tạo được. Docker Engine
+là đủ, không cần Docker Desktop — trên Windows, bản CLI cài trong WSL2 chạy tốt
+và Windows nối được qua `localhost:5432`. Lưu ý máy ảo WSL tự tắt sau khoảng 60
+giây không hoạt động và kéo PostgreSQL tắt theo; biểu hiện là
+`ConnectionRefusedError` xuất hiện giữa chừng một lần chạy test.
 
 **Nếu bạn đã có `data/app.db` từ trước ngày 15/08**, tệp đó do `create_all` tạo ra
 nên không có dấu phiên bản của Alembic, và `make migrate` sẽ báo lỗi "table already
@@ -108,7 +116,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 |---|---|---|
 | `APP_ENV` | `development` | `production` bật kiểm tra `JWT_SECRET` và tắt việc trả mã đặt lại mật khẩu trong phản hồi |
 | `JWT_SECRET` | — | **Bắt buộc.** Ở production: không được là giá trị mẫu, tối thiểu 32 ký tự |
-| `DATABASE_URL` | SQLite trong `./data` | `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
+| `DATABASE_URL` | PostgreSQL cục bộ của `docker compose` | Bắt buộc là PostgreSQL có `pgvector` (ADR-22). `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | 5 / 10 | Chỉ dùng cho PostgreSQL. Mỗi WebSocket giữ một phiên suốt thời gian mở |
 | `CORS_ORIGINS` | `http://localhost:3000` | Danh sách ngăn cách bằng dấu phẩy. Cũng là danh sách kiểm tra `Origin` của WebSocket |
 | `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |

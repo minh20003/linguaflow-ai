@@ -46,6 +46,8 @@ export interface TranslationCompleted {
   translation_id: string;
   source_language: string;
   target_language: string;
+  /** Which standing this wording is for; see `TranslationSummary`. */
+  honorific_profile: string;
   translated_text: string;
   model: string;
   latency_ms: number;
