@@ -11,6 +11,10 @@ export interface AuthUser {
   preferred_language: string;
   /** The language the interface is drawn in, separate from the one above. */
   interface_language: string;
+  /** True when a Google account is linked (Batch G). */
+  google_linked: boolean;
+  /** True when the user has a password set (Batch G). */
+  has_password?: boolean;
 }
 
 export interface LoginResponse {
@@ -293,4 +297,87 @@ export async function listLanguages(): Promise<string[]> {
   const response = await fetch(`${API_BASE}/api/v1/languages`);
   if (!response.ok) throw new Error("list_languages_failed");
   return (await response.json()) as string[];
+}
+
+// ----------------------------------------------------------------------
+// Google Sign-In (Batch G)
+// ----------------------------------------------------------------------
+
+/**
+ * Log in with a Google ID token. The backend resolves an existing Google
+ * identity first, auto-links an unlinked verified-email account, or creates a
+ * Google-native account when neither exists.
+ *
+ * Returns the same shape as `login()` so callers can treat both paths uniformly.
+ */
+export async function googleLogin(credential: string): Promise<LoginResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/google/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credential }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok || !payload?.access_token || !payload?.user) {
+    if (response.status === 409) {
+      throw new Error("google_conflict");
+    }
+    throw new Error("google_login_failed");
+  }
+  return payload as unknown as LoginResponse;
+}
+
+export interface GoogleLinkResponse {
+  google_linked: boolean;
+  message: string;
+}
+
+/**
+ * Link a Google account to the current LinguaFlow account.
+ *
+ * The user must have a valid session (access token).
+ */
+export async function linkGoogle(
+  credential: string,
+  accessToken: string,
+): Promise<GoogleLinkResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/me/google/link`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ credential }),
+  });
+  const payload = await responseBody(response);
+  if (!response.ok) {
+    if (response.status === 409) {
+      const detail = typeof payload?.detail === "string" ? payload.detail : "";
+      if (detail.includes("already linked")) {
+        throw new Error("google_already_linked");
+      }
+      throw new Error("google_link_conflict");
+    }
+    throw new Error("google_link_failed");
+  }
+  return payload as unknown as GoogleLinkResponse;
+}
+
+/**
+ * Remove the Google link from the current account.
+ *
+ * After unlinking the user can only log in with email and password.
+ */
+export async function unlinkGoogle(accessToken: string): Promise<GoogleLinkResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/me/google/link`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const payload = await responseBody(response);
+  if (!response.ok) {
+    if (response.status === 409) {
+      throw new Error("google_cannot_unlink_no_password");
+    }
+    throw new Error("google_unlink_failed");
+  }
+  return payload as unknown as GoogleLinkResponse;
 }

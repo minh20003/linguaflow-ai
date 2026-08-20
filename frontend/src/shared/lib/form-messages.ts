@@ -39,7 +39,8 @@ export type FormMessageKey =
   | "otpMaxAttempts"
   | "otpRateLimit"
   | "emailDeliveryFailed"
-  | "duplicateAccount";
+  | "duplicateAccount"
+  | "googleLoginFailed";
 
 type FormMessageTable = Record<LanguageCode, Record<FormMessageKey, string>>;
 
@@ -70,6 +71,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Yêu cầu quá nhiều lần. Vui lòng thử lại sau.",
     emailDeliveryFailed: "Không thể gửi email xác thực. Vui lòng thử lại sau.",
     duplicateAccount: "Email hoặc tên đăng nhập này đã được đăng ký.",
+    googleLoginFailed: "Không thể đăng nhập bằng Google.",
   },
   en: {
     fullNameRequired: "Enter your full name.",
@@ -97,6 +99,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Too many requests. Please try again later.",
     emailDeliveryFailed: "Could not send the verification email. Please try again later.",
     duplicateAccount: "This email or username is already registered.",
+    googleLoginFailed: "Could not sign in with Google.",
   },
   zh: {
     fullNameRequired: "请填写姓名。",
@@ -124,6 +127,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "请求过于频繁，请稍后重试。",
     emailDeliveryFailed: "无法发送验证邮件，请稍后再试。",
     duplicateAccount: "该邮箱或用户名已被注册。",
+    googleLoginFailed: "无法使用 Google 登录。",
   },
   ja: {
     fullNameRequired: "氏名を入力してください。",
@@ -151,6 +155,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "リクエストが多すぎます。しばらくしてから再試行してください。",
     emailDeliveryFailed: "確認メールを送信できませんでした。しばらくしてからもう一度お試しください。",
     duplicateAccount: "このメールアドレスまたはユーザー名は既に登録されています。",
+    googleLoginFailed: "Googleでのログインに失敗しました。",
   },
   ko: {
     fullNameRequired: "이름을 입력하세요.",
@@ -178,6 +183,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
     emailDeliveryFailed: "인증 이메일을 보낼 수 없습니다. 나중에 다시 시도해 주세요.",
     duplicateAccount: "이미 등록된 이메일 또는 아이디입니다.",
+    googleLoginFailed: "Google 로그인에 실패했습니다.",
   },
   fr: {
     fullNameRequired: "Saisissez votre nom complet.",
@@ -205,6 +211,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Trop de requêtes. Veuillez réessayer plus tard.",
     emailDeliveryFailed: "Impossible d'envoyer l'e-mail de vérification. Veuillez réessayer plus tard.",
     duplicateAccount: "Cet e-mail ou ce nom d'utilisateur est déjà enregistré.",
+    googleLoginFailed: "Impossible de se connecter avec Google.",
   },
   de: {
     fullNameRequired: "Geben Sie Ihren vollständigen Namen ein.",
@@ -232,6 +239,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Zu viele Anfragen. Bitte versuchen Sie es später erneut.",
     emailDeliveryFailed: "Die Bestätigungs-E-Mail konnte nicht gesendet werden. Bitte versuchen Sie es später erneut.",
     duplicateAccount: "Diese E-Mail-Adresse oder dieser Benutzername ist bereits registriert.",
+    googleLoginFailed: "Anmeldung mit Google fehlgeschlagen.",
   },
   es: {
     fullNameRequired: "Escribe tu nombre completo.",
@@ -259,6 +267,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Demasiadas solicitudes. Inténtalo de nuevo más tarde.",
     emailDeliveryFailed: "No se pudo enviar el correo de verificación. Inténtelo más tarde.",
     duplicateAccount: "Este correo o nombre de usuario ya está registrado.",
+    googleLoginFailed: "No se pudo iniciar sesión con Google.",
   },
   th: {
     fullNameRequired: "กรุณากรอกชื่อ-นามสกุล",
@@ -286,6 +295,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "มีคำขอมากเกินไป โปรดลองอีกครั้งในภายหลัง",
     emailDeliveryFailed: "ไม่สามารถส่งอีเมลยืนยันได้ โปรดลองอีกครั้งในภายหลัง",
     duplicateAccount: "อีเมลหรือชื่อผู้ใช้นี้ถูกลงทะเบียนแล้ว",
+    googleLoginFailed: "ไม่สามารถเข้าสู่ระบบด้วย Google",
   },
   id: {
     fullNameRequired: "Masukkan nama lengkap Anda.",
@@ -313,6 +323,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Terlalu banyak permintaan. Silakan coba lagi nanti.",
     emailDeliveryFailed: "Tidak dapat mengirim email verifikasi. Silakan coba lagi nanti.",
     duplicateAccount: "Email atau nama pengguna ini sudah terdaftar.",
+    googleLoginFailed: "Tidak dapat masuk dengan Google.",
   },
   pt: {
     fullNameRequired: "Introduza o seu nome completo.",
@@ -340,6 +351,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Demasiados pedidos. Tente novamente mais tarde.",
     emailDeliveryFailed: "Não foi possível enviar o e-mail de verificação. Tente novamente mais tarde.",
     duplicateAccount: "Este e-mail ou nome de utilizador já está registado.",
+    googleLoginFailed: "Não foi possível entrar com Google.",
   },
   ru: {
     fullNameRequired: "Введите полное имя.",
@@ -367,6 +379,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "Слишком много запросов. Попробуйте позже.",
     emailDeliveryFailed: "Не удалось отправить письмо с подтверждением. Пожалуйста, попробуйте позже.",
     duplicateAccount: "Этот адрес электронной почты или имя пользователя уже зарегистрированы.",
+    googleLoginFailed: "Не удалось войти через Google.",
   },
   ar: {
     fullNameRequired: "أدخل اسمك الكامل.",
@@ -394,6 +407,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "طلبات كثيرة جدًا. يرجى المحاولة مرة أخرى لاحقًا.",
     emailDeliveryFailed: "تعذر إرسال بريد التحقق الإلكتروني. يرجى المحاولة مرة أخرى لاحقًا.",
     duplicateAccount: "هذا البريد الإلكتروني أو اسم المستخدم مسجل بالفعل.",
+    googleLoginFailed: "تعذر تسجيل الدخول باستخدام Google.",
   },
   hi: {
     fullNameRequired: "अपना पूरा नाम दर्ज करें।",
@@ -421,6 +435,7 @@ export const FORM_MESSAGES: FormMessageTable = {
     otpRateLimit: "बहुत अधिक अनुरोध। कृपया बाद में प्रयास करें।",
     emailDeliveryFailed: "सत्यापन ईमेल नहीं भेजा जा सका। कृपया बाद में पुनः प्रयास करें।",
     duplicateAccount: "यह ईमेल या उपयोगकर्ता नाम पहले से पंजीकृत है।",
+    googleLoginFailed: "Google से साइन इन नहीं हो सका।",
   },
 };
 

@@ -262,3 +262,36 @@
 .languageField select { width: 100%; min-height: 42px; padding: 0 var(--s-4); border: 1px solid var(--rule); border-radius: var(--r-1); color: var(--ink); background: var(--surface-insert); font: inherit; }
 .languageField select:focus-visible { border-color: var(--primary); outline: 2px solid var(--primary-light); outline-offset: 1px; }
 .languageField span { color: var(--ink-muted); font-size: var(--fs-micro); }
+
+/* ─── Google Sign-In (Batch G) ───────────────────────────── */
+
+.googleButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--dur-fade) linear;
+}
+
+.googleButton > div {
+  width: 100%;
+}
+
+.orDivider {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.orLine {
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.orText {
+  font-size: var(--fs-micro);
+  color: var(--ink-muted);
+  white-space: nowrap;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}

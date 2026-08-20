@@ -108,6 +108,41 @@
   font-size: var(--fs-small);
 }
 
+.success {
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--success);
+  border-radius: var(--r-2);
+  color: var(--success);
+  background: var(--success-weak);
+  font-size: var(--fs-small);
+}
+
+.googleButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-2);
+  background: var(--surface-insert);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--dur-hover), border-color var(--dur-hover);
+}
+
+.googleButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--ink-muted);
+}
+
+.googleButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 @media (max-width: 680px) {
   .shell { grid-template-columns: 1fr; }
   .navRail {

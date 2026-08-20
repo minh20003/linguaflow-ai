@@ -27,6 +27,14 @@ class User(Base):
     """User model for authentication and preferences."""
 
     __tablename__ = "users"
+    __table_args__ = (
+        # A user must always retain at least one authentication provider.
+        # Password-less rows are valid only for Google-native accounts.
+        CheckConstraint(
+            "password_hash IS NOT NULL OR google_sub IS NOT NULL",
+            name="ck_users_has_auth_provider",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36),
@@ -49,9 +57,9 @@ class User(Base):
         String(100),
         nullable=True,
     )
-    password_hash: Mapped[str] = mapped_column(
+    password_hash: Mapped[str | None] = mapped_column(
         String(255),
-        nullable=False,
+        nullable=True,
     )
     role: Mapped[str] = mapped_column(
         String(20),
@@ -76,6 +84,15 @@ class User(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
+    )
+    # Google Sign-In subject identifier. It can be explicitly linked in
+    # Settings or assigned during Google sign-in identity resolution.
+    # Unique: one Google account maps to one LinguaFlow account.
+    google_sub: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+        index=True,
     )
 
     def __repr__(self) -> str:

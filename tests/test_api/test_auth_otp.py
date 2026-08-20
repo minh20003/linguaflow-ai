@@ -112,6 +112,14 @@ async def test_verify_register_otp_creates_user_and_consumes_pending(client, tes
     pending_check = await test_db.get(PendingRegistration, pending_id)
     assert pending_check is None
 
+    # Batch F registration remains password-backed even though Google-native
+    # users may now legitimately have password_hash=NULL.
+    created_user = (
+        await test_db.execute(select(User).where(User.email == "bob@example.com"))
+    ).scalar_one()
+    assert created_user.password_hash is not None
+    assert verify_password("SecurePassword123!", created_user.password_hash)
+
     # User exists and can login
     login_res = await client.post(
         "/api/v1/auth/login",
