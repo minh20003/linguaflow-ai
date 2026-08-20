@@ -88,8 +88,18 @@ Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy back
 docker compose up -d postgres   # PostgreSQL + pgvector, cổng 5432
 make migrate              # bắt buộc: ứng dụng không còn tự tạo bảng
 make reset-db             # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
+make seed-glossary        # nạp bộ thuật ngữ mẫu en↔vi (88 mục)
 make run
 ```
+
+`make seed-glossary` đọc `seed/glossary_en_vi.jsonl` và chạy lại được nhiều lần: mục
+được đối chiếu theo đúng khoá mà cơ sở dữ liệu ràng buộc duy nhất (thuật ngữ đã chuẩn
+hoá, cặp ngôn ngữ, `domain`, `audience`) rồi cập nhật tại chỗ, nên sửa tệp và chạy lại
+là cách đổi glossary trong lúc phát triển. Nó tồn tại vì đường khai thác tự động cần
+nhiều người cùng sửa một thuật ngữ trước khi đề xuất được gì — đúng cho việc phát hiện
+quy ước của đội, và vô dụng cho một buổi demo hoặc cho những tuần đầu dùng thật.
+Mặc định mỗi mục tốn một lượt nhúng; `--no-embed` bỏ qua, khi đó mục vẫn khớp chính xác
+nhưng chưa khớp được các biến thể người ta hay gõ.
 
 **Không còn đường chạy trên SQLite** kể từ ADR-22: schema có cột `vector` của
 pgvector, mà SQLite không có kiểu đó nên bảng còn không tạo được. Docker Engine
