@@ -89,6 +89,8 @@ class AgentState(TypedDict, total=False):
     original_text: str
     source_language: str          # ISO 639-1; giá trị tạm khi vào, detect sẽ ghi đè
     target_language: str          # Lấy từ users.preferred_language của người nhận
+    honorific_profile: str        # senior | peer | junior | client — nửa còn lại
+                                  # của khoá fan-out, xem §4.4 quy tắc 2
     context_messages: list[str]   # 3-5 tin gần nhất, đã định dạng sẵn cho prompt
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05
