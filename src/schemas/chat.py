@@ -66,6 +66,16 @@ class ConversationMemberSummary(BaseModel):
     username: str | None = None
     display_name: str | None = None
     preferred_language: str
+    # The standing this member holds in *this* conversation, which is why it
+    # cannot be validated straight off the User row: the same account is a
+    # junior colleague in one thread and a client in another.
+    #
+    # Required rather than defaulted, and deliberately so. A default here would
+    # be a second place the neutral standing is written down, and it would let a
+    # caller that forgot to resolve profiles serialise a plausible-looking
+    # `peer` for everyone. The resolver owns that default (`profile_for`); this
+    # layer only reports what it was given.
+    honorific_profile: str
 
     @model_validator(mode="after")
     def fill_legacy_profile_names(self) -> "ConversationMemberSummary":
@@ -122,6 +132,11 @@ class TranslationSummary(BaseModel):
 
     translation_id: str
     target_language: str
+    # Which standing this wording addresses the reader with. Carried so a client
+    # holding several translations of one message can tell them apart: after
+    # `honorific_profile` joined the unique key, `target_language` alone no
+    # longer identifies a row (docs/CONTRACT.md section 5, note 6).
+    honorific_profile: str
     translated_text: str
     model: str
     latency_ms: int
@@ -258,6 +273,9 @@ class TranslationEditResponse(BaseModel):
     translation_id: str
     message_id: str
     target_language: str
+    # Same reason as on TranslationSummary: the pair, not the language alone,
+    # names the translation this edit was written against.
+    honorific_profile: str
     edited_text: str
     edited_at: UtcDatetime
 
@@ -376,9 +394,15 @@ class MessageReceivedEvent(BaseModel):
 class TranslationCompletedEvent(BaseModel):
     """WebSocket delivery event for a finished translation.
 
-    Sent only to members whose `preferred_language` equals `target_language`;
-    the socket is per-user, so the filtering happens at fan-out rather than at
-    the client (docs/CONTRACT.md section 4.4).
+    Addressed at fan-out to the members of one bucket — those who share a
+    `preferred_language` *and* a standing — rather than broadcast for the client
+    to filter (docs/CONTRACT.md section 4.4).
+
+    That addressing is not on its own enough to identify the row, which is why
+    `honorific_profile` is on the payload. A sender in a `direct` conversation
+    receives the translation meant for the other person as well as their own, so
+    that the rating and edit controls can sit under their own message (ADR-19),
+    and with a widened key `target_language` no longer tells those two apart.
 
     `conversation_id` is carried explicitly because a per-user socket gives the
     client no other way to route this event to the right thread.
@@ -390,6 +414,7 @@ class TranslationCompletedEvent(BaseModel):
     translation_id: str
     source_language: str
     target_language: str
+    honorific_profile: str
     translated_text: str
     model: str
     latency_ms: int

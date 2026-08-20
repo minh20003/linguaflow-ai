@@ -505,6 +505,11 @@ async def _translate_into(
             translation_id=translation.id,
             source_language=detected_source,
             target_language=target_language,
+            # Read back off the persisted row rather than from a variable here:
+            # the row is what the client will find again through REST history,
+            # and the two must name the same bucket or a reload would replace
+            # the message with a different rendering of it.
+            honorific_profile=translation.honorific_profile,
             translated_text=translation.translated_text,
             model=translation.model,
             latency_ms=translation.latency_ms,
@@ -571,6 +576,7 @@ async def _serve_cached_translation(
                 translation_id=translation.id,
                 source_language=source_language,
                 target_language=target_language,
+                honorific_profile=translation.honorific_profile,
                 translated_text=translation.translated_text,
                 model=translation.model,
                 latency_ms=translation.latency_ms,
