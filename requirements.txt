@@ -30,6 +30,9 @@ alembic>=1.14.0
 # Driver PostgreSQL bat dong bo. Phai la asyncpg chu khong phai psycopg2:
 # create_async_engine khong mo duoc URL cua driver dong bo.
 asyncpg>=0.30.0
+# Kieu cot `vector` va cac toan tu khoang cach cua pgvector cho SQLAlchemy.
+# Glossary, correction_log va message_embeddings deu tim theo cosine (ADR-24).
+pgvector>=0.3.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0

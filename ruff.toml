@@ -5,6 +5,12 @@ line-length = 120
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+[lint.per-file-ignores]
+# tests/conftest.py imports from src/ only after it has set EMAIL_PROVIDER and
+# cleared the settings cache, so those imports cannot sit at the top of the
+# file. The order is the point, not an oversight.
+"tests/conftest.py" = ["E402"]
+
 [format]
 quote-style = "double"
 indent-style = "space"

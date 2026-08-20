@@ -1,6 +1,7 @@
 """API routes for the application."""
 
 import logging
+import math
 import mimetypes
 import re
 import secrets
@@ -66,7 +67,6 @@ from src.schemas.auth import (
     VerifyRegisterRequest,
 )
 from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
-from src.services.email import EmailDeliveryError, send_registration_otp_email
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -98,6 +98,13 @@ from src.services.chat import (
     TranslationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.email import EmailDeliveryError, send_registration_otp_email
+from src.services.profiles import (
+    profile_for,
+    resolve_profiles,
+    resolve_profiles_for_conversations,
+    select_for_reader,
+)
 from src.services.translation import schedule_translations
 
 logger = logging.getLogger(__name__)
@@ -150,9 +157,6 @@ async def _issue_auth_response(
         refresh_token=refresh_token,
         user=UserResponse.model_validate(user),
     )
-
-
-import math
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -1129,6 +1133,7 @@ async def _conversation_response(
     manager: ConnectionManager | None = None,
     unread_count: int = 0,
     members: Sequence[User] | None = None,
+    profiles: dict[str, str] | None = None,
 ) -> ConversationResponse:
     """Build the minimal conversation representation for an authorized user.
 
@@ -1141,12 +1146,17 @@ async def _conversation_response(
         unread_count: Messages this reader has not seen (§3.8).
         members: Already-loaded members. The list endpoint passes them in from
             one batched query; a single-conversation caller lets this load them.
+        profiles: Each member's standing in *this* conversation, already
+            resolved. Passed in for the same reason `members` is: the list
+            endpoint resolves every conversation in one query, and looking them
+            up here would put an N+1 back into it.
 
     Returns:
         The conversation as the REST contract defines it (docs/CONTRACT.md §3.5).
     """
     if members is None:
         members = await service.get_conversation_members(conversation_id=conversation.id)
+    profiles = profiles or {}
     return ConversationResponse(
         id=conversation.id,
         type=conversation.type,
@@ -1154,7 +1164,20 @@ async def _conversation_response(
         created_by=conversation.created_by,
         created_at=conversation.created_at,
         member_ids=[member.id for member in members],
-        members=[ConversationMemberSummary.model_validate(member) for member in members],
+        # Built field by field rather than validated from the ORM row: a
+        # standing belongs to a member *within a conversation*, so it is not on
+        # the User object and `from_attributes` has nowhere to read it from.
+        members=[
+            ConversationMemberSummary(
+                id=member.id,
+                email=member.email,
+                username=member.username,
+                display_name=member.display_name,
+                preferred_language=member.preferred_language,
+                honorific_profile=profile_for(profiles, member.id),
+            )
+            for member in members
+        ],
         last_message=last_message[0] if last_message else None,
         last_message_at=last_message[1] if last_message else None,
         online_member_ids=list(
@@ -1202,7 +1225,11 @@ async def create_conversation(
     if not result.created:
         response.status_code = status.HTTP_200_OK
 
-    return await _conversation_response(service, result.conversation)
+    return await _conversation_response(
+        service,
+        result.conversation,
+        profiles=await resolve_profiles(db, result.conversation.id),
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
@@ -1215,9 +1242,16 @@ async def list_conversations(
     service = ChatService(db)
     conversations = await service.list_conversations(user_id=current_user.id)
     conversation_ids = [conversation.id for conversation in conversations]
+    profiles = await resolve_profiles_for_conversations(db, conversation_ids)
     last_messages = await service.get_last_messages(
         conversation_ids=conversation_ids,
         reader_language=current_user.preferred_language,
+        # The caller's own standing per conversation, so the sidebar preview
+        # picks the same translation the conversation itself will show.
+        reader_profiles={
+            conversation_id: profile_for(members, current_user.id)
+            for conversation_id, members in profiles.items()
+        },
     )
     unread = await service.get_unread_counts(
         user_id=current_user.id,
@@ -1232,6 +1266,7 @@ async def list_conversations(
             manager,
             unread.get(conversation.id, 0),
             members.get(conversation.id, []),
+            profiles.get(conversation.id, {}),
         )
         for conversation in conversations
     ]
@@ -1276,6 +1311,7 @@ async def get_conversation_messages(
         db,
         live_message_ids,
         reader_id=current_user.id,
+        conversation_id=conversation_id,
     )
     attachments = await service.get_attachments_by_message(message_ids=live_message_ids)
     return [
@@ -1527,6 +1563,7 @@ async def submit_translation_edit(
         translation_id=translation.id,
         message_id=translation.message_id,
         target_language=translation.target_language,
+        honorific_profile=translation.honorific_profile,
         edited_text=edit.edited_text,
         edited_at=edit.created_at,
     )
@@ -1536,6 +1573,7 @@ async def _translations_by_message(
     db: AsyncSession,
     message_ids: list[str],
     reader_id: str,
+    conversation_id: str,
 ) -> dict[str, list[TranslationSummary]]:
     """Load every translation for a page of messages in one query.
 
@@ -1544,26 +1582,84 @@ async def _translations_by_message(
     Each summary also carries `reader_id`'s own feedback, which is what lets a
     rating button still look rated after a reload.
 
+    Since `honorific_profile` joined the unique key, one message can hold
+    several translations into the same language, differing only in how they
+    address the reader. This collapses each language back to one row, so the
+    array stays the shape docs/CONTRACT.md §3.2 describes and the client is
+    never handed two candidates with nothing to choose between them.
+
+    Which row wins is decided by `select_for_reader`, using the standing of
+    somebody who actually reads that language: the caller's own for the caller's
+    language, and otherwise the first member who reads it. That second half is
+    not a nicety — in a `direct` conversation the sender is shown the
+    translation the *other* person reads, so the rating and edit controls can
+    sit under their own message (§4.4 rule 3, ADR-19), and picking that row with
+    the sender's standing would show them a register meant for nobody.
+
     Args:
         db: Open session.
         message_ids: Messages whose translations are being rendered.
         reader_id: Account whose feedback is attached; never another member's.
+        conversation_id: Conversation the messages belong to, needed because a
+            standing is only defined inside one.
 
     Returns:
-        Translations grouped by message id, in no guaranteed order.
+        Translations grouped by message id, one per target language, in no
+        guaranteed order.
     """
     if not message_ids:
         return {}
 
-    rows = list(
+    # Ordered so that step three of the fallback ladder — "any translation into
+    # that language" — resolves to the oldest, and two consecutive reads of the
+    # same history cannot disagree.
+    candidates = list(
         (
             await db.scalars(
-                select(TranslationResult).where(
-                    TranslationResult.message_id.in_(message_ids)
-                )
+                select(TranslationResult)
+                .where(TranslationResult.message_id.in_(message_ids))
+                .order_by(TranslationResult.created_at, TranslationResult.id)
             )
         ).all()
     )
+
+    profiles = await resolve_profiles(db, conversation_id)
+    members = await ChatService(db).get_conversation_members(
+        conversation_id=conversation_id
+    )
+    reader_language = next(
+        (
+            member.preferred_language
+            for member in members
+            if member.id == reader_id
+        ),
+        "",
+    )
+    # Sorted so that a language read by several members always resolves through
+    # the same one of them, however the database happened to return the rows.
+    readers_by_language: dict[str, str] = {}
+    for member in sorted(members, key=lambda member: member.id):
+        readers_by_language.setdefault(member.preferred_language, member.id)
+
+    def standing_for(language: str) -> str:
+        """Whose standing decides the wording a given language is rendered in."""
+        if language == reader_language:
+            return profile_for(profiles, reader_id)
+        return profile_for(profiles, readers_by_language.get(language, ""))
+
+    rows = []
+    by_message: dict[str, list[TranslationResult]] = {}
+    for row in candidates:
+        by_message.setdefault(row.message_id, []).append(row)
+    for message_rows in by_message.values():
+        for language in dict.fromkeys(row.target_language for row in message_rows):
+            chosen = select_for_reader(
+                message_rows,
+                target_language=language,
+                honorific_profile=standing_for(language),
+            )
+            if chosen is not None:
+                rows.append(chosen)
 
     my_feedback = {
         feedback.translation_id: feedback
@@ -1597,6 +1693,7 @@ async def _translations_by_message(
             TranslationSummary(
                 translation_id=row.id,
                 target_language=row.target_language,
+                honorific_profile=row.honorific_profile,
                 translated_text=row.translated_text,
                 model=row.model,
                 latency_ms=row.latency_ms,

@@ -217,8 +217,8 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        recipients_by_language = await _recipients_by_language(
-            session, snapshot["conversation_id"], snapshot["sender_id"]
+        conversation_type, recipients_by_language = await _recipients_by_language(
+            session, snapshot["conversation_id"]
         )
 
     if not recipients_by_language:
@@ -248,21 +248,28 @@ async def _translate_message(
 async def _recipients_by_language(
     session: AsyncSession,
     conversation_id: str,
-    sender_id: str,
-) -> dict[str, list[str]]:
-    """Group message recipients, excluding the sender, by reading language.
+) -> tuple[str | None, dict[str, list[str]]]:
+    """Group a conversation's members by the language each of them reads.
 
-    The sender's bubble always shows the original text. Excluding them here
-    prevents unnecessary LLM work and ensures no translation event or result is
-    created solely for the author of a message.
+    One query answers everything the fan-out needs: which languages are in play,
+    who wants each, and whether this is a one-to-one conversation. The
+    conversation type rides along on the same join rather than costing a second
+    round trip — this runs in a background task that can be abandoned when the
+    caller goes away, and every extra await inside the session block is another
+    point where that leaves a connection checked out.
+
+    The sender is included deliberately. If they wrote in a language other than
+    the one they read, they get a translation too — which falls out for free.
+
+    Returns:
+        The conversation's type (None when it has no members), and the members
+        grouped by the language each of them reads.
     """
     rows = await session.execute(
         select(ConversationMember.user_id, User.preferred_language, Conversation.type)
         .join(User, User.id == ConversationMember.user_id)
-        .where(
-            ConversationMember.conversation_id == conversation_id,
-            ConversationMember.user_id != sender_id,
-        )
+        .join(Conversation, Conversation.id == ConversationMember.conversation_id)
+        .where(ConversationMember.conversation_id == conversation_id)
     )
 
     conversation_type: str | None = None
@@ -498,6 +505,11 @@ async def _translate_into(
             translation_id=translation.id,
             source_language=detected_source,
             target_language=target_language,
+            # Read back off the persisted row rather than from a variable here:
+            # the row is what the client will find again through REST history,
+            # and the two must name the same bucket or a reload would replace
+            # the message with a different rendering of it.
+            honorific_profile=translation.honorific_profile,
             translated_text=translation.translated_text,
             model=translation.model,
             latency_ms=translation.latency_ms,
@@ -564,6 +576,7 @@ async def _serve_cached_translation(
                 translation_id=translation.id,
                 source_language=source_language,
                 target_language=target_language,
+                honorific_profile=translation.honorific_profile,
                 translated_text=translation.translated_text,
                 model=translation.model,
                 latency_ms=translation.latency_ms,
