@@ -47,6 +47,7 @@ from src.database.models import (
 )
 from src.schemas.chat import TranslationCompletedEvent
 from src.services.context_provider import DatabaseContextProvider
+from src.services.customization import DatabaseCustomizationProvider
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +211,17 @@ def schedule_translations(
 
 
 def _default_graph_factory(session: AsyncSession, message_id: str) -> Any:
-    """Build a graph reading context from the database, excluding this message."""
-    return build_translation_graph(DatabaseContextProvider(session, message_id))
+    """Build a graph reading context and audience from the database.
+
+    Both providers are bound to the session this bucket owns. They are separate
+    objects rather than one because they answer unrelated questions from
+    unrelated tables, and because the evaluation harness supplies context
+    without wanting a conversation profile at all.
+    """
+    return build_translation_graph(
+        DatabaseContextProvider(session, message_id),
+        customization_provider=DatabaseCustomizationProvider(session),
+    )
 
 
 def _log_task_failure(task: asyncio.Task) -> None:

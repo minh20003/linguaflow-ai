@@ -61,6 +61,7 @@ from src.api.websocket import router as websocket_router
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
 from src.services.connection_manager import ConnectionManager
 
@@ -195,7 +196,7 @@ def _init_engines(schema: str) -> None:
 
 
 async def _settle_background_translations() -> None:
-    """Stop translation tasks still running for the test that just finished.
+    """Stop background tasks still running for the test that just finished.
 
     Sending or editing a message schedules translation in a task that
     deliberately outlives the request (`schedule_translations`). No test waits
@@ -214,11 +215,26 @@ async def _settle_background_translations() -> None:
     the suite. Production never does this — the process is not torn down between
     messages — so this belongs to the harness, not to the service.
     """
-    pending = [task for task in translation_module._BACKGROUND_TASKS if not task.done()]
+    tracked = (
+        *translation_module._BACKGROUND_TASKS,
+        # Sending a message also schedules a conversation-profile inference,
+        # which outlives the request the same way and has the same problem.
+        *profile_inference_module._BACKGROUND_TASKS,
+    )
+    pending = [task for task in tracked if not task.done()]
     for task in pending:
         task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+
+    # Only await the ones this loop owns. `ws_client` drives the app through
+    # starlette's TestClient, which runs it on its own loop in another thread,
+    # so a task scheduled from a WebSocket handler belongs to that loop —
+    # awaiting it from here fails with "attached to a different loop" and turns
+    # a passing test into a teardown error. Cancelling is still worth doing for
+    # those: it stops them before the schema goes away.
+    loop = asyncio.get_running_loop()
+    ours = [task for task in pending if task.get_loop() is loop]
+    if ours:
+        await asyncio.gather(*ours, return_exceptions=True)
 
 
 async def _close_engines() -> None:

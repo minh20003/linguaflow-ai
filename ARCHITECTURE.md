@@ -96,7 +96,7 @@ Trình tự gọi giữa các tầng: xem [Sequence Diagram](docs/architecture_d
 |---|---|
 | Loại agent | State machine tuỳ biến. Không áp dụng pattern ReAct do luồng dịch không yêu cầu agent tự quyết định gọi tool lặp lại, chỉ cần pipeline có rẽ nhánh điều kiện và đường fallback |
 | State | `source_language`, `target_language`, `original_text`, `context_messages`, `translated_text`, `translation_id`, `is_valid`, `is_fallback`, `model`, `latency_ms`, `error`, `telemetry`. Định nghĩa bắt buộc tại [`docs/CONTRACT.md`](docs/CONTRACT.md) §2. Riêng các khoá **bên trong** `telemetry` không thuộc hợp đồng — xem ADR-16 |
-| Chuỗi node | `detect_language` (hai tầng: langdetect rồi LLM khi mâu thuẫn, xem ADR-11) → rẽ nhánh theo `source_language == target_language` → `build_context` → `translate` → `validate_output`, song song với ghi CSDL bất đồng bộ |
+| Chuỗi node | `detect_language` (hai tầng: langdetect rồi LLM khi mâu thuẫn, xem ADR-11) → rẽ nhánh theo `source_language == target_language` → `build_context` → `customize` → `translate` → `validate_output`, song song với ghi CSDL bất đồng bộ. `customize` **không gọi model**: nó chỉ đọc lĩnh vực và đối tượng đã được suy luận sẵn ở nền (ADR-24) và dựng mục `# Audience` của prompt; mọi lỗi ở đó suy giảm về prompt không có mục này |
 | Cơ chế fallback | Khi `validate_output` thất bại hoặc LLM timeout, hệ thống trả về `original_text` và không chặn luồng chat |
 | Mô hình ngôn ngữ | Lựa chọn qua biến môi trường `LLM_PROVIDER`. Mặc định Groq (`llama-3.3-70b-versatile`); hỗ trợ `deepseek`, `gemini`, `openai`. Xem ADR-10 |
 

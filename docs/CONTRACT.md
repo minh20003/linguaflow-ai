@@ -91,6 +91,9 @@ class AgentState(TypedDict, total=False):
     target_language: str          # Lấy từ users.preferred_language của người nhận
     honorific_profile: str        # senior | peer | junior | client — nửa còn lại
                                   # của khoá fan-out, xem §4.4 quy tắc 2
+    domain: str                   # Lĩnh vực hội thoại, do node customize điền từ
+    audience: str                 # conversation_profiles. Rỗng = chưa suy luận,
+                                  # khi đó prompt bỏ hẳn mục Audience (§5 ghi chú 15)
     context_messages: list[str]   # 3-5 tin gần nhất, đã định dạng sẵn cho prompt
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05

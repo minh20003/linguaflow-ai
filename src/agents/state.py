@@ -35,6 +35,12 @@ class AgentState(TypedDict, total=False):
 
     # Conversation context
     context_messages: list[str]  # 3-5 recent messages, preformatted for the prompt
+    # Written by the `customize` node from the conversation's inferred profile.
+    # Empty means nothing has been inferred yet, which is every conversation
+    # until it has enough messages — not an error, and the prompt simply omits
+    # its Audience section (ADR-24).
+    domain: str
+    audience: str
 
     # Output
     translated_text: str

@@ -32,6 +32,7 @@ from src.services.chat import (
     ConversationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.profile_inference import schedule_profile_inference
 from src.services.translation import schedule_translations
 
 AUTH_TIMEOUT_SECONDS = 10
@@ -320,6 +321,14 @@ async def websocket_endpoint(
                 # Fire and forget. Guarded by `created` so an idempotent resend
                 # does not translate the same message twice.
                 schedule_translations(message=result.message, publisher=manager)
+                # Also fire and forget, and separate on purpose: this asks a
+                # question about the whole conversation rather than about this
+                # message, and it answers at most once every twenty of them
+                # (ADR-24). Scheduled per message only because that is when the
+                # count changes; the cadence check lives inside.
+                schedule_profile_inference(
+                    conversation_id=result.message.conversation_id
+                )
     except WebSocketDisconnect:
         return
     finally:
