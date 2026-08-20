@@ -1,6 +1,6 @@
 """Business logic for durable conversations and original chat messages."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -20,6 +20,7 @@ from src.database.models import (
     User,
 )
 from src.schemas.chat import ConversationType
+from src.services.profiles import profile_for, select_for_reader
 
 
 class ChatServiceError(Exception):
@@ -265,6 +266,7 @@ class ChatService:
         *,
         conversation_ids: Sequence[str],
         reader_language: str,
+        reader_profiles: Mapping[str, str] | None = None,
     ) -> dict[str, tuple[str, datetime]]:
         """Summarise the newest message of each conversation for one reader.
 
@@ -272,10 +274,21 @@ class ChatService:
         messages in the database rather than fetching each conversation's last
         message separately is what keeps the list endpoint off an N+1.
 
+        A message can hold several translations into one language, differing in
+        how they address the reader, so the language alone no longer picks a
+        row. This used to be a dict comprehension keyed by message id, which
+        meant whichever row the database returned last silently won — the
+        preview in the sidebar and the text inside the conversation could
+        disagree, and neither would be wrong twice in the same way.
+
         Args:
             conversation_ids: Conversations to summarise.
             reader_language: Language the calling account reads; the translation
                 into it is preferred over the original text where one exists.
+            reader_profiles: The caller's standing in each conversation, already
+                resolved by the endpoint. Absent entries fall back to the
+                neutral standing, which is also the state of every conversation
+                too young to have been profiled.
 
         Returns:
             Conversation id mapped to its preview text and send time.
@@ -309,20 +322,38 @@ class ChatService:
         )
         newest = (await self._db.execute(select(ranked).where(ranked.c.rank == 1))).all()
 
-        translated = {
-            message_id: text
-            for message_id, text in (
-                await self._db.execute(
-                    select(
-                        TranslationResult.message_id,
-                        TranslationResult.translated_text,
-                    ).where(
-                        TranslationResult.message_id.in_([row.id for row in newest]),
-                        TranslationResult.target_language == reader_language,
-                    )
+        candidates = (
+            await self._db.execute(
+                select(
+                    TranslationResult.message_id,
+                    TranslationResult.translated_text,
+                    TranslationResult.target_language,
+                    TranslationResult.honorific_profile,
                 )
-            ).all()
-        }
+                .where(
+                    TranslationResult.message_id.in_([row.id for row in newest]),
+                    TranslationResult.target_language == reader_language,
+                )
+                # Oldest first, so the last step of the fallback ladder is
+                # stable rather than whatever the query plan produced.
+                .order_by(TranslationResult.created_at, TranslationResult.id)
+            )
+        ).all()
+
+        by_message: dict[str, list] = {}
+        for candidate in candidates:
+            by_message.setdefault(candidate.message_id, []).append(candidate)
+
+        profiles = reader_profiles or {}
+        translated: dict[str, str] = {}
+        for row in newest:
+            chosen = select_for_reader(
+                by_message.get(row.id, []),
+                target_language=reader_language,
+                honorific_profile=profile_for(profiles, row.conversation_id),
+            )
+            if chosen is not None:
+                translated[row.id] = chosen.translated_text
 
         # A withdrawn message previews as empty text with its timestamp intact.
         # The wording belongs to the client: it is interface copy, and this

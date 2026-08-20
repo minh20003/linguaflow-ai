@@ -186,6 +186,7 @@ Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗ
     {
       "translation_id": "uuid",
       "target_language": "en",
+      "honorific_profile": "peer",
       "translated_text": "string",
       "model": "llama-3.3-70b-versatile",
       "latency_ms": 420,
@@ -205,6 +206,8 @@ Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗ
 **Lịch sử trả về mảng trần, không bọc trong `{"messages": ...}`.** Bảng ở §3 từng ghi dạng bọc và đánh dấu "chưa hiện thực"; endpoint đã được hiện thực từ lâu với `response_model=list[MessageResponse]` (`src/api/routes.py`), và client đang đọc theo mã nguồn. Sửa tài liệu cho khớp mã chứ không ngược lại: đổi hình dạng phản hồi bây giờ sẽ làm hỏng frontend đang chạy, để đúng một dấu ngoặc trong tài liệu.
 
 Trường `translation_id` là bắt buộc trong mỗi phần tử của mảng `translations`. Frontend sử dụng giá trị này để gọi endpoint gửi phản hồi (F-05).
+
+Trường `honorific_profile` nhận một trong bốn giá trị `senior`, `peer`, `junior`, `client` và **bắt buộc phải đọc cùng `target_language`**: kể từ khi ràng buộc duy nhất của `translation_results` mở rộng sang ba cột (§5 ghi chú 6), một tin nhắn có thể có nhiều bản dịch cùng một ngôn ngữ đích, khác nhau ở cách xưng hô. Client chọn bằng **cặp** `(target_language, honorific_profile)` chứ không bằng ngôn ngữ. Chọn bằng ngôn ngữ thôi sẽ lấy phải phần tử đầu tiên tình cờ gặp — thứ tự do kế hoạch truy vấn quyết định, nên hỏng theo kiểu im lặng và không tất định.
 
 Trường `my_edit` là bản góp ý **mới nhất của chính tài khoản đang gọi** cho bản dịch đó, `null` khi họ chưa góp ý (§3.10). Tiền tố `my_` mang đúng nghĩa như ở `my_rating`: hai người đọc cùng một `translation_id` nhận hai giá trị khác nhau, và **không tài khoản nào đọc được `my_edit` của người khác**. Chỉ bản mới nhất nằm trong DTO; lịch sử đầy đủ nằm trong bảng `translation_edits` và chỉ dành cho quản trị.
 
@@ -240,6 +243,13 @@ Endpoint **chỉ dành cho quản trị viên**: nội dung không chứa văn b
 `fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
 
 ### 3.5. ConversationDTO
+
+Mỗi phần tử của `members` mang thêm `honorific_profile` (§5 ghi chú 15). Đây là nơi client
+đọc ra vị thế **của chính mình** trong hội thoại, thứ cần có để chọn đúng phần tử trong
+mảng `translations` của §3.2. Giá trị theo từng hội thoại chứ không theo tài khoản: cùng
+một người là `junior` với quản lý của mình và là `client` trong hội thoại với nhà cung cấp.
+`TranslationEditDTO` ở §3.10 cũng mang thêm trường này, cùng một lý do — nó vốn đã mang
+`target_language`, mà từ nay ngôn ngữ một mình không định danh được bản dịch.
 
 Tương ứng lớp `ConversationResponse` trong `src/schemas/chat.py`, trả về bởi `GET /conversations` và `POST /conversations`.
 
@@ -443,7 +453,7 @@ Trình tự sự kiện khi cần dịch: `message.received` (trạng thái `str
 |---|---|---|
 | `message.received` | `{"type": "message.received", "message_id", "sender_id", "original_text", "source_language", "translation_status": "not_required" \| "streaming", "created_at"}` | Ngay sau khi Chat Service lưu xong tin nhắn gốc. Phát tới toàn bộ thành viên trong cuộc hội thoại, bao gồm người gửi |
 | `translation.chunk` | `{"type": "translation.chunk", "message_id", "target_language", "chunk": "string"}` | Mỗi đoạn bản dịch nhận được từ LLM ở chế độ streaming |
-| `translation.completed` | `{"type": "translation.completed", "message_id", "translation_id", "target_language", "source_language", "translated_text", "model", "latency_ms", "is_fallback"}` | Khi Agent hoàn tất xử lý, bao gồm cả trường hợp fallback |
+| `translation.completed` | `{"type": "translation.completed", "message_id", "translation_id", "target_language", "honorific_profile", "source_language", "translated_text", "model", "latency_ms", "is_fallback"}` | Khi Agent hoàn tất xử lý, bao gồm cả trường hợp fallback |
 | `typing` | `{"type": "typing", "conversation_id", "user_id", "is_typing"}` | Chuyển tiếp sự kiện soạn tin tới **các thành viên khác**, không gửi lại cho chính người gõ |
 | `message_updated` | `{"type": "message_updated", "message_id", "conversation_id", "original_text", "edited_at"}` | Sau khi người gửi sửa tin nhắn (§3.6). Phát tới các thành viên khác; bản dịch mới đến sau bằng `translation_completed` như tin nhắn thường |
 | `message_deleted` | `{"type": "message_deleted", "message_id", "conversation_id", "deleted_at"}` | Sau khi người gửi gỡ tin nhắn (§3.6). Phát tới các thành viên khác |
@@ -479,7 +489,15 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 Áp dụng cho cuộc hội thoại có N thành viên sử dụng M ngôn ngữ khác nhau:
 
 1. Server truy vấn tập `DISTINCT preferred_language` của toàn bộ thành viên, loại trừ `source_language` đã xác định.
-2. Thực hiện một lần dịch cho mỗi ngôn ngữ đích còn lại (tối đa M-1 lần, không phải N lần). Các thành viên cùng ngôn ngữ dùng chung một bản dịch và cùng một `translation_id`.
+2. Thực hiện một lần dịch cho mỗi cặp **(ngôn ngữ đích, vị thế xưng hô)** còn lại — **sửa ngày 20/08**, trước đó là mỗi ngôn ngữ đích. Các thành viên cùng ngôn ngữ **và cùng vị thế** dùng chung một bản dịch và cùng một `translation_id`. Vị thế nhận bốn giá trị `senior | peer | junior | client`, lấy từ `participant_profiles` (§5 ghi chú 15), nên số lượt dịch tối đa là số cặp khác nhau chứ không phải số thành viên: một nhóm 10 người đọc 3 ngôn ngữ đi từ 3 lượt lên nhiều nhất 9, và hội thoại `direct` không đổi vì mỗi ngôn ngữ ở đó vốn chỉ có một người nhận. Lý do phải thêm chiều này: tiếng Việt, tiếng Nhật và tiếng Hàn không dựng được câu mà không chọn cách xưng hô, và lựa chọn đó khác nhau giữa một quản lý và một khách hàng trong cùng một nhóm (ADR-23).
+
+   **Thang dự phòng khi đọc.** `translation_results.honorific_profile` ghi một lần và không bao giờ ghi đè, trong khi hồ sơ vị thế do LLM suy ra và **thay đổi được**. Hai giá trị vì thế lệch nhau theo thiết kế, nên đường đọc chọn bản dịch theo ba bậc, đúng thứ tự này:
+
+   1. đúng cặp `(ngôn ngữ của người đọc, vị thế hiện tại của họ)`;
+   2. không có thì lấy cùng ngôn ngữ ở bậc trung tính `peer`;
+   3. vẫn không có thì lấy **bất kỳ** bản dịch nào cùng ngôn ngữ, theo thứ tự `created_at` tăng dần để hai lần đọc liên tiếp không cho hai kết quả khác nhau.
+
+   Thang này nới **vị thế**, tuyệt đối không nới **ngôn ngữ**. Không có nó, một lần suy luận lại hồ sơ sẽ làm biến mất mọi bản dịch đã giao trong luồng hội thoại: người dùng tải lại trang và thấy toàn bộ quay về nguyên bản, không có lỗi nào được ghi. Giao một cách xưng hô hơi lệch là thiệt hại nhỏ hơn hẳn giao một tin nhắn chưa dịch.
 3. Mỗi kết nối WebSocket chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của người dùng tương ứng — **cộng thêm người gửi tin nhắn trong hội thoại `type = "direct"`, nhận bản dịch của chính tin mình gửi** (sửa theo §3.10, **đề xuất**).
 
    Vế thêm vào là điều kiện để §3.10 chạy được ở chat 1-1. Trước đây `_recipients_by_language` xếp người gửi vào đúng nhóm ngôn ngữ *họ đọc*, nên giữa một người đọc `vi` và một người đọc `en`, bản dịch `en` chỉ tới người nhận. Người gửi không có bản dịch nào trong tay để đối chiếu hay góp ý cho tới khi tải lại trang — trong khi `GET /conversations/{id}/messages` vốn đã trả **toàn bộ** bản dịch của mỗi tin, tức dữ liệu đã sẵn sàng, chỉ thiếu đường phát theo thời gian thực.
