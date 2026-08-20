@@ -32,6 +32,7 @@ from src.services.chat import (
     ConversationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.message_memory import schedule_message_embedding
 from src.services.profile_inference import schedule_profile_inference
 from src.services.translation import schedule_translations
 
@@ -328,6 +329,14 @@ async def websocket_endpoint(
                 # count changes; the cadence check lives inside.
                 schedule_profile_inference(
                     conversation_id=result.message.conversation_id
+                )
+                # Third and last of the detached tasks. Off unless
+                # RAG_CONTEXT_ENABLED, and the guard lives inside so this call
+                # site stays a plain statement of what happens to a message.
+                schedule_message_embedding(
+                    message_id=result.message.id,
+                    conversation_id=result.message.conversation_id,
+                    text=result.message.original_text,
                 )
     except WebSocketDisconnect:
         return

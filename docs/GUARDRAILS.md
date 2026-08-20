@@ -160,3 +160,22 @@ phải còn đủ số điện thoại lẫn link.
    duyệt được nối vào phần "nguồn" **chỉ cho phép kiểm này**, không cho gì khác.
    Hệ quả cần biết: một mục glossary độc hại có thể đưa một định danh vào bản dịch
    mà lớp (2) của ADR-21 không chặn. Đó là lý do mục glossary phải qua duyệt.
+
+3. **Truy hồi theo ngữ nghĩa mở một lối thứ hai vào bảng `messages`** (ADR-27),
+   và mọi ràng buộc của lối thứ nhất phải áp lại nguyên vẹn. Hai điều được kiểm
+   bằng test riêng vì cả hai đều hỏng **im lặng** — dòng lấy sai vẫn trông y hệt
+   dòng lấy đúng, và bản dịch sinh ra vẫn trôi chảy:
+
+   - `test_a_withdrawn_message_never_returns_through_recall` — người gửi đã thu
+     hồi thì không ai đọc được nữa trong ứng dụng, nên cũng không được quay lại
+     qua đường này.
+   - `test_recall_never_reaches_into_another_conversation` — truy hồi bị giới hạn
+     trong một hội thoại. Với sang hội thoại khác là lấy chữ từ luồng người đọc
+     chưa từng tham gia rồi đặt trước mặt model: đúng cái rò rỉ mà ADR-21 canh ở
+     **đầu ra**, chỉ khác là đưa vào từ **đầu vào**, nơi chưa lớp nào canh.
+
+   Cần lưu ý phần **chưa** làm: không có lớp nào kiểm rằng dòng được truy hồi
+   nằm trong phạm vi người nhận *hiện tại* được phép đọc. Hiện điều đó đúng theo
+   cách dựng — thành viên vào sau vốn đọc được toàn bộ lịch sử qua
+   `GET /conversations/{id}/messages` — nên truy hồi không mở thêm kênh nào, đúng
+   như đã ghi ở mục "cố ý không làm" số 5.

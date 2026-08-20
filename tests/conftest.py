@@ -61,6 +61,7 @@ from src.api.websocket import router as websocket_router
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import message_memory as message_memory_module
 from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
 from src.services.connection_manager import ConnectionManager
@@ -220,6 +221,7 @@ async def _settle_background_translations() -> None:
         # Sending a message also schedules a conversation-profile inference,
         # which outlives the request the same way and has the same problem.
         *profile_inference_module._BACKGROUND_TASKS,
+        *message_memory_module._BACKGROUND_TASKS,
     )
     pending = [task for task in tracked if not task.done()]
     for task in pending:
