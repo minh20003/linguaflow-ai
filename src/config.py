@@ -75,6 +75,32 @@ class Settings(BaseSettings):
     # total, so this is what stops a background task running forever (ADR-14).
     translation_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
+    # Embeddings (ADR-25). pgvector stores and compares the vectors; something
+    # still has to produce them, and the requirement that decides the choice is
+    # multilingual reach: unless "staging env" and "môi trường stg" land near
+    # each other, grouping corrections by meaning is pointless.
+    #
+    # `local` runs sentence-transformers in-process — no quota, and no message
+    # leaves the container, which is the kill switch ADR-15 asks for. It costs
+    # a large dependency, so it is an opt-in extra rather than a requirement.
+    embedding_provider: Literal["gemini", "openai", "local"] = "gemini"
+    # Empty means the provider's default. The width, unlike this, is *not*
+    # configurable: it is EMBEDDING_DIM in src/database/models.py, because two
+    # developers with different .env files would otherwise describe two
+    # different schemas.
+    embedding_model: str = ""
+
+    # Both default off, following `fallback_translator_enabled`. Each adds an
+    # embedding call to the request path, and NFR-01 is already the tightest
+    # figure in the project — turn them on against measurements, not hopes.
+    semantic_glossary_enabled: bool = False
+    rag_context_enabled: bool = False
+    # Cosine similarity a glossary term must reach to be injected without an
+    # exact match. Conservative on purpose: a wrongly matched term is *forced*
+    # into the translation, which is worse than missing one.
+    glossary_similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    rag_top_k: int = Field(default=3, ge=1, le=10)
+
     # Secondary translation provider tried when the LLM path fails (ADR-07).
     # Disable to go straight back to returning the untranslated message.
     fallback_translator_enabled: bool = True

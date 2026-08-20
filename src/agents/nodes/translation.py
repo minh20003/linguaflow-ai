@@ -306,7 +306,13 @@ def make_customize(provider: CustomizationProvider | None = None):
             return {
                 "domain": "",
                 "audience": "",
-                **_telemetry(state, customize_ms=_elapsed_ms(started), customized=False),
+                "glossary_terms": [],
+                **_telemetry(
+                    state,
+                    customize_ms=_elapsed_ms(started),
+                    customized=False,
+                    glossary_hits=0,
+                ),
             }
 
         conversation_id = state.get("conversation_id", "")
@@ -329,10 +335,12 @@ def make_customize(provider: CustomizationProvider | None = None):
         return {
             "domain": customization.domain,
             "audience": customization.audience,
+            "glossary_terms": list(customization.glossary_terms),
             **_telemetry(
                 state,
                 customize_ms=_elapsed_ms(started),
                 customized=bool(customization.domain or customization.audience),
+                glossary_hits=len(customization.glossary_terms),
             ),
         }
 
@@ -400,6 +408,7 @@ async def translate(state: AgentState) -> dict:
         original_text=original_text,
         context_messages=state.get("context_messages", []),
         nonce=nonce,
+        glossary_terms=state.get("glossary_terms", []),
     )
 
     # Any latency already recorded by detect_language is carried forward so the
@@ -544,7 +553,19 @@ async def validate_output(state: AgentState) -> dict:
     # carrying an identifier the message itself never contained came either from
     # that context or from nowhere. Neither is deliverable (ADR-21).
     context_messages = state.get("context_messages", []) or []
-    leaked = find_leaked_identifiers(translated_text, original_text)
+    # A glossary term is by definition wording the message does not contain —
+    # that is what forcing a rendering means — so a product code or a
+    # part number sitting in one would read to the leak check as an identifier
+    # the model invented, and the whole translation would be discarded. The
+    # terms are administrator-approved configuration, so they are treated as
+    # part of the source for this check and for nothing else (ADR-21, ADR-26).
+    known_terms = " ".join(
+        term.target_term for term in state.get("glossary_terms", []) or []
+    )
+    leaked = find_leaked_identifiers(
+        translated_text,
+        f"{original_text} {known_terms}" if known_terms else original_text,
+    )
     if leaked:
         # Count only. The values are the very thing that must not spread, and a
         # server log is read by people the conversation never included.

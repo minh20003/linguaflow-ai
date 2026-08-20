@@ -41,6 +41,10 @@ class AgentState(TypedDict, total=False):
     # its Audience section (ADR-24).
     domain: str
     audience: str
+    # Terms the translation must render a fixed way, selected for this message
+    # by the `customize` node. Not part of the wire contract: no client reads
+    # them, and they change with what the glossary holds (ADR-26).
+    glossary_terms: list
 
     # Output
     translated_text: str

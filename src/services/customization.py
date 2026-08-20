@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.customization import Customization
 from src.database.models import ConversationProfile
+from src.services.glossary import lookup_terms
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,9 @@ class DatabaseCustomizationProvider:
     ) -> Customization:
         """Return the conversation's inferred subject area and audience.
 
-        `original_text` and `source_language` are accepted and unused; the
-        glossary lookup that will need them comes later, and widening the
-        Protocol afterwards would mean editing every implementation.
+        The glossary lookup is wrapped separately from the profile read so a
+        glossary problem costs only the terms: a conversation keeps its inferred
+        audience even when no term can be resolved.
 
         Any failure returns the empty customization rather than raising. The
         caller is a graph node that must not fail a translation, and an absent
@@ -68,6 +69,23 @@ class DatabaseCustomizationProvider:
             logger.warning("Reading the conversation profile failed: %s", exc)
             return Customization()
 
-        if row is None:
-            return Customization()
-        return Customization(domain=row.domain, audience=row.audience)
+        domain = row.domain if row is not None else ""
+        audience = row.audience if row is not None else ""
+
+        # Looked up after the profile, and with it: which rendering of a term
+        # applies depends on who is reading, so "UI" resolves one way for an
+        # internal audience and another for a client (ADR-26).
+        try:
+            terms = await lookup_terms(
+                self._session,
+                text=original_text,
+                source_language=source_language,
+                target_language=target_language,
+                domain=domain,
+                audience=audience,
+            )
+        except Exception as exc:
+            logger.warning("Looking up glossary terms failed: %s", exc)
+            terms = ()
+
+        return Customization(domain=domain, audience=audience, glossary_terms=terms)

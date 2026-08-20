@@ -94,6 +94,10 @@ class AgentState(TypedDict, total=False):
     domain: str                   # Lĩnh vực hội thoại, do node customize điền từ
     audience: str                 # conversation_profiles. Rỗng = chưa suy luận,
                                   # khi đó prompt bỏ hẳn mục Audience (§5 ghi chú 15)
+    glossary_terms: list          # Thuật ngữ tin nhắn này buộc phải dịch cố định.
+                                  # KHÔNG thuộc hợp đồng ở mức khoá bên trong:
+                                  # không client nào đọc, và nội dung đổi theo
+                                  # glossary (ADR-26)
     context_messages: list[str]   # 3-5 tin gần nhất, đã định dạng sẵn cho prompt
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05
