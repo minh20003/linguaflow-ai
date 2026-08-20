@@ -51,6 +51,8 @@ from src.schemas.auth import (
     AuthResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
+    GoogleLinkResponse,
+    GoogleLoginRequest,
     LoginRequest,
     LogoutRequest,
     PendingRegisterResponse,
@@ -64,6 +66,7 @@ from src.schemas.auth import (
     UserResponse,
     VerifyRegisterRequest,
 )
+from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -592,7 +595,7 @@ async def login(
     result = await db.execute(select(User).where(User.email == request.email))
     user = result.scalar_one_or_none()
 
-    if user is None:
+    if user is None or not user.password_hash:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -606,6 +609,274 @@ async def login(
         )
 
     return await _issue_auth_response(user, db, remember=request.remember)
+
+
+async def _user_by_google_sub(db: AsyncSession, google_sub: str) -> User | None:
+    """Return the canonical owner of a Google subject, if one exists.
+
+    The unique database constraint should make this a zero-or-one lookup. If a
+    legacy or manually-corrupted database violates that invariant, fail closed
+    rather than issuing a session for an arbitrary row.
+    """
+    result = await db.execute(select(User).where(User.google_sub == google_sub))
+    users = result.scalars().all()
+    if len(users) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Google account identity conflict.",
+        )
+    return users[0] if users else None
+
+
+async def _user_by_google_email(db: AsyncSession, email: str) -> User | None:
+    """Return the account for an already verified, normalized Google email.
+
+    The current application always normalizes email before storing it, but an
+    older case-sensitive unique index could contain case variants. Treat that
+    as an explicit conflict instead of logging into whichever row happens to
+    be returned first.
+    """
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
+    users = result.scalars().all()
+    if len(users) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email identity conflict.",
+        )
+    return users[0] if users else None
+
+
+async def _user_by_id(db: AsyncSession, user_id: str) -> User | None:
+    """Reload a user after a SQL UPDATE that bypasses the ORM identity map."""
+    result = await db.execute(
+        select(User)
+        .where(User.id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _claim_google_sub(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    google_sub: str,
+) -> User | None:
+    """Atomically attach a Google subject only while the account is unlinked.
+
+    The conditional UPDATE is the concurrency boundary.  A competing request
+    cannot overwrite a subject that another request has just attached, even
+    when the two subjects are different and therefore would not hit the unique
+    constraint.  Every unsuccessful claim rolls the session back before a
+    caller re-fetches canonical state.
+    """
+    try:
+        claimed_id = (
+            await db.execute(
+                update(User)
+                .where(User.id == user_id, User.google_sub.is_(None))
+                .values(google_sub=google_sub)
+                .returning(User.id)
+                .execution_options(synchronize_session=False)
+            )
+        ).scalar_one_or_none()
+        if claimed_id is None:
+            await db.rollback()
+            return None
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return None
+
+    return await _user_by_id(db, user_id)
+
+
+async def _reconcile_google_login_race(
+    db: AsyncSession,
+    google_info: GoogleUserInfo,
+) -> User:
+    """Re-fetch authoritative state after a failed Google link/create claim."""
+    # Subject ownership always wins: it is the immutable Google identity and is
+    # intentionally checked before the mutable email address.
+    by_sub = await _user_by_google_sub(db, google_info.google_sub)
+    if by_sub is not None:
+        return by_sub
+
+    by_email = await _user_by_google_email(db, google_info.email)
+    if by_email is not None and by_email.google_sub is None:
+        # A concurrent create may have made the email appear after our first
+        # lookup. Claim it through the same compare-and-swap boundary.
+        linked = await _claim_google_sub(
+            db,
+            user_id=by_email.id,
+            google_sub=google_info.google_sub,
+        )
+        if linked is not None:
+            return linked
+
+        by_sub = await _user_by_google_sub(db, google_info.google_sub)
+        if by_sub is not None:
+            return by_sub
+        by_email = await _user_by_google_email(db, google_info.email)
+
+    if by_email is not None and by_email.google_sub == google_info.google_sub:
+        return by_email
+    if by_email is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email is already linked to a different Google account.",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Google account registration conflict.",
+    )
+
+
+@router.post("/auth/google/login", response_model=AuthResponse)
+async def google_login(
+    request: GoogleLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Log in or sign up with a Google ID token as a full authentication provider."""
+    try:
+        google_info: GoogleUserInfo = await verify_google_token(request.credential)
+    except GoogleAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+
+    # CASE 1: Subject match takes precedence over email.
+    user = await _user_by_google_sub(db, google_info.google_sub)
+    if user is not None:
+        return await _issue_auth_response(user, db, remember=True)
+
+    # CASE 2: The verified email may claim only an unlinked account.
+    email_user = await _user_by_google_email(db, google_info.email)
+    if email_user is not None:
+        if email_user.google_sub is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already linked to a different Google account.",
+            )
+
+        linked = await _claim_google_sub(
+            db,
+            user_id=email_user.id,
+            google_sub=google_info.google_sub,
+        )
+        if linked is None:
+            linked = await _reconcile_google_login_race(db, google_info)
+
+        logger.info("Google login resolved to existing user %s", linked.id)
+        return await _issue_auth_response(linked, db, remember=True)
+
+    # CASE 3: Create a password-less Google-native account. The unique database
+    # constraints remain authoritative; an IntegrityError is reconciled below.
+    new_user = User(
+        email=google_info.email,
+        google_sub=google_info.google_sub,
+        password_hash=None,
+        display_name=google_info.name,
+        username=None,
+        role="member",
+        preferred_language="en",
+        interface_language="en",
+    )
+    db.add(new_user)
+    try:
+        await db.commit()
+        await db.refresh(new_user)
+    except IntegrityError:
+        await db.rollback()
+        canonical = await _reconcile_google_login_race(db, google_info)
+        return await _issue_auth_response(canonical, db, remember=True)
+
+    logger.info("Created new Google-native user %s", new_user.id)
+    return await _issue_auth_response(new_user, db, remember=True)
+
+
+@router.post("/auth/me/google/link", response_model=GoogleLinkResponse)
+async def link_google_account(
+    request: GoogleLoginRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> GoogleLinkResponse:
+    """Link a Google account to the current LinguaFlow account (Batch G).
+
+    The user must have a valid session (JWT). After linking they can log in with
+    Google on any device. One Google account maps to one LinguaFlow account.
+    """
+    # _claim_google_sub may roll back the AsyncSession, which expires ORM
+    # instances. Keep the caller identity as an immutable primitive for every
+    # operation after that concurrency boundary.
+    current_user_id = current_user.id
+
+    if current_user.google_sub is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account is already linked to a Google account.",
+        )
+
+    try:
+        google_info: GoogleUserInfo = await verify_google_token(request.credential)
+    except GoogleAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+
+    linked = await _claim_google_sub(
+        db,
+        user_id=current_user_id,
+        google_sub=google_info.google_sub,
+    )
+    if linked is None:
+        owner = await _user_by_google_sub(db, google_info.google_sub)
+        if owner is None or owner.id != current_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This Google account is already linked to another user.",
+            )
+
+    logger.info("Google account linked to user %s", current_user_id)
+    return GoogleLinkResponse(
+        google_linked=True,
+        message="Google account linked successfully.",
+    )
+
+
+@router.delete("/auth/me/google/link", response_model=GoogleLinkResponse)
+async def unlink_google_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> GoogleLinkResponse:
+    """Remove the Google link from the current LinguaFlow account (Batch G).
+
+    If already unlinked, returns 200 with google_linked=false (idempotent).
+    If google_sub exists and password_hash is NULL, returns 409 Conflict
+    to prevent locking the user out of their only authentication method.
+    """
+    if current_user.google_sub is None:
+        return GoogleLinkResponse(
+            google_linked=False,
+            message="Google account unlinked successfully.",
+        )
+
+    if not current_user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot unlink Google account without a password. Please set a password first.",
+        )
+
+    current_user.google_sub = None
+    await db.commit()
+    logger.info("Google account unlinked from user %s", current_user.id)
+
+    return GoogleLinkResponse(
+        google_linked=False,
+        message="Google account unlinked successfully.",
+    )
 
 
 @router.post("/auth/refresh", response_model=AuthResponse)

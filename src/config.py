@@ -129,6 +129,12 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     email_provider: Literal["smtp", "console", "memory"] = "memory"
 
+    # Google Sign-In (Batch G)
+    # OAuth 2.0 client ID from Google Cloud Console. Obtain from
+    # https://console.cloud.google.com/apis/credentials?project=_ → Web client
+    # or https://console.cloud.google.com/apis/credentials?project=_ → OAuth client ID (Web application)
+    google_oauth_client_id: str = ""
+
     @field_validator("database_url")
     @classmethod
     def database_url_must_name_an_async_driver(cls, v: str) -> str:

@@ -160,6 +160,47 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
   - Cơ sở dữ liệu chỉ lưu trữ băm một chiều (bcrypt hash) của mã OTP trong bảng `pending_registrations`.
   - Validation error 422 tự động redact toàn bộ mật khẩu, mã OTP, token ở mọi độ sâu dữ liệu.
 
+### 5.3. Cấu hình Google Sign-In (Batch G)
+
+**Tạo OAuth Client ID trên Google Cloud Console:**
+
+1. Truy cập [Google Cloud Console](https://console.cloud.google.com/apis/credentials?project=_)
+2. Chọn hoặc tạo project
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+4. Application type: **Web application**
+5. Thêm **Authorized JavaScript origins**:
+   - Development: `http://localhost:3000`
+   - Production / Tunnel: `https://agent.dquangminh2003.id.vn` (hoặc domain Vercel/Cloudflare của bạn)
+6. Copy **Client ID** (format: `xxx.apps.googleusercontent.com`)
+
+**Địa chỉ API Backend Production:**
+- Production API: `https://api.dquangminh2003.id.vn`
+
+**Đặt biến môi trường:**
+
+| Vị trí | Biến | Giá trị |
+|---|---|---|
+| Backend `.env` | `GOOGLE_OAUTH_CLIENT_ID` | Client ID vừa tạo |
+| Frontend `.env.local` | `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | **Cùng Client ID** |
+
+> **Quan trọng:**
+> - Frontend và Backend phải dùng **cùng một Google OAuth Web Client ID**. Frontend sử dụng Client ID để tải thư viện Google Identity Services (GIS), backend dùng Client ID đó để xác minh chữ ký token JWT.
+> - Luồng GIS ID-token này xác minh chữ ký JWT trực tiếp với JWKS của Google nên **không cần Google client secret hoặc OAuth redirect callback**.
+> - **Full Authentication Provider:** Đăng nhập bằng Google tự động đăng nhập nếu đã có `google_sub`, tự động liên kết nếu trùng `email` đã xác thực (`google_sub` là NULL), và tự động tạo tài khoản Google-native mới nếu chưa từng tồn tại.
+> - Email Google phải đã xác minh; nếu email đã thuộc `google_sub` khác, server trả `409 Conflict` và không đổi liên kết.
+> - **Bảo vệ hủy liên kết:** Tài khoản tạo thuần bằng Google (`password_hash = NULL`) không thể hủy liên kết Google nếu chưa đặt mật khẩu.
+
+**Migration database:**
+```bash
+alembic upgrade head
+```
+Migration `7b2c91d4a08` thêm cột `google_sub` vào bảng `users` với unique constraint.
+Migration `8c3d1e4f5a6b` chuyển cột `password_hash` sang `nullable=True` để hỗ trợ tài khoản Google-native, kèm check constraint buộc mỗi user phải còn mật khẩu hoặc `google_sub`.
+
+**Tắt Google Sign-In:**
+- Để trống `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` → nút Google ẩn trên giao diện đăng nhập và cài đặt
+- Để trống `GOOGLE_OAUTH_CLIENT_ID` → endpoint `/auth/google/*` và `/auth/me/google/link` trả `401 Unauthorized` (báo chưa cấu hình)
+
 **Nguyên tắc:** `.env` chứa giá trị thật và **không bao giờ được commit**;
 `.env.example` là bản mẫu **được commit** nên mọi giá trị trong đó là công khai
 với cả tổ chức. Từ 15/08 `.gitignore` bắt `.env*` (trừ `.env.example`) và bắt
