@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import LoginForm from "@/features/auth/components/LoginForm";
+import { LoginScreen } from "@/features/auth/screens/LoginScreen";
 
 export const metadata: Metadata = {
-  title: "Sign in — LinguaFlow",
+  title: "Đăng nhập — LinguaChat",
   description:
-    "Sign in to LinguaFlow: write in your language, they read in theirs.",
+    "Đăng nhập LinguaChat: viết bằng tiếng của bạn, người kia đọc bằng tiếng của họ.",
 };
 
 export default function LoginPage() {
-  return <LoginForm />;
+  return <LoginScreen />;
 }
