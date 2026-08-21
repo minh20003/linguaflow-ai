@@ -9,6 +9,7 @@ interface ApiUser {
   username: string;
   display_name: string;
   preferred_language: string;
+  group_role?: "owner" | "admin" | "member";
 }
 
 interface ApiConversation {
@@ -21,6 +22,8 @@ interface ApiConversation {
   last_message_at: string | null;
   online_member_ids: string[];
   unread_count: number;
+  created_by: string;
+  description?: string | null;
 }
 
 interface ApiTranslation {
@@ -80,6 +83,7 @@ export function toChatUser(user: ApiUser | AuthUser): User {
     avatar: avatar(user.display_name || user.username || user.email),
     nativeLanguage: toLanguageCode(user.preferred_language),
     onlineStatus: "offline",
+    role: "group_role" in user ? user.group_role : undefined,
   };
 }
 
@@ -104,6 +108,9 @@ export function toConversation(item: ApiConversation, currentUserId: string): Co
     lastMessage: item.last_message || "No messages yet",
     lastMessageTime: time(item.last_message_at),
     unreadCount: item.unread_count,
+    description: item.description ?? undefined,
+    createdBy: item.created_by,
+    currentUserRole: item.members.find((member) => member.id === currentUserId)?.group_role,
   };
 }
 
@@ -205,6 +212,13 @@ export function createConversation(token: string, type: "direct" | "group", memb
 }
 export function markRead(token: string, conversationId: string) { return request<void>(`/api/v1/conversations/${conversationId}/read`, token, { method: "POST" }); }
 export function deleteMessage(token: string, conversationId: string, messageId: string) { return request<void>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, token, { method: "DELETE" }); }
+export function addGroupMembers(token: string, conversationId: string, userIds: string[]) { return request<void>(`/api/v1/conversations/${conversationId}/members`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_ids: userIds }) }); }
+export function removeGroupMember(token: string, conversationId: string, userId: string) { return request<void>(`/api/v1/conversations/${conversationId}/members/${userId}`, token, { method: "DELETE" }); }
+export function updateGroupRole(token: string, conversationId: string, userId: string, role: "admin" | "member") { return request<void>(`/api/v1/conversations/${conversationId}/members/${userId}/role`, token, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }) }); }
+export function transferGroupOwnership(token: string, conversationId: string, userId: string) { return request<void>(`/api/v1/conversations/${conversationId}/owner`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userId }) }); }
+export function updateGroupDetails(token: string, conversationId: string, title: string, description: string) { return request<void>(`/api/v1/conversations/${conversationId}`, token, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, description: description.trim() || null }) }); }
+export function leaveGroup(token: string, conversationId: string) { return request<void>(`/api/v1/conversations/${conversationId}/leave`, token, { method: "POST" }); }
+export function deleteGroup(token: string, conversationId: string) { return request<void>(`/api/v1/conversations/${conversationId}`, token, { method: "DELETE" }); }
 export function uploadAttachment(token: string, conversationId: string, file: File) {
   const form = new FormData(); form.append("file", file);
   return request<ApiAttachment>(`/api/v1/conversations/${conversationId}/attachments`, token, { method: "POST", body: form });
