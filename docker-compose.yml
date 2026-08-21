@@ -21,7 +21,7 @@ services:
     # Published to the host because the backend usually runs outside the
     # container during development, and pytest always does.
     ports:
-      - "5433:5432"
+      - "5432:5432"
     environment:
       POSTGRES_USER: linguaflow
       POSTGRES_PASSWORD: linguaflow

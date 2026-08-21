@@ -49,7 +49,7 @@ interface GoogleSignInButtonProps {
 export function GoogleSignInButton({ disabled = false, onCredential, onError }: GoogleSignInButtonProps) {
   const host = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
-  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID;
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   useEffect(() => {
     if (!clientId) return;
