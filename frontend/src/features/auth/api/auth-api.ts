@@ -4,7 +4,7 @@ import {
   parseJson,
   type ApiErrorBody,
 } from "@/shared/api/response";
-import type { AuthSession } from "@/shared/types/auth";
+import type { AuthSession, AuthUser } from "@/shared/types/auth";
 
 export type { AuthSession, AuthUser } from "@/shared/types/auth";
 export {
@@ -32,6 +32,38 @@ async function request<T>(path: string, init: RequestInit, fallback: string): Pr
   return body;
 }
 
+function isAuthUser(value: unknown): value is AuthUser {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && typeof (value as Partial<AuthUser>).id === "string"
+      && typeof (value as Partial<AuthUser>).email === "string",
+  );
+}
+
+/**
+ * Accept both the current session response and the older token-only response.
+ * A token-only response is completed from `/auth/me` before any screen reads
+ * profile fields, preventing an opaque browser `undefined.display_name` error.
+ */
+async function requestAuthSession(path: string, init: RequestInit, fallback: string): Promise<AuthSession> {
+  const session = await request<Partial<AuthSession>>(path, init, fallback);
+  if (!session.access_token || !session.refresh_token) {
+    throw new Error("The server returned an incomplete sign-in session. Please try again.");
+  }
+  if (isAuthUser(session.user)) return session as AuthSession;
+
+  const response = await fetch(`${API_BASE}/api/v1/auth/me`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const user = await parseJson<AuthUser & ApiErrorBody>(response);
+  if (!response.ok || !isAuthUser(user)) {
+    throw new Error(getApiErrorMessage(user, "Unable to load your account after sign-in. Please try again."));
+  }
+
+  return { ...session, token_type: session.token_type ?? "bearer", user } as AuthSession;
+}
+
 function usernameFrom(fullName: string, email: string): string {
   const base = fullName
     .normalize("NFKD")
@@ -47,7 +79,7 @@ function usernameFrom(fullName: string, email: string): string {
 }
 
 export function signIn(email: string, password: string, remember: boolean): Promise<AuthSession> {
-  return request<AuthSession>(
+  return requestAuthSession(
     "/api/v1/auth/login",
     { method: "POST", body: JSON.stringify({ email: email.trim(), password, remember }) },
     "Unable to sign in. Please try again.",
@@ -86,7 +118,7 @@ export function requestPasswordReset(email: string): Promise<{ message: string; 
 }
 
 export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
-  return request<AuthSession>(
+  return requestAuthSession(
     "/api/v1/auth/google",
     { method: "POST", body: JSON.stringify({ credential, remember }) },
     "Unable to sign in with Google. Please try again.",

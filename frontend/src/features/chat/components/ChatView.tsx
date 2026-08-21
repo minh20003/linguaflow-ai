@@ -29,6 +29,15 @@ interface ChatViewProps {
   attachments: MessageAttachment[];
   onDownloadAttachment: (attachment: MessageAttachment) => void;
   onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
+  onLeaveGroup?: (conversationId: string) => void;
+  onDeleteGroup?: (conversationId: string) => void;
+  availableUsers: User[];
+  onAddMembers?: (conversationId: string, userIds: string[]) => void;
+  onRemoveMember?: (conversationId: string, userId: string) => void;
+  onChangeMemberRole?: (conversationId: string, userId: string, role: 'admin' | 'member') => void;
+  onSearchUsers?: (query: string) => void;
+  onTransferOwnership?: (conversationId: string, userId: string) => void;
+  onUpdateGroup?: (conversationId: string, title: string, description: string) => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -54,6 +63,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
   attachments,
   onDownloadAttachment,
   onLoadAttachmentPreview,
+  onLeaveGroup,
+  onDeleteGroup,
+  availableUsers,
+  onAddMembers,
+  onRemoveMember,
+  onChangeMemberRole,
+  onSearchUsers,
+  onTransferOwnership,
+  onUpdateGroup,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
@@ -155,6 +173,16 @@ export const ChatView: React.FC<ChatViewProps> = ({
         language={language}
         attachments={attachments}
         onDownloadAttachment={onDownloadAttachment}
+        onLeaveGroup={onLeaveGroup}
+        onDeleteGroup={onDeleteGroup}
+        currentUserId={currentUser.id}
+        availableUsers={availableUsers}
+        onAddMembers={onAddMembers}
+        onRemoveMember={onRemoveMember}
+        onChangeMemberRole={onChangeMemberRole}
+        onSearchUsers={onSearchUsers}
+        onTransferOwnership={onTransferOwnership}
+        onUpdateGroup={onUpdateGroup}
       />
     </div>
   );
