@@ -1007,10 +1007,12 @@ async def test_password_and_otp_absent_from_captured_logs(client, caplog):
 
 
 def test_register_form_no_longer_exposes_back_to_edit_path():
-    """RegisterForm component must not expose the stale Back-to-edit path on OTP step."""
+    """RegisterForm/SignUpForm component must not expose the stale Back-to-edit path on OTP step."""
     from pathlib import Path
 
-    form_path = Path("frontend/src/features/auth/components/RegisterForm.tsx")
+    form_path = Path("frontend/src/features/auth/components/SignUpForm.tsx")
+    if not form_path.exists():
+        form_path = Path("frontend/src/features/auth/components/RegisterForm.tsx")
     content = form_path.read_text(encoding="utf-8")
     assert "handleBackToForm" not in content
     assert "auth.otp.back" not in content

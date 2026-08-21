@@ -3,7 +3,7 @@
 Supports AI action candidate extraction, HITL confirmation, and commitment detection (B-04/B-05/B-10).
 
 Revision ID: a1b2c3d4e5f6
-Revises: 8c3d1e4f5a6b
+Revises: 8c3d1e4f5a6b, e51a72f4b903
 Create Date: 2026-08-21
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1b2c3d4e5f6'
-down_revision: Union[str, Sequence[str], None] = '8c3d1e4f5a6b'
+down_revision: Union[str, Sequence[str], None] = ('8c3d1e4f5a6b', 'e51a72f4b903')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
