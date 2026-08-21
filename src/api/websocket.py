@@ -31,6 +31,7 @@ from src.services.chat import (
     ConversationMembershipError,
     ConversationNotFoundError,
 )
+from src.services.commitment_detection import schedule_commitment_detection
 from src.services.connection_manager import ConnectionManager
 from src.services.message_memory import schedule_message_embedding
 from src.services.profile_inference import schedule_profile_inference
@@ -322,6 +323,14 @@ async def websocket_endpoint(
                 # Fire and forget. Guarded by `created` so an idempotent resend
                 # does not translate the same message twice.
                 schedule_translations(message=result.message, publisher=manager)
+                # Commitment detection deliberately receives primitive IDs and
+                # opens its own session; it never delays message delivery.
+                schedule_commitment_detection(
+                    message_id=result.message.id,
+                    conversation_id=result.message.conversation_id,
+                    sender_id=result.message.sender_id,
+                    publisher=manager,
+                )
                 # Also fire and forget, and separate on purpose: this asks a
                 # question about the whole conversation rather than about this
                 # message, and it answers at most once every twenty of them

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     HTTPException,
@@ -25,6 +26,10 @@ from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.agents.conversation_intelligence.errors import (
+    IntelligenceError,
+    IntelligenceErrorCode,
+)
 from src.api.websocket import get_connection_manager
 from src.config import get_settings
 from src.core.deps import get_current_user
@@ -66,7 +71,6 @@ from src.schemas.auth import (
     UserResponse,
     VerifyRegisterRequest,
 )
-from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -85,6 +89,20 @@ from src.schemas.chat import (
     TranslationEditSummary,
     TranslationSummary,
 )
+from src.schemas.intelligence import (
+    ActionProposalResponse,
+    ClarificationAnalysisResponse,
+    ClarifyProposalRequest,
+    ConfirmProposalRequest,
+    ConversationSummaryRequest,
+    ConversationSummaryResponse,
+)
+from src.services.action_proposals import (
+    ActionProposalNotFoundError,
+    ActionProposalOwnershipError,
+    ActionProposalService,
+    ActionProposalStatusError,
+)
 from src.services.chat import (
     ChatService,
     ChatServiceError,
@@ -98,9 +116,11 @@ from src.services.chat import (
     TranslationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.conversation_intelligence import ConversationIntelligenceService
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
 from src.services.email import EmailDeliveryError, send_registration_otp_email
+from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.services.profiles import (
     profile_for,
     resolve_profiles,
@@ -1338,6 +1358,314 @@ async def get_conversation_messages(
         )
         for message in messages
     ]
+
+
+@router.post(
+    "/conversations/{conversation_id}/summary",
+    response_model=ConversationSummaryResponse,
+)
+async def summarize_conversation(
+    conversation_id: str,
+    request: ConversationSummaryRequest = Body(default_factory=ConversationSummaryRequest),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationSummaryResponse:
+    """Generate an on-demand grounded conversation summary for authorized members (B-03)."""
+    service = ConversationIntelligenceService()
+    try:
+        return await service.summarize_conversation(
+            conversation_id=conversation_id,
+            user_id=current_user.id,
+            db=db,
+            message_limit=request.message_limit,
+            target_language=request.target_language,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except ConversationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except IntelligenceError as exc:
+        if exc.code == IntelligenceErrorCode.TIMEOUT:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Conversation summarization timed out",
+            ) from exc
+        if exc.code == IntelligenceErrorCode.PROVIDER_UNAVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI provider is currently unavailable",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=exc.message,
+        ) from exc
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/extract-actions",
+    response_model=list[ActionProposalResponse],
+)
+async def extract_actions_from_message_endpoint(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActionProposalResponse]:
+    """Extract candidate actions/appointments from a specific message (B-04)."""
+    service = ConversationIntelligenceService()
+    try:
+        return await service.extract_actions_from_message(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=current_user.id,
+            db=db,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except MessageNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message was not found",
+        ) from exc
+    except IntelligenceError as exc:
+        if exc.code == IntelligenceErrorCode.TIMEOUT:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Action extraction timed out",
+            ) from exc
+        if exc.code == IntelligenceErrorCode.PROVIDER_UNAVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI provider is currently unavailable",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=exc.message,
+        ) from exc
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/clarify",
+    response_model=ClarificationAnalysisResponse,
+)
+async def analyze_message_clarification(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ClarificationAnalysisResponse:
+    """Analyze message for execution-relevant ambiguity and suggest clarification question (B-08)."""
+    service = ConversationIntelligenceService()
+    try:
+        return await service.analyze_ambiguity_and_clarification(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=current_user.id,
+            db=db,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except MessageNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message was not found",
+        ) from exc
+    except IntelligenceError as exc:
+        if exc.code == IntelligenceErrorCode.TIMEOUT:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Clarification analysis timed out",
+            ) from exc
+        if exc.code == IntelligenceErrorCode.PROVIDER_UNAVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI provider is currently unavailable",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=exc.message,
+        ) from exc
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/detect-commitments",
+    response_model=list[ActionProposalResponse],
+)
+async def detect_message_self_commitments(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActionProposalResponse]:
+    """Detect proactive first-person self-commitments from a message (B-10)."""
+    service = ConversationIntelligenceService()
+    try:
+        return await service.detect_self_commitments_from_message(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            user_id=current_user.id,
+            db=db,
+        )
+    except ConversationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation was not found",
+        ) from exc
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except MessageNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message was not found",
+        ) from exc
+    except IntelligenceError as exc:
+        if exc.code == IntelligenceErrorCode.TIMEOUT:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Commitment detection timed out",
+            ) from exc
+        if exc.code == IntelligenceErrorCode.PROVIDER_UNAVAILABLE:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI provider is currently unavailable",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=exc.message,
+        ) from exc
+
+
+@router.get(
+    "/me/action-proposals",
+    response_model=list[ActionProposalResponse],
+)
+async def list_conversation_proposals(
+    conversation_id: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status", description="Filter by status: needs_clarification, pending_confirmation, confirmed, rejected, stale"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ActionProposalResponse]:
+    """List only the authenticated owner's proposals (B-05)."""
+    service = ActionProposalService(db)
+    try:
+        proposals = await service.list_for_owner(current_user.id, status_filter, conversation_id)
+        return [ActionProposalResponse.model_validate(p) for p in proposals]
+    except ConversationMembershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this conversation",
+        ) from exc
+    except ConversationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation was not found",
+        ) from exc
+
+
+@router.post(
+    "/action-proposals/{proposal_id}/confirm",
+    response_model=ActionProposalResponse,
+)
+async def confirm_action_proposal(
+    proposal_id: str,
+    payload: ConfirmProposalRequest = Body(default_factory=ConfirmProposalRequest),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActionProposalResponse:
+    """Explicitly confirm an action proposal by its assigned owner (B-05)."""
+    service = ActionProposalService(db)
+    try:
+        confirmed = await service.confirm_proposal(proposal_id=proposal_id, user_id=current_user.id, corrections=payload.model_dump(exclude_none=True))
+        return ActionProposalResponse.model_validate(confirmed)
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action proposal was not found",
+        ) from exc
+    except ActionProposalOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assigned owner can confirm this proposal",
+        ) from exc
+    except ActionProposalStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post(
+    "/action-proposals/{proposal_id}/reject",
+    response_model=ActionProposalResponse,
+)
+async def reject_action_proposal(
+    proposal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActionProposalResponse:
+    """Explicitly reject an action proposal by its assigned owner (B-05)."""
+    service = ActionProposalService(db)
+    try:
+        rejected = await service.reject_proposal(proposal_id=proposal_id, user_id=current_user.id)
+        return ActionProposalResponse.model_validate(rejected)
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action proposal was not found",
+        ) from exc
+    except ActionProposalOwnershipError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the assigned owner can reject this proposal") from exc
+    except ActionProposalStatusError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/action-proposals/{proposal_id}/clarify", response_model=ActionProposalResponse)
+async def clarify_action_proposal(
+    proposal_id: str,
+    payload: ClarifyProposalRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActionProposalResponse:
+    service = ActionProposalService(db)
+    try:
+        proposal = await service.clarify(proposal_id, current_user.id, payload.answer, payload.timezone)
+        return ActionProposalResponse.model_validate(proposal)
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action proposal was not found") from exc
+    except ActionProposalOwnershipError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the assigned owner can clarify this proposal") from exc
+    except ActionProposalStatusError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 def _message_error(exc: ChatServiceError) -> HTTPException:

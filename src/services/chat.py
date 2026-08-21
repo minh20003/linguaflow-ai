@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from src.database.models import (
+    ActionProposal,
     Attachment,
     Conversation,
     ConversationMember,
@@ -706,6 +707,11 @@ class ChatService:
         await self._db.execute(
             delete(TranslationResult).where(TranslationResult.message_id == message.id)
         )
+        await self._db.execute(
+            update(ActionProposal)
+            .where(ActionProposal.source_message_id == message.id, ActionProposal.status.in_(("needs_clarification", "pending_confirmation")))
+            .values(status="stale", stale_at=datetime.now(UTC))
+        )
         await self._db.commit()
         await self._db.refresh(message)
         return message, recipient_ids
@@ -741,6 +747,11 @@ class ChatService:
         )
         if message.deleted_at is None:
             message.deleted_at = datetime.now(UTC)
+            await self._db.execute(
+                update(ActionProposal)
+                .where(ActionProposal.source_message_id == message.id, ActionProposal.status.in_(("needs_clarification", "pending_confirmation")))
+                .values(status="stale", stale_at=datetime.now(UTC))
+            )
             await self._db.commit()
             await self._db.refresh(message)
         return message, recipient_ids
