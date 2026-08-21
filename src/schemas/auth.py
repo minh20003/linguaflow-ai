@@ -91,13 +91,6 @@ class LoginRequest(BaseModel):
         return value
 
 
-class GoogleLoginRequest(BaseModel):
-    """Google Identity Services credential sent by the browser."""
-
-    credential: str = Field(..., min_length=20, max_length=8192)
-    remember: bool = True
-
-
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: str = Field(..., min_length=3, max_length=255)

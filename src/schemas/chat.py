@@ -158,7 +158,6 @@ class AttachmentResponse(BaseModel):
     filename: str
     content_type: str
     size: int
-    created_at: datetime
 
     @computed_field
     @property
@@ -194,7 +193,6 @@ class MessageResponse(BaseModel):
     # The file this message carries, and the message it answers (§3.7).
     attachment: AttachmentResponse | None = None
     reply_to_message_id: str | None = None
-    forwarded_from_message_id: str | None = None
 
 
 class EditMessageRequest(BaseModel):
@@ -315,7 +313,6 @@ class RealtimeMessage(BaseModel):
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None
-    forwarded_from_message_id: str | None = None
     attachment: AttachmentResponse | None = None
 
 
@@ -340,7 +337,6 @@ class SendMessageEvent(BaseModel):
     # Both optional: a plain message carries neither (docs/CONTRACT.md §4.1).
     attachment_id: str | None = Field(default=None, max_length=255)
     reply_to_message_id: str | None = Field(default=None, max_length=36)
-    forwarded_from_message_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("client_message_id", "conversation_id")
     @classmethod
