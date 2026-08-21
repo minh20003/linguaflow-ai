@@ -13,7 +13,7 @@ import logging
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Values that look configured but are not. Everything here has been copied out
@@ -79,6 +79,32 @@ class Settings(BaseSettings):
     # total, so this is what stops a background task running forever (ADR-14).
     translation_timeout_seconds: int = Field(default=30, ge=5, le=300)
 
+    # Embeddings (ADR-25). pgvector stores and compares the vectors; something
+    # still has to produce them, and the requirement that decides the choice is
+    # multilingual reach: unless "staging env" and "môi trường stg" land near
+    # each other, grouping corrections by meaning is pointless.
+    #
+    # `local` runs sentence-transformers in-process — no quota, and no message
+    # leaves the container, which is the kill switch ADR-15 asks for. It costs
+    # a large dependency, so it is an opt-in extra rather than a requirement.
+    embedding_provider: Literal["gemini", "openai", "local"] = "gemini"
+    # Empty means the provider's default. The width, unlike this, is *not*
+    # configurable: it is EMBEDDING_DIM in src/database/models.py, because two
+    # developers with different .env files would otherwise describe two
+    # different schemas.
+    embedding_model: str = ""
+
+    # Both default off, following `fallback_translator_enabled`. Each adds an
+    # embedding call to the request path, and NFR-01 is already the tightest
+    # figure in the project — turn them on against measurements, not hopes.
+    semantic_glossary_enabled: bool = False
+    rag_context_enabled: bool = False
+    # Cosine similarity a glossary term must reach to be injected without an
+    # exact match. Conservative on purpose: a wrongly matched term is *forced*
+    # into the translation, which is worse than missing one.
+    glossary_similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    rag_top_k: int = Field(default=3, ge=1, le=10)
+
     # Secondary translation provider tried when the LLM path fails (ADR-07).
     # Disable to go straight back to returning the untranslated message.
     fallback_translator_enabled: bool = True
@@ -97,8 +123,14 @@ class Settings(BaseSettings):
     )
 
     # Database. The driver must be async — `create_async_engine` cannot open a
-    # bare `sqlite://` URL, so the default carries the aiosqlite driver.
-    database_url: str = "sqlite+aiosqlite:///./data/app.db"
+    # bare `postgresql://` URL, so the default carries the asyncpg driver.
+    #
+    # PostgreSQL rather than SQLite even for development (ADR-22): the glossary,
+    # the correction log and the message memory are searched by cosine distance
+    # over pgvector columns, and SQLite has no `vector` type at all. Keeping
+    # SQLite for development would mean a second retrieval path that production
+    # never runs. `docker compose up -d postgres` provides it.
+    database_url: str = "postgresql+asyncpg://linguaflow:linguaflow@localhost:5432/linguaflow"
     # PostgreSQL connections opened per process. Kept small on purpose: one
     # WebSocket holds one session for as long as it stays open, so the pool has
     # to be sized against concurrent sockets rather than requests per second.
@@ -116,6 +148,16 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = Field(default=1440, ge=1, le=10080)  # 24h default, max 7 days
     refresh_expire_days: int = Field(default=30, ge=1, le=90)
     password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
+
+    # Email & OTP Verification (Batch F)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "LinguaFlow"
+    smtp_use_tls: bool = True
+    email_provider: Literal["smtp", "console", "memory"] = "memory"
 
     @field_validator("database_url")
     @classmethod
@@ -185,6 +227,33 @@ class Settings(BaseSettings):
                     f"{generate}"
                 )
         return v
+
+    @model_validator(mode="after")
+    def validate_production_and_email_config(self) -> "Settings":
+        """Enforce production email safety and validate required SMTP fields."""
+        if self.app_env == "production":
+            if self.email_provider in ("memory", "console"):
+                raise ValueError(
+                    f"EMAIL_PROVIDER='{self.email_provider}' is not allowed in production. "
+                    "Production requires EMAIL_PROVIDER='smtp' with valid SMTP credentials."
+                )
+            if self.email_provider == "smtp":
+                missing = []
+                if not self.smtp_host or not self.smtp_host.strip():
+                    missing.append("SMTP_HOST")
+                if not self.smtp_port:
+                    missing.append("SMTP_PORT")
+                if not self.smtp_user or not self.smtp_user.strip():
+                    missing.append("SMTP_USER")
+                if not self.smtp_password or not self.smtp_password.strip():
+                    missing.append("SMTP_PASSWORD")
+                if not self.smtp_from_email or not self.smtp_from_email.strip():
+                    missing.append("SMTP_FROM_EMAIL")
+                if missing:
+                    raise ValueError(
+                        f"Production SMTP configuration is missing required fields: {', '.join(missing)}"
+                    )
+        return self
 
 
 def configure_logging(settings: Settings | None = None) -> None:

@@ -1,6 +1,7 @@
 """API routes for the application."""
 
 import logging
+import math
 import mimetypes
 import re
 import secrets
@@ -20,7 +21,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +41,7 @@ from src.database.models import (
     Conversation,
     Feedback,
     PasswordResetToken,
+    PendingRegistration,
     RefreshSession,
     TranslationResult,
     User,
@@ -52,12 +54,16 @@ from src.schemas.auth import (
     GoogleLoginRequest,
     LoginRequest,
     LogoutRequest,
+    PendingRegisterResponse,
     RefreshRequest,
     RegisterRequest,
+    ResendRegisterOtpRequest,
+    ResendRegisterOtpResponse,
     ResetPasswordRequest,
     UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
     UserResponse,
+    VerifyRegisterRequest,
 )
 from src.schemas.chat import (
     AttachmentResponse,
@@ -90,6 +96,15 @@ from src.services.chat import (
     TranslationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.correction_log import schedule_correction_record
+from src.services.customization import resolve_conversation_profile
+from src.services.email import EmailDeliveryError, send_registration_otp_email
+from src.services.profiles import (
+    profile_for,
+    resolve_profiles,
+    resolve_profiles_for_conversations,
+    select_for_reader,
+)
 from src.services.translation import schedule_translations
 
 logger = logging.getLogger(__name__)
@@ -144,40 +159,419 @@ async def _issue_auth_response(
     )
 
 
-@router.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def _ensure_utc(dt: datetime) -> datetime:
+    """Ensure a datetime object is timezone-aware with UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _generate_otp() -> str:
+    """Generate a zero-padded 6-digit numeric OTP."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+@router.post(
+    "/auth/register",
+    response_model=PendingRegisterResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-) -> AuthResponse:
-    """Create a durable account and start its first authenticated session."""
+) -> PendingRegisterResponse:
+    """Validate registration and create a pending identity awaiting email OTP verification (Batch F)."""
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
-    existing = duplicate.scalar_one_or_none()
-    if existing is not None:
-        detail = "Email is already registered" if existing.email == request.email else "Username is already registered"
+    existing_user = duplicate.scalar_one_or_none()
+    if existing_user is not None:
+        detail = "Email is already registered" if existing_user.email == request.email else "Username is already registered"
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
+    now = datetime.now(UTC)
+    otp = _generate_otp()
+    otp_hash = get_password_hash(otp)
+    password_hash = get_password_hash(request.password)
     display_name = (request.display_name or request.username).strip()
-    user = User(
+    cooldown_threshold = now - timedelta(seconds=60)
+    window_threshold = now - timedelta(seconds=3600)
+
+    # Check for existing pending registration by email or username
+    pending_query = await db.execute(
+        select(PendingRegistration).where(
+            (PendingRegistration.email == request.email) | (PendingRegistration.username == request.username)
+        )
+    )
+    existing_pending = pending_query.scalars().first()
+
+    if existing_pending is not None:
+        is_window_expired = PendingRegistration.rate_window_started_at <= window_threshold
+        stmt = (
+            update(PendingRegistration)
+            .where(
+                PendingRegistration.id == existing_pending.id,
+                PendingRegistration.last_sent_at <= cooldown_threshold,
+                (PendingRegistration.rate_window_started_at <= window_threshold)
+                | (PendingRegistration.request_count < 5),
+            )
+            .values(
+                email=request.email,
+                username=request.username,
+                display_name=display_name,
+                password_hash=password_hash,
+                preferred_language=request.preferred_language,
+                interface_language=request.preferred_language,
+                otp_hash=otp_hash,
+                attempts=0,
+                expires_at=now + timedelta(minutes=5),
+                last_sent_at=now,
+                rate_window_started_at=case(
+                    (is_window_expired, now),
+                    else_=PendingRegistration.rate_window_started_at,
+                ),
+                request_count=case(
+                    (is_window_expired, 1),
+                    else_=PendingRegistration.request_count + 1,
+                ),
+            )
+            .execution_options(synchronize_session=False)
+            .returning(
+                PendingRegistration.id,
+                PendingRegistration.email,
+            )
+        )
+        update_res = await db.execute(stmt)
+        updated_row = update_res.mappings().one_or_none()
+        if updated_row is not None:
+            await db.commit()
+            pending_id = updated_row["id"]
+        else:
+            # Conditional update failed: check if due to cooldown or rate limit
+            pending = await db.get(PendingRegistration, existing_pending.id)
+            if pending is not None:
+                last_sent = _ensure_utc(pending.last_sent_at)
+                remaining_cooldown = math.ceil(60 - (now - last_sent).total_seconds())
+                if remaining_cooldown > 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Please wait before requesting another code.",
+                        headers={"Retry-After": str(max(1, remaining_cooldown))},
+                    )
+                win_start = _ensure_utc(pending.rate_window_started_at)
+                if pending.request_count >= 5 and (now - win_start).total_seconds() < 3600:
+                    retry_after = math.ceil(3600 - (now - win_start).total_seconds())
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Too many verification requests. Please try again later.",
+                        headers={"Retry-After": str(max(1, retry_after))},
+                    )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Please wait before requesting another code.",
+                headers={"Retry-After": "60"},
+            )
+    else:
+        pending = PendingRegistration(
+            email=request.email,
+            username=request.username,
+            display_name=display_name,
+            password_hash=password_hash,
+            preferred_language=request.preferred_language,
+            interface_language=request.preferred_language,
+            otp_hash=otp_hash,
+            expires_at=now + timedelta(minutes=5),
+            attempts=0,
+            last_sent_at=now,
+            rate_window_started_at=now,
+            request_count=1,
+        )
+        db.add(pending)
+        try:
+            await db.commit()
+            pending_id = pending.id
+        except IntegrityError as exc:
+            await db.rollback()
+            # Concurrent insertion raced for this email/username:
+            # check the newly inserted row and apply cooldown/rate limits
+            raced_pending = (
+                await db.execute(
+                    select(PendingRegistration).where(
+                        (PendingRegistration.email == request.email)
+                        | (PendingRegistration.username == request.username)
+                    )
+                )
+            ).scalars().first()
+            if raced_pending is not None:
+                last_sent = _ensure_utc(raced_pending.last_sent_at)
+                remaining = math.ceil(60 - (now - last_sent).total_seconds())
+                if remaining > 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="Please wait before requesting another code.",
+                        headers={"Retry-After": str(max(1, remaining))},
+                    )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email or username is already registered",
+            ) from exc
+
+    # Delivery occurs strictly AFTER database commit
+    try:
+        await send_registration_otp_email(
+            to_email=request.email,
+            otp=otp,
+            language=request.preferred_language,
+        )
+    except EmailDeliveryError as exc:
+        logger.error("Email delivery failed for pending registration %s: %s", pending_id, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="email_delivery_failed",
+        ) from None
+
+    return PendingRegisterResponse(
+        pending_id=pending_id,
         email=request.email,
-        username=request.username,
-        display_name=display_name,
-        password_hash=get_password_hash(request.password),
-        preferred_language=request.preferred_language,
-        # One language question at sign-up, two settings behind it. Someone who
-        # picks Japanese wants to read Japanese *and* see a Japanese menu; the
-        # two only part company later, if they go and change one of them
-        # (docs/CONTRACT.md §1.3).
-        interface_language=request.preferred_language,
+        expires_in_seconds=300,
+        cooldown_seconds=60,
+        message="Verification code sent to your email",
+    )
+
+
+@router.post("/auth/register/resend", response_model=ResendRegisterOtpResponse)
+async def resend_register_otp(
+    request: ResendRegisterOtpRequest,
+    db: AsyncSession = Depends(get_db),
+) -> ResendRegisterOtpResponse:
+    """Request a replacement 6-digit OTP for a pending registration."""
+    now = datetime.now(UTC)
+    otp = _generate_otp()
+    otp_hash = get_password_hash(otp)
+    cooldown_threshold = now - timedelta(seconds=60)
+    window_threshold = now - timedelta(seconds=3600)
+
+    is_window_expired = PendingRegistration.rate_window_started_at <= window_threshold
+    stmt = (
+        update(PendingRegistration)
+        .where(
+            PendingRegistration.id == request.pending_id,
+            PendingRegistration.last_sent_at <= cooldown_threshold,
+            (PendingRegistration.rate_window_started_at <= window_threshold)
+            | (PendingRegistration.request_count < 5),
+        )
+        .values(
+            otp_hash=otp_hash,
+            attempts=0,
+            expires_at=now + timedelta(minutes=5),
+            last_sent_at=now,
+            rate_window_started_at=case(
+                (is_window_expired, now),
+                else_=PendingRegistration.rate_window_started_at,
+            ),
+            request_count=case(
+                (is_window_expired, 1),
+                else_=PendingRegistration.request_count + 1,
+            ),
+        )
+        .execution_options(synchronize_session=False)
+        .returning(
+            PendingRegistration.id,
+            PendingRegistration.email,
+            PendingRegistration.interface_language,
+        )
+    )
+    update_res = await db.execute(stmt)
+    row = update_res.mappings().one_or_none()
+    if row is not None:
+        await db.commit()
+        # Delivery occurs strictly AFTER database commit
+        try:
+            await send_registration_otp_email(
+                to_email=row["email"],
+                otp=otp,
+                language=row["interface_language"],
+            )
+        except EmailDeliveryError as exc:
+            logger.error("Email delivery failed for pending registration %s: %s", row["id"], type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="email_delivery_failed",
+            ) from None
+
+        return ResendRegisterOtpResponse(
+            pending_id=row["id"],
+            expires_in_seconds=300,
+            cooldown_seconds=60,
+            message="New verification code sent to your email",
+        )
+
+    # If update matched 0 rows, check reasons (not found, cooldown, or rate limit)
+    pending = await db.get(PendingRegistration, request.pending_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pending registration not found or already verified",
+        )
+
+    last_sent = _ensure_utc(pending.last_sent_at)
+    remaining_cooldown = math.ceil(60 - (now - last_sent).total_seconds())
+    if remaining_cooldown > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Please wait before requesting another code.",
+            headers={"Retry-After": str(max(1, remaining_cooldown))},
+        )
+
+    win_start = _ensure_utc(pending.rate_window_started_at)
+    if pending.request_count >= 5 and (now - win_start).total_seconds() < 3600:
+        retry_after = math.ceil(3600 - (now - win_start).total_seconds())
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many verification requests. Please try again later.",
+            headers={"Retry-After": str(max(1, retry_after))},
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Please wait before requesting another code.",
+        headers={"Retry-After": "60"},
+    )
+
+
+@router.post("/auth/register/verify", response_model=AuthResponse)
+async def verify_register_otp(
+    request: VerifyRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Verify 6-digit OTP, consume pending registration, and create authenticated user account."""
+    pending = await db.get(PendingRegistration, request.pending_id)
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification session",
+        )
+
+    now = datetime.now(UTC)
+    expires_at = _ensure_utc(pending.expires_at)
+
+    if pending.attempts >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum verification attempts exceeded. Please request a new code.",
+        )
+
+    if now >= expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code has expired. Please request a new code.",
+        )
+
+    if not verify_password(request.otp, pending.otp_hash):
+        update_stmt = (
+            update(PendingRegistration)
+            .where(
+                PendingRegistration.id == request.pending_id,
+                PendingRegistration.otp_hash == pending.otp_hash,
+                PendingRegistration.expires_at > now,
+                PendingRegistration.attempts < 3,
+            )
+            .values(attempts=PendingRegistration.attempts + 1)
+            .execution_options(synchronize_session=False)
+            .returning(PendingRegistration.attempts)
+        )
+        update_res = await db.execute(update_stmt)
+        new_attempts = update_res.scalar_one_or_none()
+        await db.commit()
+
+        if new_attempts is None or new_attempts >= 3:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum verification attempts exceeded. Please request a new code.",
+            )
+        remaining = max(0, 3 - new_attempts)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining.",
+        )
+
+    # Atomic conditional DELETE ... RETURNING
+    delete_stmt = (
+        delete(PendingRegistration)
+        .where(
+            PendingRegistration.id == request.pending_id,
+            PendingRegistration.otp_hash == pending.otp_hash,
+            PendingRegistration.expires_at > now,
+            PendingRegistration.attempts < 3,
+        )
+        .execution_options(synchronize_session=False)
+        .returning(
+            PendingRegistration.id,
+            PendingRegistration.email,
+            PendingRegistration.username,
+            PendingRegistration.display_name,
+            PendingRegistration.password_hash,
+            PendingRegistration.preferred_language,
+            PendingRegistration.interface_language,
+        )
+    )
+    delete_res = await db.execute(delete_stmt)
+    consumed = delete_res.mappings().one_or_none()
+    if consumed is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code already used or invalid.",
+        )
+
+    # Check for existing user conflict
+    duplicate = await db.execute(
+        select(User).where((User.email == consumed["email"]) | (User.username == consumed["username"]))
+    )
+    existing = duplicate.scalar_one_or_none()
+    if existing is not None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already registered",
+        )
+
+    # Create User and initial RefreshSession in the same single transaction
+    user = User(
+        email=consumed["email"],
+        username=consumed["username"],
+        display_name=consumed["display_name"],
+        password_hash=consumed["password_hash"],
+        preferred_language=consumed["preferred_language"],
+        interface_language=consumed["interface_language"],
+        role="member",
     )
     db.add(user)
     try:
         await db.flush()
     except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or username is already registered") from exc
-    return await _issue_auth_response(user, db, remember=True)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already registered",
+        ) from exc
+
+    settings = get_settings()
+    refresh_token = create_refresh_token()
+    refresh_days = settings.refresh_expire_days
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=hash_refresh_token(refresh_token),
+            expires_at=datetime.now(UTC) + timedelta(days=refresh_days),
+        )
+    )
+    await db.commit()
+
+    return AuthResponse(
+        access_token=create_access_token(subject=user.id),
+        refresh_token=refresh_token,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.post("/auth/login", response_model=AuthResponse)
@@ -548,6 +942,7 @@ async def _conversation_response(
     manager: ConnectionManager | None = None,
     unread_count: int = 0,
     members: Sequence[User] | None = None,
+    profiles: dict[str, str] | None = None,
 ) -> ConversationResponse:
     """Build the minimal conversation representation for an authorized user.
 
@@ -560,12 +955,17 @@ async def _conversation_response(
         unread_count: Messages this reader has not seen (§3.8).
         members: Already-loaded members. The list endpoint passes them in from
             one batched query; a single-conversation caller lets this load them.
+        profiles: Each member's standing in *this* conversation, already
+            resolved. Passed in for the same reason `members` is: the list
+            endpoint resolves every conversation in one query, and looking them
+            up here would put an N+1 back into it.
 
     Returns:
         The conversation as the REST contract defines it (docs/CONTRACT.md §3.5).
     """
     if members is None:
         members = await service.get_conversation_members(conversation_id=conversation.id)
+    profiles = profiles or {}
     return ConversationResponse(
         id=conversation.id,
         type=conversation.type,
@@ -573,7 +973,20 @@ async def _conversation_response(
         created_by=conversation.created_by,
         created_at=conversation.created_at,
         member_ids=[member.id for member in members],
-        members=[ConversationMemberSummary.model_validate(member) for member in members],
+        # Built field by field rather than validated from the ORM row: a
+        # standing belongs to a member *within a conversation*, so it is not on
+        # the User object and `from_attributes` has nowhere to read it from.
+        members=[
+            ConversationMemberSummary(
+                id=member.id,
+                email=member.email,
+                username=member.username,
+                display_name=member.display_name,
+                preferred_language=member.preferred_language,
+                honorific_profile=profile_for(profiles, member.id),
+            )
+            for member in members
+        ],
         last_message=last_message[0] if last_message else None,
         last_message_at=last_message[1] if last_message else None,
         online_member_ids=list(
@@ -621,7 +1034,11 @@ async def create_conversation(
     if not result.created:
         response.status_code = status.HTTP_200_OK
 
-    return await _conversation_response(service, result.conversation)
+    return await _conversation_response(
+        service,
+        result.conversation,
+        profiles=await resolve_profiles(db, result.conversation.id),
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
@@ -634,9 +1051,16 @@ async def list_conversations(
     service = ChatService(db)
     conversations = await service.list_conversations(user_id=current_user.id)
     conversation_ids = [conversation.id for conversation in conversations]
+    profiles = await resolve_profiles_for_conversations(db, conversation_ids)
     last_messages = await service.get_last_messages(
         conversation_ids=conversation_ids,
         reader_language=current_user.preferred_language,
+        # The caller's own standing per conversation, so the sidebar preview
+        # picks the same translation the conversation itself will show.
+        reader_profiles={
+            conversation_id: profile_for(members, current_user.id)
+            for conversation_id, members in profiles.items()
+        },
     )
     unread = await service.get_unread_counts(
         user_id=current_user.id,
@@ -651,6 +1075,7 @@ async def list_conversations(
             manager,
             unread.get(conversation.id, 0),
             members.get(conversation.id, []),
+            profiles.get(conversation.id, {}),
         )
         for conversation in conversations
     ]
@@ -695,6 +1120,7 @@ async def get_conversation_messages(
         db,
         live_message_ids,
         reader_id=current_user.id,
+        conversation_id=conversation_id,
     )
     attachments = await service.get_attachments_by_message(message_ids=live_message_ids)
     return [
@@ -916,6 +1342,11 @@ async def submit_translation_edit(
     Each call appends, so editing again keeps the earlier attempt. The text is
     private to its author and no WebSocket event follows: nobody else's screen
     changes because of it.
+
+    With `consent_to_share`, and only with it, a second and much narrower record
+    is written in the background: the term the machine used, the term this
+    reader used instead, and a few words around it with identifiers removed.
+    That record — not this one — is what the glossary is mined from (ADR-28).
     """
     service = ChatService(db)
     try:
@@ -942,11 +1373,29 @@ async def submit_translation_edit(
             detail=str(exc),
         ) from exc
 
+    # After the edit is safely stored, and detached from it: this is a
+    # by-product, and nothing about mining a glossary may put a reader's own
+    # correction at risk. `schedule_correction_record` checks consent itself, so
+    # no future call site can forget to.
+    profile = await resolve_conversation_profile(db, translation.message_id)
+    schedule_correction_record(
+        machine_text=translation.translated_text,
+        human_text=edit.edited_text,
+        source_language=profile.source_language,
+        target_language=translation.target_language,
+        domain=profile.domain,
+        audience=profile.audience,
+        user_id=current_user.id,
+        translation_id=translation.id,
+        consent_to_share=payload.consent_to_share,
+    )
+
     return TranslationEditResponse(
         edit_id=edit.id,
         translation_id=translation.id,
         message_id=translation.message_id,
         target_language=translation.target_language,
+        honorific_profile=translation.honorific_profile,
         edited_text=edit.edited_text,
         edited_at=edit.created_at,
     )
@@ -956,6 +1405,7 @@ async def _translations_by_message(
     db: AsyncSession,
     message_ids: list[str],
     reader_id: str,
+    conversation_id: str,
 ) -> dict[str, list[TranslationSummary]]:
     """Load every translation for a page of messages in one query.
 
@@ -964,26 +1414,84 @@ async def _translations_by_message(
     Each summary also carries `reader_id`'s own feedback, which is what lets a
     rating button still look rated after a reload.
 
+    Since `honorific_profile` joined the unique key, one message can hold
+    several translations into the same language, differing only in how they
+    address the reader. This collapses each language back to one row, so the
+    array stays the shape docs/CONTRACT.md §3.2 describes and the client is
+    never handed two candidates with nothing to choose between them.
+
+    Which row wins is decided by `select_for_reader`, using the standing of
+    somebody who actually reads that language: the caller's own for the caller's
+    language, and otherwise the first member who reads it. That second half is
+    not a nicety — in a `direct` conversation the sender is shown the
+    translation the *other* person reads, so the rating and edit controls can
+    sit under their own message (§4.4 rule 3, ADR-19), and picking that row with
+    the sender's standing would show them a register meant for nobody.
+
     Args:
         db: Open session.
         message_ids: Messages whose translations are being rendered.
         reader_id: Account whose feedback is attached; never another member's.
+        conversation_id: Conversation the messages belong to, needed because a
+            standing is only defined inside one.
 
     Returns:
-        Translations grouped by message id, in no guaranteed order.
+        Translations grouped by message id, one per target language, in no
+        guaranteed order.
     """
     if not message_ids:
         return {}
 
-    rows = list(
+    # Ordered so that step three of the fallback ladder — "any translation into
+    # that language" — resolves to the oldest, and two consecutive reads of the
+    # same history cannot disagree.
+    candidates = list(
         (
             await db.scalars(
-                select(TranslationResult).where(
-                    TranslationResult.message_id.in_(message_ids)
-                )
+                select(TranslationResult)
+                .where(TranslationResult.message_id.in_(message_ids))
+                .order_by(TranslationResult.created_at, TranslationResult.id)
             )
         ).all()
     )
+
+    profiles = await resolve_profiles(db, conversation_id)
+    members = await ChatService(db).get_conversation_members(
+        conversation_id=conversation_id
+    )
+    reader_language = next(
+        (
+            member.preferred_language
+            for member in members
+            if member.id == reader_id
+        ),
+        "",
+    )
+    # Sorted so that a language read by several members always resolves through
+    # the same one of them, however the database happened to return the rows.
+    readers_by_language: dict[str, str] = {}
+    for member in sorted(members, key=lambda member: member.id):
+        readers_by_language.setdefault(member.preferred_language, member.id)
+
+    def standing_for(language: str) -> str:
+        """Whose standing decides the wording a given language is rendered in."""
+        if language == reader_language:
+            return profile_for(profiles, reader_id)
+        return profile_for(profiles, readers_by_language.get(language, ""))
+
+    rows = []
+    by_message: dict[str, list[TranslationResult]] = {}
+    for row in candidates:
+        by_message.setdefault(row.message_id, []).append(row)
+    for message_rows in by_message.values():
+        for language in dict.fromkeys(row.target_language for row in message_rows):
+            chosen = select_for_reader(
+                message_rows,
+                target_language=language,
+                honorific_profile=standing_for(language),
+            )
+            if chosen is not None:
+                rows.append(chosen)
 
     my_feedback = {
         feedback.translation_id: feedback
@@ -1017,6 +1525,7 @@ async def _translations_by_message(
             TranslationSummary(
                 translation_id=row.id,
                 target_language=row.target_language,
+                honorific_profile=row.honorific_profile,
                 translated_text=row.translated_text,
                 model=row.model,
                 latency_ms=row.latency_ms,

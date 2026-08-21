@@ -89,6 +89,15 @@ class AgentState(TypedDict, total=False):
     original_text: str
     source_language: str          # ISO 639-1; giá trị tạm khi vào, detect sẽ ghi đè
     target_language: str          # Lấy từ users.preferred_language của người nhận
+    honorific_profile: str        # senior | peer | junior | client — nửa còn lại
+                                  # của khoá fan-out, xem §4.4 quy tắc 2
+    domain: str                   # Lĩnh vực hội thoại, do node customize điền từ
+    audience: str                 # conversation_profiles. Rỗng = chưa suy luận,
+                                  # khi đó prompt bỏ hẳn mục Audience (§5 ghi chú 15)
+    glossary_terms: list          # Thuật ngữ tin nhắn này buộc phải dịch cố định.
+                                  # KHÔNG thuộc hợp đồng ở mức khoá bên trong:
+                                  # không client nào đọc, và nội dung đổi theo
+                                  # glossary (ADR-26)
     context_messages: list[str]   # 3-5 tin gần nhất, đã định dạng sẵn cho prompt
     translated_text: str
     translation_id: str           # Định danh bản ghi translation_results, phục vụ F-05
@@ -121,7 +130,9 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 
 | Method | Path | Request Body | Response | Trạng thái |
 |---|---|---|---|---|
-| `POST` | `/auth/register` | `{"email": str, "password": str, "username": str \| null, "display_name": str \| null, "preferred_language": str}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
+| `POST` | `/auth/register` | `{"email": str, "password": str, "username": str \| null, "display_name": str \| null, "preferred_language": str}` | `202 Accepted`, `{"pending_id": str, "email": str, "expires_in_seconds": int, "cooldown_seconds": int}`, xem §3.11 | Đã hiện thực |
+| `POST` | `/auth/register/verify` | `{"pending_id": str, "otp": str}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}`, xem §3.11 | Đã hiện thực |
+| `POST` | `/auth/register/resend` | `{"pending_id": str}` | `{"pending_id": str, "expires_in_seconds": int, "cooldown_seconds": int}`, xem §3.11 | Đã hiện thực |
 | `POST` | `/auth/login` | `{"email": str, "password": str, "remember": bool}` | `{"access_token": str, "refresh_token": str, "token_type": "bearer", "user": UserDTO}` | Đã hiện thực |
 | `POST` | `/auth/refresh` | `{"refresh_token": str}` | Như `/auth/login` | Đã hiện thực |
 | `POST` | `/auth/logout` | `{"refresh_token": str}` | `204 No Content` | Đã hiện thực |
@@ -135,7 +146,7 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/conversations` | `{"type": "direct" \| "group", "member_ids": [uuid], "title": str \| null}` | `ConversationDTO`, `201` khi tạo mới và `200` khi dùng lại — xem §3.5 | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `[MessageDTO]` — mảng trần, xem ghi chú §3.2 | Đã hiện thực |
 | `POST` | `/translations/{translation_id}/feedback` | `{"rating": int, "correction": str \| null}` | `{"feedback_id": uuid}` | Đã hiện thực |
-| `POST` | `/translations/{translation_id}/edits` | `{"edited_text": str}` | `TranslationEditDTO`, xem §3.10 | **Đề xuất** |
+| `POST` | `/translations/{translation_id}/edits` | `{"edited_text": str, "consent_to_share": bool}` | `TranslationEditDTO`, xem §3.10 | Đã hiện thực |
 | `PATCH` | `/conversations/{conversation_id}/messages/{message_id}` | `{"text": str}` | `MessageDTO`, xem §3.6 | Đã hiện thực |
 | `DELETE` | `/conversations/{conversation_id}/messages/{message_id}` | — | `204 No Content` | Đã hiện thực |
 | `POST` | `/conversations/{conversation_id}/attachments` | `multipart/form-data`, trường `file` | `AttachmentDTO`, xem §3.7 | Đã hiện thực |
@@ -143,6 +154,12 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/conversations/{conversation_id}/read` | — | `{"unread_count": 0}` | Đã hiện thực |
 | `GET` | `/conversations` | — | `[ConversationDTO]`, xem §3.5 | Đã hiện thực |
 | `GET` | `/stats?days=` | — | Xem §3.4 | Đã hiện thực |
+| `GET` | `/admin/glossary/proposals?status=&limit=` | — | `[GlossaryProposalDTO]`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/proposals/{proposal_id}/approve` | `{"source_term"?, "target_term"?, "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/proposals/{proposal_id}/reject` | `{"reason": str}` | `GlossaryProposalDTO`, §3.12 | Đã hiện thực |
+| `GET` | `/admin/glossary?include_retired=&limit=` | — | `[GlossaryEntryDTO]`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary` | `{"source_term", "target_term", "source_language", "target_language", "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -184,6 +201,7 @@ Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗ
     {
       "translation_id": "uuid",
       "target_language": "en",
+      "honorific_profile": "peer",
       "translated_text": "string",
       "model": "llama-3.3-70b-versatile",
       "latency_ms": 420,
@@ -203,6 +221,8 @@ Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗ
 **Lịch sử trả về mảng trần, không bọc trong `{"messages": ...}`.** Bảng ở §3 từng ghi dạng bọc và đánh dấu "chưa hiện thực"; endpoint đã được hiện thực từ lâu với `response_model=list[MessageResponse]` (`src/api/routes.py`), và client đang đọc theo mã nguồn. Sửa tài liệu cho khớp mã chứ không ngược lại: đổi hình dạng phản hồi bây giờ sẽ làm hỏng frontend đang chạy, để đúng một dấu ngoặc trong tài liệu.
 
 Trường `translation_id` là bắt buộc trong mỗi phần tử của mảng `translations`. Frontend sử dụng giá trị này để gọi endpoint gửi phản hồi (F-05).
+
+Trường `honorific_profile` nhận một trong bốn giá trị `senior`, `peer`, `junior`, `client` và **bắt buộc phải đọc cùng `target_language`**: kể từ khi ràng buộc duy nhất của `translation_results` mở rộng sang ba cột (§5 ghi chú 6), một tin nhắn có thể có nhiều bản dịch cùng một ngôn ngữ đích, khác nhau ở cách xưng hô. Client chọn bằng **cặp** `(target_language, honorific_profile)` chứ không bằng ngôn ngữ. Chọn bằng ngôn ngữ thôi sẽ lấy phải phần tử đầu tiên tình cờ gặp — thứ tự do kế hoạch truy vấn quyết định, nên hỏng theo kiểu im lặng và không tất định.
 
 Trường `my_edit` là bản góp ý **mới nhất của chính tài khoản đang gọi** cho bản dịch đó, `null` khi họ chưa góp ý (§3.10). Tiền tố `my_` mang đúng nghĩa như ở `my_rating`: hai người đọc cùng một `translation_id` nhận hai giá trị khác nhau, và **không tài khoản nào đọc được `my_edit` của người khác**. Chỉ bản mới nhất nằm trong DTO; lịch sử đầy đủ nằm trong bảng `translation_edits` và chỉ dành cho quản trị.
 
@@ -238,6 +258,13 @@ Endpoint **chỉ dành cho quản trị viên**: nội dung không chứa văn b
 `fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
 
 ### 3.5. ConversationDTO
+
+Mỗi phần tử của `members` mang thêm `honorific_profile` (§5 ghi chú 15). Đây là nơi client
+đọc ra vị thế **của chính mình** trong hội thoại, thứ cần có để chọn đúng phần tử trong
+mảng `translations` của §3.2. Giá trị theo từng hội thoại chứ không theo tài khoản: cùng
+một người là `junior` với quản lý của mình và là `client` trong hội thoại với nhà cung cấp.
+`TranslationEditDTO` ở §3.10 cũng mang thêm trường này, cùng một lý do — nó vốn đã mang
+`target_language`, mà từ nay ngôn ngữ một mình không định danh được bản dịch.
 
 Tương ứng lớp `ConversationResponse` trong `src/schemas/chat.py`, trả về bởi `GET /conversations` và `POST /conversations`.
 
@@ -327,7 +354,7 @@ Nút bút chì dưới mỗi bản dịch cho phép người đọc gõ lại b�
 
 | | §3.6 Sửa **tin nhắn** (F-06) | §3.10 Góp ý **bản dịch** (F-05) |
 |---|---|---|
-| Ai làm được | Chỉ người gửi (server chặn) | Mọi thành viên (server); giao diện chỉ hiện nút cho người đọc bản dịch đó |
+| Ai làm được | Chỉ người gửi (server chặn) | Mọi thành viên (server); giao diện chỉ hiện nút cho người đọc bản dịch đó, cộng người gửi ở `direct` |
 | Sửa cái gì | `messages.original_text` | Không sửa gì cả — ghi thêm một bản song song |
 | Ai thấy kết quả | **Cả phòng**: nội dung mới, bản dịch mới, trạng thái "đã sửa" | **Chỉ người viết góp ý** |
 | Có dịch lại không | Có, tốn hạn mức LLM | Không bao giờ |
@@ -354,12 +381,14 @@ Không có trường `edited_by`: người viết luôn là tài khoản đang g
 
 | Loại hội thoại | Người nhận | Người gửi |
 |---|---|---|
-| `direct` | Nút gạt bản gốc/bản dịch, đánh giá, góp ý | Chỉ thấy bản gốc, không có điều khiển dịch |
+| `direct` | Nút gạt bản gốc/bản dịch, đánh giá, góp ý | **Giống hệt người nhận**: nút gạt, đánh giá, góp ý |
 | `group` | Nút gạt, đánh giá, góp ý cho bản dịch ngôn ngữ mình đọc | **Không có nút nào** |
 
-Người gửi không nhận hoặc xem bản dịch của chính tin nhắn, bất kể hội thoại `direct` hay `group`; bóng chat của họ luôn giữ văn bản gốc. Chỉ người nhận bằng ngôn ngữ đích mới có các điều khiển dịch và có thể góp ý cho bản dịch họ đọc.
+Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại chỉ có một người nhận và một bản dịch: họ nhìn thấy trọn vẹn cả bản gốc lẫn bản dịch nên đánh giá được, và cái họ gạt qua gạt lại là chính hai văn bản đó. Ở `group` thì không: một tin nhắn có nhiều bản dịch, không có "bản dịch của tin này" để mà gạt hay chấm điểm, nên người gửi không thấy nút nào và ai đọc ngôn ngữ nào thì góp ý cho ngôn ngữ ấy.
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
+
+**`consent_to_share` (thêm 20/08).** Mặc định `false`, và phải được hỏi tường minh chứ không suy đoán. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
 
 **Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
 
@@ -368,6 +397,86 @@ Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi v
 **Hiển thị.** Bóng chat luôn hiện `translated_text`. Bản góp ý của chính mình nằm sau nút bút chì: bấm để mở, bấm lần nữa để đóng. Người dùng vì thế đối chiếu được hai bản, thay vì bị thay thầm nội dung đang đọc.
 
 `404` khi `translation_id` không tồn tại; `409` khi tin nhắn tương ứng đã bị gỡ (§3.6).
+
+### 3.11. Xác thực đăng ký tài khoản qua Email OTP (Batch F)
+
+Quy trình đăng ký tài khoản được bảo vệ qua 2 bước bằng mã OTP gửi về email:
+
+1. **Bước 1: Khởi tạo yêu cầu (`POST /api/v1/auth/register`)**
+   - Payload: `{"email": str, "password": str, "username": str, "display_name": str, "preferred_language": str}`.
+   - Server kiểm tra trùng lặp email/username (`409 Conflict`), mã hóa mật khẩu và sinh mã OTP 6 chữ số ASCII (`^[0-9]{6}$`).
+   - Lưu vào bảng `pending_registrations` (chỉ lưu bcrypt hash của OTP, không bao giờ lưu OTP thô).
+   - Bảo toàn ngôn ngữ: lưu đồng thời `preferred_language` và `interface_language` (hỗ trợ đầy đủ 14 ngôn ngữ).
+   - Gửi email chứa mã OTP được bản địa hóa theo ngôn ngữ đã chọn.
+   - Trả về mã **`202 Accepted`**:
+     ```json
+     {
+       "pending_id": "uuid",
+       "email": "user@example.com",
+       "expires_in_seconds": 300,
+       "cooldown_seconds": 60,
+       "message": "Verification code sent to your email"
+     }
+     ```
+   - **Tuyệt đối không tạo tài khoản `User` hoặc phiên làm việc `RefreshSession` tại bước này.**
+   - **Lỗi gửi email**: Nếu delivery thất bại (`EmailDeliveryError`), trả về HTTP `500` với mã machine-readable `{"detail": "email_delivery_failed"}` và không hoàn tác (rollback) lượt đếm rate limit đã commit.
+
+2. **Bước 2: Xác nhận OTP (`POST /api/v1/auth/register/verify`)**
+   - Payload: `{"pending_id": str, "otp": str}` (OTP bắt buộc đúng 6 chữ số ASCII).
+   - Thời hạn hiệu lực: chính xác 5 phút (300 giây) kể từ thời điểm phát hành mã gần nhất.
+   - Giới hạn số lần thử: tối đa 3 lần sai (`attempts < 3`); lần thứ 3 sai sẽ khóa phiên đăng ký đó vĩnh viễn (`400 Bad Request`).
+   - Khi mã hợp lệ: thực hiện claim nguyên tử bằng câu lệnh SQL conditional `DELETE ... RETURNING`, tạo tài khoản `User` và cấp phát phiên đăng nhập `AuthResponse` (`access_token`, `refresh_token`, `user`) trong cùng **1 database transaction duy nhất**.
+   - Mã OTP là **dùng một lần (single-use)**; gọi lại với cùng `pending_id` sẽ trả về `400 Bad Request`.
+
+3. **Gửi lại mã OTP (`POST /api/v1/auth/register/resend`)**
+   - Payload: `{"pending_id": str}`.
+   - Áp dụng Cooldown: tối thiểu 60 giây giữa các lần gửi (`429 Too Many Requests` kèm header `Retry-After`).
+   - Rate limit: tối đa 5 lần gửi OTP trong vòng 1 giờ cho cùng một phiên đăng ký (`request_count < 5`).
+   - Khi gửi lại thành công: cập nhật nguyên tử `otp_hash` mới, vô hiệu hóa hoàn toàn mã OTP cũ, đặt lại bộ đếm số lần thử `attempts = 0`, gia hạn `expires_at` thêm 5 phút và gửi email bằng `interface_language` đã lưu.
+   - Trả về mã **`200 OK`**:
+     ```json
+     {
+       "pending_id": "uuid",
+       "expires_in_seconds": 300,
+       "cooldown_seconds": 60,
+       "message": "New verification code sent to your email"
+     }
+     ```
+   - Nếu delivery thất bại (`EmailDeliveryError`), trả về `500` với `{"detail": "email_delivery_failed"}` nhưng vẫn bảo toàn bản ghi `request_count` và cooldown đã commit trong DB.
+
+### 3.12. Glossary và hàng đợi duyệt (chỉ quản trị viên)
+
+Sáu endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
+nhận `403 Forbidden`. Gác đặt trên **từng** endpoint chứ không dựa vào tiền tố đường dẫn:
+`users.role` so với chuỗi `"admin"` là toàn bộ mô hình phân quyền của dự án (§5 ghi chú 1),
+không có middleware nào đứng sau, nên một dependency bị quên trông y hệt mã đang chạy đúng.
+
+**`GlossaryProposalDTO` cố ý không mang gì hơn.** Nó có cặp thuật ngữ, `occurrence_count`,
+`distinct_user_count`, `rationale`, và các `citations` đã ẩn danh — **không** có người gửi,
+**không** có `conversation_id`, **không** có `message_id`. Quản trị viên bị cấm đọc nội dung
+hội thoại (`docs/NewFeature.md` sơ đồ 2), và cách giữ điều đó thành sự thật là để DTO
+**không có chỗ nào đặt những thứ ấy vào**. Trong hai con số, `distinct_user_count` mới là
+con số để phán xét: năm lần sửa của một người là sở thích cá nhân, hai lần của hai người là
+một quy ước đang hình thành (ADR-28).
+
+**Duyệt được phép sửa đề xuất ngay lúc duyệt.** Câu trả lời của miner đến từ một model đọc
+các đoạn trích ẩn danh; người duyệt mới là người biết đội mình thật sự nói thế nào. Bắt họ
+từ chối rồi thêm tay lại một thuật ngữ gần đúng là cách nhanh nhất để hàng đợi không còn ai
+làm.
+
+**Từ chối bắt buộc có lý do**, và dòng bị từ chối **giữ lại vĩnh viễn** kèm embedding: đó là
+thứ để miner nhận ra cùng thuật ngữ đó tuần sau viết khác đi và không hỏi lại (ADR-28). Vài
+tháng sau sẽ có người muốn biết vì sao một thuật ngữ trông rất hợp lý lại không bao giờ vào
+được, và chữ "rejected" một mình không trả lời được.
+
+**Quyết định hai lần trên cùng một đề xuất trả `409 Conflict`**, không phải `200`. Hai người
+cùng làm hàng đợi sẽ đều tin mình là người đã duyệt, và quyết định sau âm thầm ghi đè quyết
+định trước — kể cả lý do của nó.
+
+**`DELETE /admin/glossary/{id}` không xoá.** Nó đổi `status` thành `retired`. Một bản dịch
+giao tháng trước được định hình bởi thuật ngữ đang active lúc đó; xoá dòng là xoá mất lời
+giải thích duy nhất cho câu chữ người đọc đang nhìn. Nghỉ hưu thì nó thôi định hình những
+bản dịch mới (§5 ghi chú 16).
 
 ## 4. WebSocket Protocol
 
@@ -395,7 +504,7 @@ Trình tự sự kiện khi cần dịch: `message.received` (trạng thái `str
 |---|---|---|
 | `message.received` | `{"type": "message.received", "message_id", "sender_id", "original_text", "source_language", "translation_status": "not_required" \| "streaming", "created_at"}` | Ngay sau khi Chat Service lưu xong tin nhắn gốc. Phát tới toàn bộ thành viên trong cuộc hội thoại, bao gồm người gửi |
 | `translation.chunk` | `{"type": "translation.chunk", "message_id", "target_language", "chunk": "string"}` | Mỗi đoạn bản dịch nhận được từ LLM ở chế độ streaming |
-| `translation.completed` | `{"type": "translation.completed", "message_id", "translation_id", "target_language", "source_language", "translated_text", "model", "latency_ms", "is_fallback"}` | Khi Agent hoàn tất xử lý, bao gồm cả trường hợp fallback |
+| `translation.completed` | `{"type": "translation.completed", "message_id", "translation_id", "target_language", "honorific_profile", "source_language", "translated_text", "model", "latency_ms", "is_fallback"}` | Khi Agent hoàn tất xử lý, bao gồm cả trường hợp fallback |
 | `typing` | `{"type": "typing", "conversation_id", "user_id", "is_typing"}` | Chuyển tiếp sự kiện soạn tin tới **các thành viên khác**, không gửi lại cho chính người gõ |
 | `message_updated` | `{"type": "message_updated", "message_id", "conversation_id", "original_text", "edited_at"}` | Sau khi người gửi sửa tin nhắn (§3.6). Phát tới các thành viên khác; bản dịch mới đến sau bằng `translation_completed` như tin nhắn thường |
 | `message_deleted` | `{"type": "message_deleted", "message_id", "conversation_id", "deleted_at"}` | Sau khi người gửi gỡ tin nhắn (§3.6). Phát tới các thành viên khác |
@@ -431,8 +540,20 @@ Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó c�
 Áp dụng cho cuộc hội thoại có N thành viên sử dụng M ngôn ngữ khác nhau:
 
 1. Server truy vấn tập `DISTINCT preferred_language` của toàn bộ thành viên, loại trừ `source_language` đã xác định.
-2. Thực hiện một lần dịch cho mỗi ngôn ngữ đích còn lại (tối đa M-1 lần, không phải N lần). Các thành viên cùng ngôn ngữ dùng chung một bản dịch và cùng một `translation_id`.
-3. Mỗi kết nối WebSocket của **người nhận** chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của họ. Người gửi bị loại khỏi fan-out; server không tạo bản dịch chỉ để trả về cho chính người đã gửi.
+2. Thực hiện một lần dịch cho mỗi cặp **(ngôn ngữ đích, vị thế xưng hô)** còn lại — **sửa ngày 20/08**, trước đó là mỗi ngôn ngữ đích. Các thành viên cùng ngôn ngữ **và cùng vị thế** dùng chung một bản dịch và cùng một `translation_id`. Vị thế nhận bốn giá trị `senior | peer | junior | client`, lấy từ `participant_profiles` (§5 ghi chú 15), nên số lượt dịch tối đa là số cặp khác nhau chứ không phải số thành viên: một nhóm 10 người đọc 3 ngôn ngữ đi từ 3 lượt lên nhiều nhất 9, và hội thoại `direct` không đổi vì mỗi ngôn ngữ ở đó vốn chỉ có một người nhận. Lý do phải thêm chiều này: tiếng Việt, tiếng Nhật và tiếng Hàn không dựng được câu mà không chọn cách xưng hô, và lựa chọn đó khác nhau giữa một quản lý và một khách hàng trong cùng một nhóm (ADR-23).
+
+   **Thang dự phòng khi đọc.** `translation_results.honorific_profile` ghi một lần và không bao giờ ghi đè, trong khi hồ sơ vị thế do LLM suy ra và **thay đổi được**. Hai giá trị vì thế lệch nhau theo thiết kế, nên đường đọc chọn bản dịch theo ba bậc, đúng thứ tự này:
+
+   1. đúng cặp `(ngôn ngữ của người đọc, vị thế hiện tại của họ)`;
+   2. không có thì lấy cùng ngôn ngữ ở bậc trung tính `peer`;
+   3. vẫn không có thì lấy **bất kỳ** bản dịch nào cùng ngôn ngữ, theo thứ tự `created_at` tăng dần để hai lần đọc liên tiếp không cho hai kết quả khác nhau.
+
+   Thang này nới **vị thế**, tuyệt đối không nới **ngôn ngữ**. Không có nó, một lần suy luận lại hồ sơ sẽ làm biến mất mọi bản dịch đã giao trong luồng hội thoại: người dùng tải lại trang và thấy toàn bộ quay về nguyên bản, không có lỗi nào được ghi. Giao một cách xưng hô hơi lệch là thiệt hại nhỏ hơn hẳn giao một tin nhắn chưa dịch.
+3. Mỗi kết nối WebSocket chỉ nhận các sự kiện `translation.chunk` và `translation.completed` có `target_language` trùng với `preferred_language` của người dùng tương ứng — **cộng thêm người gửi tin nhắn trong hội thoại `type = "direct"`, nhận bản dịch của chính tin mình gửi** (sửa theo §3.10, **đề xuất**).
+
+   Vế thêm vào là điều kiện để §3.10 chạy được ở chat 1-1. Trước đây `_recipients_by_language` xếp người gửi vào đúng nhóm ngôn ngữ *họ đọc*, nên giữa một người đọc `vi` và một người đọc `en`, bản dịch `en` chỉ tới người nhận. Người gửi không có bản dịch nào trong tay để đối chiếu hay góp ý cho tới khi tải lại trang — trong khi `GET /conversations/{id}/messages` vốn đã trả **toàn bộ** bản dịch của mỗi tin, tức dữ liệu đã sẵn sàng, chỉ thiếu đường phát theo thời gian thực.
+
+   Phạm vi dừng ở `direct` chứ không mở cho nhóm, vì quyền góp ý của người gửi cũng chỉ có ở `direct` (§3.10). Hội thoại `direct` có đúng một ngôn ngữ đích khác, nên người gửi nhận thêm nhiều nhất một sự kiện cho mỗi tin nhắn.
 
 Đây là yêu cầu chức năng bắt buộc, khác biệt với nội dung tối ưu hiệu năng tại ADR-03 ([`ARCHITECTURE.md`](../ARCHITECTURE.md)). ADR-03 chỉ đề cập việc tối ưu fan-out, không thay đổi quy tắc nêu trên.
 
@@ -446,10 +567,18 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
 | `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
 | `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at`, `edited_at`, `deleted_at` |
-| `translation_results` | `id`, `message_id`, `target_language`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
+| `translation_results` | `id`, `message_id`, `target_language`, `honorific_profile`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
 | `translation_edits` | `id`, `translation_id`, `editor_id`, `edited_text`, `created_at` |  <!-- đã hiện thực -->
-| `translation_attempts` | `id`, `message_id`, `target_language`, `source_language_declared`, `source_language_detected`, `outcome`, `provider`, `model_configured`, `model_served`, `detect_method`, `llm_calls`, `input_tokens`, `output_tokens`, `finish_reason`, `detect_ms`, `context_ms`, `translate_ms`, `fallback_ms`, `total_ms`, `context_lines`, `fallback_reason`, `translation_id`, `created_at` |
+| `translation_attempts` | `id`, `message_id`, `target_language`, `source_language_declared`, `source_language_detected`, `outcome`, `provider`, `model_configured`, `model_served`, `detect_method`, `llm_calls`, `input_tokens`, `output_tokens`, `finish_reason`, `detect_ms`, `context_ms`, `translate_ms`, `fallback_ms`, `total_ms`, `context_lines`, `fallback_reason`, `translation_id`, `honorific_profile`, `created_at` |
+
+| `conversation_profiles` | `id`, `conversation_id`, `domain`, `audience`, `message_count_at_last_run`, `consecutive_stable_runs`, `locked_at`, `rationale`, `created_at`, `updated_at` |
+| `participant_profiles` | `id`, `conversation_id`, `user_id`, `honorific_profile`, `inferred_by`, `confidence`, `rationale`, `created_at`, `updated_at` |
+| `glossary_entries` | `id`, `source_term`, `source_term_normalized`, `target_term`, `source_language`, `target_language`, `domain`, `audience`, `keep_verbatim`, `status`, `approved_by`, `embedding`, `embedding_model`, `created_at`, `updated_at` |
+| `glossary_proposals` | `id`, `source_term`, `source_term_normalized`, `target_term`, `source_language`, `target_language`, `domain`, `audience`, `keep_verbatim`, `status`, `occurrence_count`, `distinct_user_count`, `rationale`, `reviewed_by`, `reviewed_at`, `reject_reason`, `embedding`, `embedding_model`, `created_at` |
+| `glossary_proposal_citations` | `id`, `proposal_id`, `anonymized_snippet`, `observed_at` |
+| `correction_log` | `id`, `source_phrase`, `corrected_target`, `source_language`, `target_language`, `domain`, `audience`, `user_id`, `translation_id`, `consent_to_share`, `anonymized_snippet`, `embedding`, `embedding_model`, `observed_at` |
+| `message_embeddings` | `id`, `message_id`, `conversation_id`, `embedding`, `embedding_model`, `created_at` |
 
 **Ghi chú:**
 
@@ -458,7 +587,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 3. `conversations.type` nhận `direct` hoặc `group`, có `CheckConstraint` ở mức cơ sở dữ liệu.
 4. `messages.client_message_id` do client sinh ra, cùng `sender_id` và `conversation_id` tạo thành ràng buộc duy nhất. Đây là cơ chế cho phép gửi lại an toàn khi mất kết nối — xem `docs/RECONNECT_CONTRACT.md`.
 5. `messages.source_language` khi ghi là **giá trị tạm** (`preferred_language` của người gửi); node `detect_language` của Agent ghi đè bằng kết quả nhận diện thật (§4.3).
-6. `translation_results` có ràng buộc duy nhất `(message_id, target_language)`. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại.
+6. `translation_results` có ràng buộc duy nhất `(message_id, target_language, honorific_profile)` — **mở rộng ngày 20/08**, trước đó chỉ gồm hai cột đầu. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ **và cùng vị thế** dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại. Lý do thêm chiều thứ ba: tiếng Việt, tiếng Nhật và tiếng Hàn không dựng được câu mà không chọn cách xưng hô với người đọc, và lựa chọn đó khác nhau giữa một quản lý và một khách hàng ngồi trong cùng một nhóm (ADR-23). `honorific_profile` **ghi một lần, không bao giờ ghi đè**: hồ sơ vị thế do LLM suy ra và có thể đổi, nên nếu đường đọc tra theo hồ sơ *hiện tại* thì một lần suy lại sẽ làm biến mất mọi bản dịch đã giao.
 7. `translation_results.is_fallback` đúng khi văn bản **không** đến từ LLM đã cấu hình, bao gồm cả trường hợp provider dự phòng dịch thành công. `model` để rỗng khi không tầng nào dịch được và hệ thống trả nguyên bản (`ARCHITECTURE.md` §5.1).
 8. **Alembic là nơi duy nhất định nghĩa schema** (sửa 15/08). Ứng dụng không còn tạo bảng lúc khởi động; container chạy `alembic upgrade head` trước `uvicorn`, còn trên máy phát triển là `make migrate`. Đổi schema nghĩa là sinh migration (`make revision m="..."`) rồi đọc lại bản sinh ra. `make reset-db` vẫn còn nhưng nay là `downgrade base` + `upgrade head` và **xoá sạch dữ liệu cục bộ**. Xem ADR-06.
 9. `translation_attempts` là **nhật ký đo lường**, không phải trạng thái ứng dụng (ADR-16). Mỗi cặp (tin nhắn × ngôn ngữ đích) được thử ghi một dòng, **kể cả khi không sinh ra bản dịch nào**. Khác `translation_results` ở ba điểm có chủ đích: không có ràng buộc duy nhất (chạy lại là một lượt thử mới, đáng đếm riêng), `translation_id` cho phép `NULL` với `ON DELETE SET NULL` (xoá bản dịch không được xoá bằng chứng rằng đã dịch), và các cột được tự do thay đổi theo nhu cầu đo — **không** thành phần nào ngoài `src/services/metrics.py` và `scripts/report_metrics.py` được đọc bảng này.
@@ -467,6 +596,10 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 12. `translation_edits` là **nhật ký chỉ ghi thêm** (đề xuất, §3.10): không có ràng buộc duy nhất trên `(translation_id, editor_id)` vì góp ý lại là một dòng mới chứ không phải sửa dòng cũ, và bản có hiệu lực là bản `created_at` lớn nhất **của từng người**. Chỉ mục `(translation_id, editor_id, created_at)` để lấy bản mới nhất của người đang gọi mà không quét cả bảng — thứ tự cột đúng theo cách truy vấn, vì mọi lần đọc đều lọc theo cả hai khoá. `editor_id` dùng `ON DELETE CASCADE`: dữ liệu này riêng tư của một người, xoá tài khoản thì xoá theo, không để lại dòng vô chủ mà không ai có quyền đọc. Khác `feedbacks.correction` đúng một điểm: bảng này giữ **toàn bộ lịch sử** góp ý thay vì một dòng mỗi người — cả hai đều riêng tư như nhau. `feedbacks.correction` sẽ **không còn được client ghi vào** kể từ khi giao diện chuyển sang endpoint mới (PR frontend của F-05); tới lúc đó nút bút chì vẫn ghi vào cột cũ. Cột giữ lại vĩnh viễn để đọc dữ liệu đã có.
 13. `users.interface_language` (§1.2) `NOT NULL`; migration lấp giá trị ban đầu bằng chính `preferred_language` của từng dòng, nên không tài khoản nào thấy giao diện đổi ngôn ngữ sau khi nâng cấp. Không có ràng buộc khoá ngoại tới danh sách ngôn ngữ: danh sách đó là allowlist ở tầng ứng dụng (`GET /languages`), không phải bảng.
 14. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
+15. `conversation_profiles` và `participant_profiles` giữ kết quả suy luận của LLM về **lĩnh vực**, **đối tượng** của hội thoại và **vị thế** của từng thành viên. Suy luận không chạy theo từng tin nhắn: chờ đủ 5 tin mới chạy lần đầu, sau đó lặp lại mỗi 20 tin, và dừng hẳn khi 3 lần liên tiếp cho cùng kết quả — lúc đó `locked_at` được đóng dấu. Cách này chặn hạn mức ở vài lượt gọi cho mỗi hội thoại, đồng thời không để đối tượng nhấp nháy giữa các tin nhắn, thứ mà người đọc sẽ thấy thành giọng văn đổi giữa chừng (ADR-24). `participant_profiles.honorific_profile` nhận đúng bốn giá trị có `CheckConstraint`: `senior`, `peer`, `junior`, `client`; `peer` là bậc trung tính và là bậc mặc định khi chưa suy ra được gì. Khoá theo `(conversation_id, user_id)` chứ không theo người: cùng một tài khoản là `junior` với quản lý của mình và là `client` trong hội thoại với nhà cung cấp.
+16. `glossary_entries` là bảng ánh xạ thuật ngữ nguồn → đích, tồn tại để ép **tính nhất quán**: nếu để tự do, model dịch `staging environment` lúc thì "môi trường staging" lúc thì "môi trường dàn dựng", và người đọc không biết hai câu có nói về cùng một thứ không. `domain` và `audience` là thứ làm cùng một thuật ngữ ra hai kết quả — dòng gắn `audience` nội bộ giữ nguyên `UI`, dòng gắn `audience` khách hàng cho ra "giao diện". Chuỗi rỗng nghĩa là "áp dụng ở mọi nơi" và đóng vai trò bậc dự phòng, nên **cả hai cột đều nằm trong ràng buộc duy nhất và không được phép `NULL`**: `NULL` không so bằng `NULL` nên bản trùng sẽ lọt lưới. `status` nhận `active` hoặc `retired`; **không xoá dòng bao giờ** — một bản dịch giao tháng trước được định hình bởi thuật ngữ đang active lúc đó, xoá đi là xoá mất lời giải thích duy nhất cho câu chữ người đọc đang nhìn.
+17. `correction_log` **tách riêng khỏi `translation_edits` một cách có chủ ý**. `translation_edits` giữ nguyên đúng những gì ADR-19 quy định: chỉ ghi thêm, riêng tư tuyệt đối với người viết, không ai khác đọc được. Khai thác thẳng bảng đó là âm thầm rút lại lời hứa ấy. `correction_log` chỉ giữ phần **dẫn xuất** — máy viết gì, người sửa thành gì — và chỉ những dòng mà tác giả đã đồng ý chia sẻ. `consent_to_share` khoá cả dòng chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó. `glossary_proposals` dòng `rejected` **không bao giờ bị xoá**: chúng mang embedding để bộ khai thác đối chiếu ứng viên mới, nếu không thì tuần sau đúng thuật ngữ đó quay lại với cách viết hơi khác và hàng đợi duyệt biến thành nhiễu không ai đọc.
+18. `message_embeddings` là bảng riêng chứ không phải một cột trên `messages`: `messages` là bảng nóng, được liệt kê từng trường trong §5 này, còn đây là dữ liệu dẫn xuất tính lại lúc nào cũng được — đúng cách tách và đúng lý do mà ADR-16 đã áp dụng cho `translation_attempts`. `conversation_id` được lặp lại ở đây để tìm kiếm láng giềng gần nhất giới hạn được trong một hội thoại mà không phải join: một index vector chỉ được dùng khi bộ lọc đi kèm là rẻ, và việc truy hồi **tuyệt đối không được** với sang hội thoại khác. Bốn cột `embedding` trong schema dùng kiểu `vector` của pgvector với index HNSW `vector_cosine_ops`, và mỗi bảng lưu kèm `embedding_model` để một vector do model khác sinh ra nhận ra được thay vì bị âm thầm so trong sai không gian (ADR-25).
 
 ## 6. Đặc tả lỗi
 

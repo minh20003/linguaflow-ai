@@ -3,11 +3,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WifiOff } from "lucide-react";
-import { clearSession, getAccessToken, getRefreshToken } from "@/features/auth/lib/session";
-import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/features/auth/api/auth-api";
-import type { AppSettings, Conversation, Message, SidebarTab, ToastItem, User } from "../types";
+import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/session";
+import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/shared/api/account-api";
+import type { AppSettings, Conversation, Message, MessageAttachment, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
-import { createConversation, deleteMessage, getMe, getMessages, listConversations, listUsers, markRead, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessages, uploadAttachment, type ApiMessage } from "../api/chat-api";
+import { createConversation, deleteMessage, downloadAttachment, fetchAttachmentBlob, getMe, getMessages, listAttachments, listConversations, listUsers, markRead, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessageAttachment, toMessages, uploadAttachment, type ApiAttachment, type ApiMessage } from "../api/chat-api";
 import { newClientMessageId, socketUrl } from "../api/chat-socket";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -38,6 +38,7 @@ export const AppShell: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
+  const [attachmentsMap, setAttachmentsMap] = useState<Record<string, MessageAttachment[]>>({});
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<SidebarTab>("chats");
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
@@ -75,6 +76,7 @@ export const AppShell: React.FC = () => {
 
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const currentMessages = selectedConversationId ? messagesMap[selectedConversationId] ?? [] : [];
+  const currentAttachments = selectedConversationId ? attachmentsMap[selectedConversationId] ?? [] : [];
   const usersById = useMemo(() => new Map([currentUser, ...users].filter((user) => user.id).map((user) => [user.id, user])), [currentUser, users]);
 
   const loadConversationMessages = useCallback(async (conversationId: string) => {
@@ -82,6 +84,21 @@ export const AppShell: React.FC = () => {
     const history = await getMessages(token.current, conversationId);
     setMessagesMap((previous) => ({ ...previous, [conversationId]: toMessages(history, usersById, settings.preferredLanguage) }));
   }, [settings.preferredLanguage, usersById]);
+
+  const loadConversationAttachments = useCallback(async (conversationId: string) => {
+    if (!token.current) return;
+    try {
+      const attachments = await listAttachments(token.current, conversationId);
+      setAttachmentsMap((previous) => ({
+        ...previous,
+        [conversationId]: attachments.map(toMessageAttachment),
+      }));
+    } catch {
+      // Keep chat usable during a rolling deployment where the frontend may
+      // reach an older backend before the attachment-list route is available.
+      setAttachmentsMap((previous) => ({ ...previous, [conversationId]: [] }));
+    }
+  }, []);
 
   const refreshConversations = useCallback(async () => {
     if (!token.current || !currentUser.id) return;
@@ -106,9 +123,13 @@ export const AppShell: React.FC = () => {
       setConversations(list.map((item) => toConversation(item, user.id)));
       if (list[0]) {
         const members = new Map([user, ...contacts].map((contact) => [contact.id, contact]));
-        const history = await getMessages(accessToken, list[0].id);
+        const [history, attachments] = await Promise.all([
+          getMessages(accessToken, list[0].id),
+          listAttachments(accessToken, list[0].id).catch(() => []),
+        ]);
         if (!active) return;
         setMessagesMap({ [list[0].id]: toMessages(history, members, user.nativeLanguage) });
+        setAttachmentsMap({ [list[0].id]: attachments.map(toMessageAttachment) });
         setSelectedConversationId(list[0].id);
       }
     }).catch(() => { clearSession(); router.replace("/login"); });
@@ -129,7 +150,8 @@ export const AppShell: React.FC = () => {
         if (eventType === "message_created" || eventType === "message_received") {
           const realtime = payload.message as Record<string, unknown>;
           const clientMessageId = payload.client_message_id as string | undefined;
-          const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null, forwarded_from_message_id: realtime.forwarded_from_message_id as string | null };
+          const realtimeAttachment = realtime.attachment as ApiAttachment | null | undefined;
+          const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null, forwarded_from_message_id: realtime.forwarded_from_message_id as string | null, attachment: realtimeAttachment };
           const mapped = toMessage(message, usersById, settings.preferredLanguage);
           setMessagesMap((previous) => {
             const messages = previous[mapped.conversationId] ?? [];
@@ -148,6 +170,15 @@ export const AppShell: React.FC = () => {
             } : mapped;
             return { ...previous, [mapped.conversationId]: withoutOptimistic.some((item) => item.id === mapped.id) ? withoutOptimistic : [...withoutOptimistic, messageWithReply] };
           });
+          if (realtimeAttachment) {
+            const mappedAttachment = toMessageAttachment(realtimeAttachment);
+            setAttachmentsMap((previous) => {
+              const existing = previous[mapped.conversationId] ?? [];
+              return existing.some((attachment) => attachment.id === mappedAttachment.id)
+                ? previous
+                : { ...previous, [mapped.conversationId]: [mappedAttachment, ...existing] };
+            });
+          }
           void refreshConversations();
         }
         // This is the authoritative result produced by the LangGraph translation
@@ -181,16 +212,20 @@ export const AppShell: React.FC = () => {
   const selectConversation = async (conversation: Conversation) => {
     setSelectedConversationId(conversation.id); setMobileView("chat");
     try {
-      await Promise.all([loadConversationMessages(conversation.id), markRead(token.current!, conversation.id)]);
+      await Promise.all([
+        loadConversationMessages(conversation.id),
+        loadConversationAttachments(conversation.id),
+        markRead(token.current!, conversation.id),
+      ]);
       setConversations((items) => items.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item));
     } catch (error) { addToast("Could not load messages", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
-  const send = (text: string, replyToMessageId?: string, attachmentId?: string, forwardedFromMessageId?: string, destinationConversationId = selectedConversationId) => {
+  const send = (text: string, replyToMessageId?: string, attachmentId?: string, forwardedFromMessageId?: string, destinationConversationId = selectedConversationId, optimisticAttachment?: MessageAttachment) => {
     if (!destinationConversationId || socket.current?.readyState !== WebSocket.OPEN) { addToast("Reconnecting", "Your message will send when realtime reconnects.", "warning"); return; }
     const clientMessageId = newClientMessageId();
     const repliedMessage = replyToMessageId ? currentMessages.find((message) => message.id === replyToMessageId) : undefined;
-    const optimistic: Message = { id: clientMessageId, senderId: currentUser.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, conversationId: destinationConversationId, content: text, timestamp: "Now", status: "sending", forwardedFromMessageId, replyTo: repliedMessage ? { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content } : undefined };
+    const optimistic: Message = { id: clientMessageId, senderId: currentUser.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, conversationId: destinationConversationId, content: text, timestamp: "Now", status: "sending", forwardedFromMessageId, attachments: optimisticAttachment ? [optimisticAttachment] : undefined, replyTo: repliedMessage ? { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content } : undefined };
     setMessagesMap((previous) => ({ ...previous, [destinationConversationId]: [...(previous[destinationConversationId] ?? []), optimistic] }));
     socket.current.send(JSON.stringify({ type: "send_message", client_message_id: clientMessageId, conversation_id: destinationConversationId, text, reply_to_message_id: replyToMessageId, attachment_id: attachmentId, forwarded_from_message_id: forwardedFromMessageId }));
   };
@@ -215,7 +250,10 @@ export const AppShell: React.FC = () => {
 
   const attach = async (file: File) => {
     if (!selectedConversationId || !token.current) return;
-    try { const attachment = await uploadAttachment(token.current, selectedConversationId, file); send(`Shared ${file.name}`, undefined, attachment.id); }
+    try {
+      const attachment = await uploadAttachment(token.current, selectedConversationId, file);
+      send(`Shared ${file.name}`, undefined, attachment.id, undefined, selectedConversationId, toMessageAttachment(attachment));
+    }
     catch (error) { addToast("Could not upload attachment", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
@@ -224,6 +262,20 @@ export const AppShell: React.FC = () => {
     try { setUsers((await listUsers(token.current, query.trim())).map(toChatUser)); }
     catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
   };
+
+  const downloadSharedFile = async (attachment: MessageAttachment) => {
+    if (!token.current) return;
+    try {
+      await downloadAttachment(token.current, attachment);
+    } catch (error) {
+      addToast("Could not download file", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const loadSharedFilePreview = useCallback(async (attachment: MessageAttachment) => {
+    if (!token.current) throw new Error("Authentication is required");
+    return URL.createObjectURL(await fetchAttachmentBlob(token.current, attachment));
+  }, []);
 
   const rateTranslation = async (messageId: string, translationId: string, rating: 1 | 5) => {
     if (!token.current) return;
@@ -315,7 +367,32 @@ export const AppShell: React.FC = () => {
       {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.preferredLanguage} />}
       {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.preferredLanguage} />}
     </div>
-    <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}><ChatView conversation={selectedConversation} messages={currentMessages} currentUser={currentUser} onBack={() => setMobileView("list")} onSendMessage={send} onSendAttachment={attach} onTyping={(isTyping) => selectedConversationId && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "typing", conversation_id: selectedConversationId, is_typing: isTyping }))} onReact={() => addToast("Not available", "Reactions are not supported by the backend yet.", "info")} onCopy={(text) => void navigator.clipboard.writeText(text)} onToggleOriginal={(id) => setMessagesMap((items) => ({ ...items, [selectedConversationId!]: (items[selectedConversationId!] ?? []).map((message) => message.id === id && message.translation ? { ...message, translation: { ...message.translation, showOriginal: !message.translation.showOriginal } } : message) }))} onRetryTranslation={() => addToast("Translation", "Translations are generated automatically by the backend.", "info")} onRateTranslation={rateTranslation} onEditTranslation={editTranslation} onForward={setForwardingMessage} onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))} onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")} onOpenNewChat={() => setIsNewChatOpen(true)} onStartCall={(type) => setCallState({ isOpen: true, type })} language={settings.preferredLanguage} /></div>
+    <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}>
+      <ChatView
+        conversation={selectedConversation}
+        messages={currentMessages}
+        currentUser={currentUser}
+        onBack={() => setMobileView("list")}
+        onSendMessage={send}
+        onSendAttachment={attach}
+        onTyping={(isTyping) => selectedConversationId && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "typing", conversation_id: selectedConversationId, is_typing: isTyping }))}
+        onReact={() => addToast("Not available", "Reactions are not supported by the backend yet.", "info")}
+        onCopy={(text) => void navigator.clipboard.writeText(text)}
+        onToggleOriginal={(id) => setMessagesMap((items) => ({ ...items, [selectedConversationId!]: (items[selectedConversationId!] ?? []).map((message) => message.id === id && message.translation ? { ...message, translation: { ...message.translation, showOriginal: !message.translation.showOriginal } } : message) }))}
+        onRetryTranslation={() => addToast("Translation", "Translations are generated automatically by the backend.", "info")}
+        onRateTranslation={rateTranslation}
+        onEditTranslation={editTranslation}
+        onForward={setForwardingMessage}
+        onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))}
+        onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")}
+        onOpenNewChat={() => setIsNewChatOpen(true)}
+        onStartCall={(type) => setCallState({ isOpen: true, type })}
+        language={settings.preferredLanguage}
+        attachments={currentAttachments}
+        onDownloadAttachment={downloadSharedFile}
+        onLoadAttachmentPreview={loadSharedFilePreview}
+      />
+    </div>
     <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
     <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => setCurrentUser((previous) => ({ ...previous, ...value }))} />

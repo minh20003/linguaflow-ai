@@ -6,7 +6,7 @@ import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, L
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
 import { signUp, signInWithGoogle } from '../api/auth-api';
-import { saveSession } from '../lib/session';
+import { saveSession } from '@/shared/lib/session';
 
 interface SignUpFormProps {
   onNavigate: (screen: AuthScreen) => void;

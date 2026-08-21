@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Message, User, Conversation, LanguageCode } from '../types';
+import { Message, User, Conversation, LanguageCode, MessageAttachment } from '../types';
 import { interactionText } from '../i18n';
 import { MessageBubble } from './MessageBubble';
 
@@ -16,6 +16,8 @@ interface MessageListProps {
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
   onDeleteMessage?: (messageId: string) => void;
+  onDownloadAttachment: (attachment: MessageAttachment) => void;
+  onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
   language: LanguageCode;
 }
 
@@ -32,6 +34,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   onEditTranslation,
   onForward,
   onDeleteMessage,
+  onDownloadAttachment,
+  onLoadAttachmentPreview,
   language,
 }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -100,6 +104,8 @@ export const MessageList: React.FC<MessageListProps> = ({
               onEditTranslation={onEditTranslation}
               onForward={onForward}
               onDeleteMessage={onDeleteMessage}
+              onDownloadAttachment={onDownloadAttachment}
+              onLoadAttachmentPreview={onLoadAttachmentPreview}
               language={language}
             />
           </React.Fragment>

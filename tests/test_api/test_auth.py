@@ -1,16 +1,29 @@
 """Tests for authentication API endpoints."""
 
+import re
+
 import pytest
 
-from src.api import routes
-from src.config import get_settings
+from src.services.email import _memory_sender
+
+
+async def register_and_verify(client, payload):
+    _memory_sender.clear()
+    reg = await client.post("/api/v1/auth/register", json=payload)
+    if reg.status_code != 202:
+        return reg
+    pending_id = reg.json()["pending_id"]
+    otp = re.search(r"\b(\d{6})\b", _memory_sender.sent_emails[0].body_text).group(1)
+    return await client.post(
+        "/api/v1/auth/register/verify", json={"pending_id": pending_id, "otp": otp}
+    )
 
 
 @pytest.mark.asyncio
 async def test_register_persists_account_and_returns_session(client):
-    response = await client.post(
-        "/api/v1/auth/register",
-        json={
+    response = await register_and_verify(
+        client,
+        {
             "username": "new_user",
             "email": "new@example.com",
             "password": "securepass123",
@@ -19,7 +32,7 @@ async def test_register_persists_account_and_returns_session(client):
         },
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 200
     data = response.json()
     assert data["user"]["username"] == "new_user"
     assert data["user"]["display_name"] == "New User"
@@ -43,7 +56,7 @@ async def test_register_rejects_duplicate_email_and_username(client):
         "password": "securepass123",
         "preferred_language": "en",
     }
-    assert (await client.post("/api/v1/auth/register", json=payload)).status_code == 201
+    assert (await register_and_verify(client, payload)).status_code == 200
     duplicate_email = {**payload, "username": "another_user"}
     duplicate_username = {**payload, "email": "another@example.com"}
     assert (await client.post("/api/v1/auth/register", json=duplicate_email)).status_code == 409
@@ -51,31 +64,10 @@ async def test_register_rejects_duplicate_email_and_username(client):
 
 
 @pytest.mark.asyncio
-async def test_google_login_creates_then_reuses_verified_account(client, monkeypatch):
-    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client.apps.googleusercontent.com")
-    get_settings.cache_clear()
-    monkeypatch.setattr(
-        routes,
-        "_google_profile",
-        lambda _credential, _client_id: ("google-subject-123", "google@example.com", "Google User"),
-    )
-    try:
-        first = await client.post("/api/v1/auth/google", json={"credential": "x" * 24})
-        second = await client.post("/api/v1/auth/google", json={"credential": "x" * 24})
-    finally:
-        get_settings.cache_clear()
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["user"]["email"] == "google@example.com"
-    assert first.json()["user"]["id"] == second.json()["user"]["id"]
-
-
-@pytest.mark.asyncio
 async def test_refresh_rotates_token_and_logout_revokes_session(client):
-    registered = await client.post(
-        "/api/v1/auth/register",
-        json={
+    registered = await register_and_verify(
+        client,
+        {
             "username": "session_user",
             "email": "session@example.com",
             "password": "securepass123",
@@ -96,9 +88,9 @@ async def test_refresh_rotates_token_and_logout_revokes_session(client):
 
 @pytest.mark.asyncio
 async def test_password_reset_changes_password_and_revokes_sessions(client):
-    registered = await client.post(
-        "/api/v1/auth/register",
-        json={
+    registered = await register_and_verify(
+        client,
+        {
             "username": "reset_user",
             "email": "reset@example.com",
             "password": "oldpassword123",

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Conversation, LanguageCode } from '../types';
-import { tx } from '../i18n';
+import { Conversation, LanguageCode, MessageAttachment } from '../types';
+import { interactionText, tx } from '../i18n';
 import {
   X,
   Bell,
@@ -9,7 +9,9 @@ import {
   LogOut,
   UsersRound,
   Globe,
-  Pin
+  Pin,
+  Download,
+  FileText,
 } from 'lucide-react';
 
 interface ConversationDetailsDrawerProps {
@@ -19,6 +21,8 @@ interface ConversationDetailsDrawerProps {
   onToggleMute: (conversationId: string) => void;
   onTogglePin?: (conversationId: string) => void;
   language: LanguageCode;
+  attachments: MessageAttachment[];
+  onDownloadAttachment: (attachment: MessageAttachment) => void;
 }
 
 export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps> = ({
@@ -28,6 +32,8 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   onToggleMute,
   onTogglePin,
   language,
+  attachments,
+  onDownloadAttachment,
 }) => {
   if (!isOpen) return null;
 
@@ -132,6 +138,45 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
               {tx(language, conversation.isPinned ? 'Pinned' : 'No')}
             </span>
           </button>
+        )}
+      </div>
+
+      {/* Files that have been sent as part of a visible message. */}
+      <div className="p-4 border-b border-[#E8EAF0] dark:border-[#232630]">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-[#74798C] dark:text-[#9DA3B4]">
+            {interactionText(language, 'Shared files')} ({attachments.length})
+          </span>
+        </div>
+        {attachments.length === 0 ? (
+          <p className="py-3 text-center text-xs text-[#9DA3B4]">
+            {interactionText(language, 'No files shared yet')}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {attachments.map((attachment) => (
+              <button
+                key={attachment.id}
+                type="button"
+                onClick={() => onDownloadAttachment(attachment)}
+                aria-label={`${interactionText(language, 'Download file')}: ${attachment.name}`}
+                className="group w-full flex items-center gap-3 rounded-xl p-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors"
+              >
+                <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB]">
+                  <FileText className="w-4 h-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
+                    {attachment.name}
+                  </span>
+                  <span className="block text-[10px] text-[#74798C] dark:text-[#9DA3B4]">
+                    {attachment.size}
+                  </span>
+                </span>
+                <Download className="w-4 h-4 flex-none text-[#9DA3B4] group-hover:text-[#2563EB]" />
+              </button>
+            ))}
+          </div>
         )}
       </div>
 

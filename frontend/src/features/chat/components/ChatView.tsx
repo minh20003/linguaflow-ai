@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Conversation, Message, User, MessageReply } from '../types';
+import { Conversation, Message, User, MessageReply, MessageAttachment } from '../types';
 import { ChatHeader } from './ChatHeader';
 import { MessageList } from './MessageList';
 import { MessageComposer } from './MessageComposer';
@@ -26,6 +26,9 @@ interface ChatViewProps {
   onOpenNewChat: () => void;
   onStartCall: (type: 'voice' | 'video') => void;
   language: User['nativeLanguage'];
+  attachments: MessageAttachment[];
+  onDownloadAttachment: (attachment: MessageAttachment) => void;
+  onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -48,6 +51,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onOpenNewChat,
   onStartCall,
   language,
+  attachments,
+  onDownloadAttachment,
+  onLoadAttachmentPreview,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
@@ -123,6 +129,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onEditTranslation={onEditTranslation}
           onForward={onForward}
           onDeleteMessage={onDeleteMessage}
+          onDownloadAttachment={onDownloadAttachment}
+          onLoadAttachmentPreview={onLoadAttachmentPreview}
           language={language}
         />
 
@@ -145,6 +153,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
         onClose={() => setIsDetailsOpen(false)}
         onToggleMute={onToggleMute}
         language={language}
+        attachments={attachments}
+        onDownloadAttachment={onDownloadAttachment}
       />
     </div>
   );

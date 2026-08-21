@@ -9,7 +9,7 @@ import {
 
   Bell,
   Shield,
-  Sparkles,
+  Bot,
   Check,
   Globe2,
   Volume2,
@@ -50,7 +50,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     { id: 'notifications' as SettingsSection, label: t(language, 'notifications'), icon: Bell },
     { id: 'privacy' as SettingsSection, label: t(language, 'privacy'), icon: Shield },
-    { id: 'ai' as SettingsSection, label: t(language, 'aiTools'), icon: Sparkles },
+    { id: 'ai' as SettingsSection, label: t(language, 'aiTools'), icon: Bot },
   ];
 
   const handleSaveProfile = () => {
@@ -327,15 +327,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {/* 6. AI & Smart Tools */}
+            {/* 6. Personal assistant chatbot */}
             {activeSection === 'ai' && (
               <div className="space-y-3">
+                <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#EFF6FF] to-violet-50 p-4 dark:from-[#2563EB]/20 dark:to-violet-500/15">
+                  <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-[#2563EB] to-violet-600 text-white shadow-md shadow-[#2563EB]/20">
+                    <Bot className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <h5 className="text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">
+                      {copy(language, 'AI Smart Assistance')}
+                    </h5>
+                    <p className="mt-0.5 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
+                      {copy(language, 'Enable quick rewrites, tone polish & auto grammar')}
+                    </p>
+                  </div>
+                </div>
                 <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
                   <div>
                     <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      {copy(language, 'AI Smart Assistance')}
+                      {copy(language, 'Enable personal assistant')}
                     </h5>
-                    <p className="text-xs text-[#74798C]">{copy(language, 'Enable quick rewrites, tone polish & auto grammar')}</p>
+                    <p className="text-xs text-[#74798C]">{copy(language, 'Show the assistant in your conversations')}</p>
                   </div>
                   <button
                     onClick={() =>

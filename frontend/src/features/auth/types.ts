@@ -1,11 +1,13 @@
+import type {
+  LanguageCode,
+  LanguageOption as SharedLanguageOption,
+} from "@/shared/types/language";
+
 export type AuthScreen = 'signin' | 'signup' | 'forgot-password' | 'language-onboarding';
 
-export interface LanguageOption {
+export interface LanguageOption extends SharedLanguageOption {
   id: string;
-  name: string;
-  nativeName: string;
-  flag: string;
-  code: string;
+  code: LanguageCode;
   sampleGreeting: string;
 }
 

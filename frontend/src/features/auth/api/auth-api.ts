@@ -1,22 +1,17 @@
 import { API_BASE } from "@/config/env";
+import {
+  getApiErrorMessage,
+  parseJson,
+  type ApiErrorBody,
+} from "@/shared/api/response";
+import type { AuthSession } from "@/shared/types/auth";
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  username: string;
-  display_name: string;
-  role: string;
-  preferred_language: string;
-  interface_language: string;
-  created_at: string;
-}
-
-export interface AuthSession {
-  access_token: string;
-  refresh_token: string;
-  token_type: string;
-  user: AuthUser;
-}
+export type { AuthSession, AuthUser } from "@/shared/types/auth";
+export {
+  signOut,
+  updateInterfaceLanguage,
+  updatePreferredLanguage,
+} from "@/shared/api/account-api";
 
 interface RegisterInput {
   fullName: string;
@@ -25,31 +20,14 @@ interface RegisterInput {
   preferredLanguage?: string;
 }
 
-interface ErrorBody {
-  detail?: string | Array<{ msg?: string }>;
-}
-
-async function parseBody<T>(response: Response): Promise<T | null> {
-  return response.json().catch(() => null) as Promise<T | null>;
-}
-
-function errorMessage(body: ErrorBody | null, fallback: string): string {
-  if (typeof body?.detail === "string") return body.detail;
-  if (Array.isArray(body?.detail)) {
-    const message = body.detail.find((item) => item.msg)?.msg;
-    if (message) return message;
-  }
-  return fallback;
-}
-
 async function request<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init.headers },
   });
-  const body = await parseBody<T & ErrorBody>(response);
+  const body = await parseJson<T & ApiErrorBody>(response);
   if (!response.ok || !body) {
-    throw new Error(errorMessage(body, fallback));
+    throw new Error(getApiErrorMessage(body, fallback));
   }
   return body;
 }
@@ -74,18 +52,6 @@ export function signIn(email: string, password: string, remember: boolean): Prom
     { method: "POST", body: JSON.stringify({ email: email.trim(), password, remember }) },
     "Unable to sign in. Please try again.",
   );
-}
-
-export async function signOut(refreshToken: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/auth/logout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!response.ok) {
-    const body = await parseBody<ErrorBody>(response);
-    throw new Error(errorMessage(body, "Unable to sign out. Please try again."));
-  }
 }
 
 export function signUp({
@@ -119,37 +85,10 @@ export function requestPasswordReset(email: string): Promise<{ message: string; 
   );
 }
 
-export function updatePreferredLanguage(
-  accessToken: string,
-  preferredLanguage: string,
-): Promise<AuthUser> {
-  return request<AuthUser>(
-    "/api/v1/auth/me/language",
-    {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ preferred_language: preferredLanguage }),
-    },
-    "Unable to save your preferred language.",
-  );
-}
-
 export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
   return request<AuthSession>(
     "/api/v1/auth/google",
     { method: "POST", body: JSON.stringify({ credential, remember }) },
     "Unable to sign in with Google. Please try again.",
-  );
-}
-
-export function updateInterfaceLanguage(accessToken: string, interfaceLanguage: string): Promise<AuthUser> {
-  return request<AuthUser>(
-    "/api/v1/auth/me/interface-language",
-    {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ interface_language: interfaceLanguage }),
-    },
-    "Unable to save your interface language.",
   );
 }

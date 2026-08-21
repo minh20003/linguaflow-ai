@@ -7,7 +7,7 @@ import { LanguageOnboarding } from "../components/LanguageOnboarding";
 import { SignUpForm } from "../components/SignUpForm";
 import { SUPPORTED_LANGUAGES } from "../constants/languages";
 import { updateInterfaceLanguage, updatePreferredLanguage } from "../api/auth-api";
-import { getAccessToken, updateStoredUser } from "../lib/session";
+import { getAccessToken, updateStoredUser } from "@/shared/lib/session";
 import type { AuthScreen, UserProfile } from "../types";
 
 export function RegisterScreen() {

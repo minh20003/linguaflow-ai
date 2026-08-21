@@ -7,11 +7,17 @@ reached through the chat flow, not from here; see `src/agents/graph.py`.
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
 
 from src.agents.observability import verify_langfuse_credentials
+from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
 from src.api.websocket import router as websocket_router
@@ -46,6 +52,59 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_SENSITIVE_FIELD_NAMES = frozenset({
+    "password",
+    "new_password",
+    "otp",
+    "token",
+    "access_token",
+    "refresh_token",
+    "jwt_secret",
+    "secret",
+})
+
+
+def _sanitize_sensitive_data(val: Any) -> Any:
+    """Recursively redact values of sensitive keys at arbitrary depth."""
+    if isinstance(val, dict):
+        sanitized = {}
+        for k, v in val.items():
+            if isinstance(k, str) and k.lower() in _SENSITIVE_FIELD_NAMES:
+                sanitized[k] = "[REDACTED]"
+            else:
+                sanitized[k] = _sanitize_sensitive_data(v)
+        return sanitized
+    elif isinstance(val, (list, tuple)):
+        return [_sanitize_sensitive_data(item) for item in val]
+    return val
+
+
+def _redact_validation_errors(errors: list[dict]) -> list[dict]:
+    """Redact raw values of sensitive fields and nested sensitive keys from validation error details."""
+    cleaned = []
+    for err in errors:
+        item = dict(err)
+        loc = item.get("loc", ())
+        is_loc_sensitive = any(
+            isinstance(k, str) and k.lower() in _SENSITIVE_FIELD_NAMES for k in loc
+        )
+        if is_loc_sensitive and "input" in item:
+            item["input"] = "[REDACTED]"
+        elif "input" in item:
+            item["input"] = _sanitize_sensitive_data(item["input"])
+        cleaned.append(item)
+    return cleaned
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return 422 with redacted sensitive fields to prevent secret echoing."""
+    encoded_errors = jsonable_encoder(exc.errors())
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _redact_validation_errors(encoded_errors)},
+    )
+
 settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +117,7 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
 
 

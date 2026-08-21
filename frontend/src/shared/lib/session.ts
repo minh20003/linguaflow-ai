@@ -1,4 +1,4 @@
-import type { AuthSession } from "../api/auth-api";
+import type { AuthSession } from "@/shared/types/auth";
 
 const KEYS = ["access_token", "refresh_token", "user"] as const;
 

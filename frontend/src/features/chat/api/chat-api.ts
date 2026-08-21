@@ -1,6 +1,7 @@
 import { API_BASE } from "@/config/env";
-import type { AuthUser } from "@/features/auth/api/auth-api";
-import type { Conversation, Message, User } from "../types";
+import { getApiErrorMessage, parseJson, type ApiErrorBody } from "@/shared/api/response";
+import type { AuthUser } from "@/shared/types/auth";
+import type { Conversation, Message, MessageAttachment, User } from "../types";
 
 interface ApiUser {
   id: string;
@@ -43,7 +44,17 @@ export interface ApiMessage {
   deleted_at: string | null;
   reply_to_message_id: string | null;
   forwarded_from_message_id?: string | null;
-  attachment?: { id: string; filename: string; content_type: string; size: number; download_url: string } | null;
+  attachment?: ApiAttachment | null;
+}
+
+export interface ApiAttachment {
+  id: string;
+  conversation_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  created_at: string;
+  download_url: string;
 }
 
 function avatar(seed: string): string {
@@ -121,13 +132,21 @@ export function toMessage(item: ApiMessage, users: Map<string, User>, preferredL
     status: "delivered",
     replyTo: item.reply_to_message_id ? { id: item.reply_to_message_id, senderName: "Reply", content: "" } : undefined,
     forwardedFromMessageId: item.forwarded_from_message_id ?? undefined,
-    attachments: item.attachment ? [{
-      id: item.attachment.id,
-      type: item.attachment.content_type.startsWith("image/") ? "image" : "file",
-      name: item.attachment.filename,
-      size: `${Math.ceil(item.attachment.size / 1024)} KB`,
-      url: `${API_BASE}${item.attachment.download_url}`,
-    }] : undefined,
+    attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
+  };
+}
+
+export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
+  return {
+    id: item.id,
+    type: item.content_type.startsWith("image/") ? "image" : "file",
+    name: item.filename,
+    size: item.size < 1024 * 1024
+      ? `${Math.max(1, Math.ceil(item.size / 1024))} KB`
+      : `${(item.size / (1024 * 1024)).toFixed(1)} MB`,
+    url: `${API_BASE}${item.download_url}`,
+    contentType: item.content_type,
+    createdAt: item.created_at,
   };
 }
 
@@ -169,8 +188,8 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
     headers: { Authorization: `Bearer ${accessToken}`, ...init.headers },
   });
   if (response.status === 204) return undefined as T;
-  const body = await response.json().catch(() => null) as T | { detail?: string } | null;
-  if (!response.ok) throw new Error((body as { detail?: string } | null)?.detail || "Request failed");
+  const body = await parseJson<T & ApiErrorBody>(response);
+  if (!response.ok) throw new Error(getApiErrorMessage(body, "Request failed"));
   return body as T;
 }
 
@@ -178,6 +197,9 @@ export function getMe(token: string) { return request<AuthUser>("/api/v1/auth/me
 export function listUsers(token: string, query: string) { return request<ApiUser[]>(`/api/v1/users?q=${encodeURIComponent(query)}`, token); }
 export function listConversations(token: string) { return request<ApiConversation[]>("/api/v1/conversations", token); }
 export function getMessages(token: string, conversationId: string) { return request<ApiMessage[]>(`/api/v1/conversations/${conversationId}/messages`, token); }
+export function listAttachments(token: string, conversationId: string) {
+  return request<ApiAttachment[]>(`/api/v1/conversations/${conversationId}/attachments`, token);
+}
 export function createConversation(token: string, type: "direct" | "group", memberIds: string[], title?: string) {
   return request<ApiConversation>("/api/v1/conversations", token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, member_ids: memberIds, title }) });
 }
@@ -185,7 +207,25 @@ export function markRead(token: string, conversationId: string) { return request
 export function deleteMessage(token: string, conversationId: string, messageId: string) { return request<void>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, token, { method: "DELETE" }); }
 export function uploadAttachment(token: string, conversationId: string, file: File) {
   const form = new FormData(); form.append("file", file);
-  return request<{ id: string }>(`/api/v1/conversations/${conversationId}/attachments`, token, { method: "POST", body: form });
+  return request<ApiAttachment>(`/api/v1/conversations/${conversationId}/attachments`, token, { method: "POST", body: form });
+}
+export async function fetchAttachmentBlob(token: string, attachment: MessageAttachment) {
+  const response = await fetch(attachment.url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    const body = await parseJson<ApiErrorBody>(response);
+    throw new Error(getApiErrorMessage(body, "Could not download file"));
+  }
+  return response.blob();
+}
+export async function downloadAttachment(token: string, attachment: MessageAttachment) {
+  const objectUrl = URL.createObjectURL(await fetchAttachmentBlob(token, attachment));
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = attachment.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 export function submitTranslationFeedback(token: string, translationId: string, rating: 1 | 5) {
   return request<{ feedback_id: string }>(`/api/v1/translations/${translationId}/feedback`, token, {

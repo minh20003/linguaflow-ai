@@ -1,21 +1,6 @@
-export type LanguageCode =
-  | 'en'
-  | 'vi'
-  | 'ja'
-  | 'ko'
-  | 'zh'
-  | 'es'
-  | 'fr'
-  | 'de'
-  | 'th'
-  | 'id';
+import type { LanguageCode } from "@/shared/types/language";
 
-export interface LanguageOption {
-  code: LanguageCode;
-  name: string;
-  nativeName: string;
-  flag: string;
-}
+export type { LanguageCode, LanguageOption } from "@/shared/types/language";
 
 export interface User {
   id: string;
@@ -61,6 +46,8 @@ export interface MessageAttachment {
   url: string;
   name: string;
   size?: string;
+  contentType?: string;
+  createdAt?: string;
 }
 
 export interface Message {

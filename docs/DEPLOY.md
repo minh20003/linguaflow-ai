@@ -82,13 +82,31 @@ docker compose up --build      # backend + PostgreSQL, giống production
 cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
 ```
 
-Không có Docker thì chạy trực tiếp trên SQLite:
+Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy backend ở ngoài container:
 
 ```bash
-make migrate      # bắt buộc: ứng dụng không còn tự tạo bảng
-make reset-db     # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
+docker compose up -d postgres   # PostgreSQL + pgvector, cổng 5432
+make migrate              # bắt buộc: ứng dụng không còn tự tạo bảng
+make reset-db             # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
+make seed-glossary        # nạp bộ thuật ngữ mẫu en↔vi (88 mục)
 make run
 ```
+
+`make seed-glossary` đọc `seed/glossary_en_vi.jsonl` và chạy lại được nhiều lần: mục
+được đối chiếu theo đúng khoá mà cơ sở dữ liệu ràng buộc duy nhất (thuật ngữ đã chuẩn
+hoá, cặp ngôn ngữ, `domain`, `audience`) rồi cập nhật tại chỗ, nên sửa tệp và chạy lại
+là cách đổi glossary trong lúc phát triển. Nó tồn tại vì đường khai thác tự động cần
+nhiều người cùng sửa một thuật ngữ trước khi đề xuất được gì — đúng cho việc phát hiện
+quy ước của đội, và vô dụng cho một buổi demo hoặc cho những tuần đầu dùng thật.
+Mặc định mỗi mục tốn một lượt nhúng; `--no-embed` bỏ qua, khi đó mục vẫn khớp chính xác
+nhưng chưa khớp được các biến thể người ta hay gõ.
+
+**Không còn đường chạy trên SQLite** kể từ ADR-22: schema có cột `vector` của
+pgvector, mà SQLite không có kiểu đó nên bảng còn không tạo được. Docker Engine
+là đủ, không cần Docker Desktop — trên Windows, bản CLI cài trong WSL2 chạy tốt
+và Windows nối được qua `localhost:5432`. Lưu ý máy ảo WSL tự tắt sau khoảng 60
+giây không hoạt động và kéo PostgreSQL tắt theo; biểu hiện là
+`ConnectionRefusedError` xuất hiện giữa chừng một lần chạy test.
 
 **Nếu bạn đã có `data/app.db` từ trước ngày 15/08**, tệp đó do `create_all` tạo ra
 nên không có dấu phiên bản của Alembic, và `make migrate` sẽ báo lỗi "table already
@@ -108,7 +126,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 |---|---|---|
 | `APP_ENV` | `development` | `production` bật kiểm tra `JWT_SECRET` và tắt việc trả mã đặt lại mật khẩu trong phản hồi |
 | `JWT_SECRET` | — | **Bắt buộc.** Ở production: không được là giá trị mẫu, tối thiểu 32 ký tự |
-| `DATABASE_URL` | SQLite trong `./data` | `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
+| `DATABASE_URL` | PostgreSQL cục bộ của `docker compose` | Bắt buộc là PostgreSQL có `pgvector` (ADR-22). `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | 5 / 10 | Chỉ dùng cho PostgreSQL. Mỗi WebSocket giữ một phiên suốt thời gian mở |
 | `CORS_ORIGINS` | `http://localhost:3000` | Danh sách ngăn cách bằng dấu phẩy. Cũng là danh sách kiểm tra `Origin` của WebSocket |
 | `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |
@@ -119,6 +137,11 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `REFRESH_EXPIRE_DAYS` | 30 | |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | 30 | |
 | `FALLBACK_TRANSLATOR_ENABLED` | `true` | Xem cảnh báo quyền riêng tư ở ADR-15 |
+| `EMAIL_PROVIDER` | `smtp` | `smtp` \| `console` \| `memory`. Ở `APP_ENV=production` bắt buộc dùng `smtp`, cấm `memory`/`console` |
+| `SMTP_HOST`, `SMTP_PORT` | `smtp.gmail.com` / `587` | Bắt buộc ở production khi dùng SMTP |
+| `SMTP_USER`, `SMTP_PASSWORD` | — | Bắt buộc ở production |
+| `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP |
+| `SMTP_USE_TLS` | `true` | Bật STARTTLS cho cổng 587 |
 | `LANGFUSE_*` | rỗng | Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
 
 ### 5.1. Khoá bí mật — cần cấp những gì
@@ -128,9 +151,24 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `JWT_SECRET` | **Có** | Tiến trình dừng ngay lúc khởi động |
 | `GROQ_API_KEY` (hoặc khoá của provider đang chọn) | **Có, trên thực tế** | Server vẫn chạy, nhưng mọi tin nhắn rơi xuống đường dự phòng rồi trả nguyên bản |
 | `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Có, ở production** | Server từ chối khởi động nếu thiếu ở `APP_ENV=production` |
 | `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
 | `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
+
+### 5.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)
+
+- **Production (`APP_ENV=production`)**:
+  - Bắt buộc `EMAIL_PROVIDER=smtp`.
+  - Hệ thống kiểm tra nghiêm ngặt lúc khởi động (fail-fast) và **từ chối chạy** nếu cấu hình là `memory` hoặc `console`, hoặc thiếu bất kỳ biến nào trong: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`.
+  - Không bao giờ silent-drop email nếu SMTP gặp lỗi kết nối/xác thực.
+- **Môi trường Test & Development**:
+  - Mặc định sử dụng `EMAIL_PROVIDER=memory` (hoặc `console` khi phát triển cục bộ).
+  - Memory provider lưu trữ danh sách email gửi đi trong bộ nhớ tiến trình (`_memory_sender.sent_emails`), cho phép test suite chạy độc lập không phụ thuộc vào internet hay dịch vụ SMTP bên ngoài.
+- **Nguyên tắc bảo mật OTP**:
+  - Tuyệt đối **không ghi log** mã OTP plaintext ở bất kỳ cấp độ log nào.
+  - Cơ sở dữ liệu chỉ lưu trữ băm một chiều (bcrypt hash) của mã OTP trong bảng `pending_registrations`.
+  - Validation error 422 tự động redact toàn bộ mật khẩu, mã OTP, token ở mọi độ sâu dữ liệu.
 
 **Nguyên tắc:** `.env` chứa giá trị thật và **không bao giờ được commit**;
 `.env.example` là bản mẫu **được commit** nên mọi giá trị trong đó là công khai

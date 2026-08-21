@@ -6,7 +6,7 @@ import { Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, Loader2 } from 'lucid
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
 import { signIn, signInWithGoogle } from '../api/auth-api';
-import { saveSession } from '../lib/session';
+import { saveSession } from '@/shared/lib/session';
 
 interface SignInFormProps {
   onNavigate: (screen: AuthScreen) => void;

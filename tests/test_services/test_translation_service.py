@@ -120,7 +120,7 @@ async def test_translates_for_each_recipient_language(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user_two.id,
+        sender_id=test_user.id,
         text="Deploy xong chua anh?",
         source_language="vi",
     )
@@ -206,7 +206,9 @@ async def test_writes_back_the_detected_source_language(
     await run_translations(
         message=message,
         publisher=RecordingPublisher(),
-        graph_factory=make_graph_factory({"en": {"source_language": "en"}}),
+        graph_factory=make_graph_factory(
+            {"vi": {"source_language": "en", "translated_text": "API đã sẵn sàng để kiểm thử"}}
+        ),
     )
 
     async with session_factory_for_tests()() as session:
@@ -223,7 +225,7 @@ async def test_publishes_nothing_when_the_agent_fails(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user_two.id,
+        sender_id=test_user.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -249,7 +251,7 @@ async def test_publishes_nothing_when_the_translation_is_empty(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user_two.id,
+        sender_id=test_user.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -273,7 +275,7 @@ async def test_a_publisher_failure_does_not_escape_the_task(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user_two.id,
+        sender_id=test_user.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -304,7 +306,7 @@ async def test_rerunning_reuses_the_existing_translation_row(
     message = await persist_message(
         test_db,
         conversation_id=conversation.id,
-        sender_id=test_user_two.id,
+        sender_id=test_user.id,
         text="Chào bạn nhé",
         source_language="vi",
     )
@@ -428,14 +430,15 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
 
 
 @pytest.mark.asyncio
-async def test_direct_sender_receives_translation_for_feedback_controls(
+async def test_direct_sender_also_receives_the_translation_of_their_own_message(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """A direct-message sender also receives the reader's translation result.
+    """The one-to-one sender needs the translation their reader got (§4.4 rule 3).
 
-    The sender still displays the original text by default; this event gives the
-    bubble's translation toggle, rating and correction controls their durable
-    translation id without requiring a page refresh.
+    test_user_two reads vi and writes in vi, so grouping by reading language
+    alone would send the English translation only to test_user. Without this the
+    sender has nothing to toggle, rate or edit under their own bubble until the
+    page is reloaded.
     """
     conversation = await conversation_factory(test_user_two, [test_user, test_user_two])
     message = await persist_message(
@@ -475,7 +478,12 @@ async def test_direct_sender_receives_translation_for_feedback_controls(
 async def test_group_sender_is_left_out_of_a_language_they_do_not_read(
     test_db, test_user, test_user_two, test_user_three, conversation_factory
 ):
-    """The sender is excluded from translation routing in group conversations too."""
+    """Groups keep the old routing: no controls there, so nothing extra to send.
+
+    A group message has one translation per language and no single one belongs
+    to the sender's bubble, so §3.10 shows them no controls and §4.4 rule 3
+    stays as it was.
+    """
     conversation = await conversation_factory(
         test_user_two,
         [test_user, test_user_two, test_user_three],
@@ -707,7 +715,7 @@ async def test_translation_cache_hit_does_not_publish_a_withdrawn_message(
         source_language="en",
     )
     translation_service._translation_cache[
-        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
     ] = "Chao buoi sang"
     message.deleted_at = datetime.now(UTC)
     await test_db.commit()
@@ -769,8 +777,44 @@ async def test_translation_cache_detector_disagreement_runs_the_graph(
         source_language="en",
     )
     translation_service._translation_cache[
-        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
     ] = "Chao buoi sang"
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 1
+    assert [event["model"] for event in publisher.events_for("vi")] == ["primary-model"]
+
+
+@pytest.mark.asyncio
+async def test_the_translation_cache_never_serves_one_standing_to_another(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    """A cached phrase written for a client must not be handed to a colleague.
+
+    `_is_cacheable` admits only very short phrases, which is exactly the set
+    where the address form carries the meaning, so a cache keyed by language
+    alone would be wrong precisely where it is used most — and silently, since
+    a hit produces an ordinary-looking translation.
+    """
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+    )
+    # Seeded under a standing nobody in this conversation holds; the members
+    # are unprofiled, so the fan-out asks for `peer`.
+    translation_service._translation_cache[
+        translation_service._cache_key(
+            conversation.id, "Good morning", "en", "vi", "client"
+        )
+    ] = "Kinh chao quy khach"
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
     publisher = RecordingPublisher()
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Message, User, LanguageCode } from '../types';
+import { Message, User, LanguageCode, MessageAttachment } from '../types';
 import { interactionText } from '../i18n';
+import { MessageAttachmentCard } from './MessageAttachmentCard';
 import {
   Check,
   CheckCheck,
@@ -37,6 +38,8 @@ interface MessageBubbleProps {
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
   onDeleteMessage?: (messageId: string) => void;
+  onDownloadAttachment: (attachment: MessageAttachment) => void;
+  onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
   language: LanguageCode;
 }
 
@@ -57,6 +60,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onEditTranslation,
   onForward,
   onDeleteMessage,
+  onDownloadAttachment,
+  onLoadAttachmentPreview,
   language,
 }) => {
   const [showActions, setShowActions] = useState(false);
@@ -66,17 +71,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const [editedTranslation, setEditedTranslation] = useState("");
 
   const isOutgoing = message.senderId === currentUser.id;
+  const hasAttachments = Boolean(message.attachments?.length);
+  const isAttachmentCaption = hasAttachments && /^Shared\s+/i.test(message.content.trim());
   const hasTranslation = !!message.translation;
   // A sender always reads their original wording. Do not surface historical
   // self-translations while the backend stops creating new ones for them.
-  const isTranslated = !isOutgoing && hasTranslation && message.translation?.status === 'success';
-  const isTranslating = !isOutgoing && hasTranslation && message.translation?.status === 'pending';
-  const isTranslationFailed = !isOutgoing && hasTranslation && message.translation?.status === 'failed';
+  const isTranslated = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'success';
+  const isTranslating = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'pending';
+  const isTranslationFailed = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'failed';
   const isShowingOriginal = message.translation?.showOriginal;
   const showTranslatedAsPrimary = isTranslated && !isShowingOriginal;
   const showTranslationPreview = isTranslated && isShowingOriginal;
   const canReviewTranslation = Boolean(
-    message.translation?.translationId && message.translation.status === 'success',
+    !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
   );
 
   const beginTranslationEdit = () => {
@@ -181,15 +188,26 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Message Bubble Box */}
         <div
-          className={`relative px-4 py-2.5 rounded-2xl text-sm leading-relaxed transition-colors select-text ${
-            isOutgoing
-              ? 'bg-[#2563EB] text-white rounded-br-sm shadow-sm'
-              : 'bg-white dark:bg-[#232630] text-[#1E2230] dark:text-[#F5F6FA] border border-[#E8EAF0] dark:border-[#2E3342] rounded-bl-sm shadow-sm'
+          className={`relative rounded-2xl text-sm leading-relaxed transition-colors select-text ${
+            isAttachmentCaption
+              ? 'bg-transparent p-0 shadow-none'
+              : isOutgoing
+                ? 'bg-[#2563EB] px-4 py-2.5 text-white rounded-br-sm shadow-sm'
+                : 'bg-white px-4 py-2.5 dark:bg-[#232630] text-[#1E2230] dark:text-[#F5F6FA] border border-[#E8EAF0] dark:border-[#2E3342] rounded-bl-sm shadow-sm'
           }`}
         >
           {/* Main message text */}
           <div className="space-y-1">
-            {showTranslatedAsPrimary ? (
+            {message.attachments?.map((attachment) => (
+              <MessageAttachmentCard
+                key={attachment.id}
+                attachment={attachment}
+                language={language}
+                onDownload={onDownloadAttachment}
+                onLoadPreview={onLoadAttachmentPreview}
+              />
+            ))}
+            {!isAttachmentCaption && (showTranslatedAsPrimary ? (
               isEditingTranslation ? (
                 <div className="space-y-1.5">
                   <textarea
@@ -226,7 +244,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               <p className="whitespace-pre-wrap break-words font-normal">
                 {message.content}
               </p>
-            )}
+            ))}
 
             {/* Revealed Original (when toggle is active) */}
             {showTranslationPreview && (
