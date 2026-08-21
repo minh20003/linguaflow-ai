@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +68,7 @@ def _scope_rank(entry: GlossaryEntry, domain: str, audience: str) -> int:
     return (2 if entry.audience else 0) + (1 if entry.domain else 0)
 
 
-def _contains_term(haystack: str, needle: str) -> bool:
+def contains_term(haystack: str, needle: str) -> bool:
     """Whether a normalised message contains a normalised term as a whole word.
 
     Substring matching would fire "UI" inside "building", which then forces a
@@ -87,6 +89,69 @@ def _cosine(left: list[float], right: list[float]) -> float:
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+def select_terms(
+    entries: Iterable[Any],
+    *,
+    text: str,
+    domain: str = "",
+    audience: str = "",
+) -> tuple[GlossaryTerm, ...]:
+    """Choose which of the given entries this message has to honour.
+
+    The exact-match half of the lookup, with no database and no model. Split
+    out so the evaluation harness scores the same rule production runs instead
+    of a second implementation that can drift from it — the mistake that makes
+    an evaluation reassuring and wrong at the same time.
+
+    Args:
+        entries: Candidate entries, already filtered to one language pair.
+        text: The message being translated.
+        domain: Subject area of the conversation, empty when unknown.
+        audience: Who the conversation is with, empty when unknown.
+
+    Returns:
+        At most `MAX_TERMS_PER_MESSAGE` terms, one per source term, longest
+        source term first.
+    """
+    normalized_text = normalize_term(text)
+    if not normalized_text:
+        return ()
+
+    best: dict[str, tuple[int, Any]] = {}
+    for entry in entries:
+        if not contains_term(normalized_text, entry.source_term_normalized):
+            continue
+        rank = _scope_rank(entry, domain, audience)
+        if rank < 0:
+            continue
+        current = best.get(entry.source_term_normalized)
+        if current is None or rank > current[0]:
+            best[entry.source_term_normalized] = (rank, entry)
+
+    return _to_terms(best)
+
+
+def _to_terms(best: dict[str, tuple[int, Any]]) -> tuple[GlossaryTerm, ...]:
+    """Render the chosen entries in a stable, longest-first order.
+
+    Longest first so a multi-word term is read before the single word inside
+    it, and stable so two identical messages produce two identical prompts
+    rather than whatever the query plan returned.
+    """
+    terms = [
+        GlossaryTerm(
+            source_term=entry.source_term,
+            target_term=entry.target_term,
+            keep_verbatim=entry.keep_verbatim,
+        )
+        for _, entry in sorted(
+            best.values(),
+            key=lambda pair: (-len(pair[1].source_term), pair[1].source_term),
+        )
+    ]
+    return tuple(terms[:MAX_TERMS_PER_MESSAGE])
 
 
 async def lookup_terms(
@@ -154,7 +219,7 @@ async def lookup_terms(
             best[key] = (rank + bonus, entry)
 
     for entry in candidates:
-        if _contains_term(normalized_text, entry.source_term_normalized):
+        if contains_term(normalized_text, entry.source_term_normalized):
             # An exact hit outranks any semantic one, whatever their scopes: the
             # message literally contains this term.
             offer(entry, bonus=10)
@@ -168,20 +233,7 @@ async def lookup_terms(
             settings=settings,
         )
 
-    terms = [
-        GlossaryTerm(
-            source_term=entry.source_term,
-            target_term=entry.target_term,
-            keep_verbatim=entry.keep_verbatim,
-        )
-        # Sorted longest-first so a multi-word term is read before the single
-        # word inside it, and the order is stable between two identical
-        # messages rather than following the query plan.
-        for _, entry in sorted(
-            best.values(), key=lambda pair: (-len(pair[1].source_term), pair[1].source_term)
-        )
-    ]
-    return tuple(terms[:MAX_TERMS_PER_MESSAGE])
+    return _to_terms(best)
 
 
 async def _add_semantic_matches(
