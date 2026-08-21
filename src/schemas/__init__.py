@@ -2,6 +2,7 @@
 
 from src.schemas.auth import (
     SUPPORTED_LANGUAGES,
+    GoogleLoginRequest,
     LoginRequest,
     TokenResponse,
     UpdateLanguageRequest,
@@ -29,6 +30,7 @@ __all__ = [
     "ConversationType",
     "ErrorEvent",
     "LoginRequest",
+    "GoogleLoginRequest",
     "MessageCreatedEvent",
     "MessageReceivedEvent",
     "MessageResponse",
