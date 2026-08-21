@@ -84,6 +84,8 @@ export interface Conversation {
   isMuted?: boolean;
   isPinned?: boolean;
   description?: string;
+  createdBy?: string;
+  currentUserRole?: 'owner' | 'admin' | 'member';
 }
 
 export interface AppSettings {

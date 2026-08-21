@@ -7,7 +7,7 @@ import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/sess
 import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/shared/api/account-api";
 import type { AppSettings, Conversation, Message, MessageAttachment, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
-import { createConversation, deleteMessage, downloadAttachment, fetchAttachmentBlob, getMe, getMessages, listAttachments, listConversations, listUsers, markRead, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessageAttachment, toMessages, uploadAttachment, type ApiAttachment, type ApiMessage } from "../api/chat-api";
+import { addGroupMembers, createConversation, deleteGroup, deleteMessage, downloadAttachment, fetchAttachmentBlob, getMe, getMessages, leaveGroup, listAttachments, listConversations, listUsers, markRead, removeGroupMember, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessageAttachment, toMessages, transferGroupOwnership, updateGroupDetails, updateGroupRole, uploadAttachment, type ApiAttachment, type ApiMessage } from "../api/chat-api";
 import { newClientMessageId, socketUrl } from "../api/chat-socket";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -309,6 +309,40 @@ export const AppShell: React.FC = () => {
     }
   };
 
+  const closeGroup = async (conversationId: string, removeForEveryone: boolean) => {
+    if (!token.current) return;
+    try {
+      if (removeForEveryone) await deleteGroup(token.current, conversationId);
+      else await leaveGroup(token.current, conversationId);
+      setConversations((items) => items.filter((item) => item.id !== conversationId));
+      setSelectedConversationId(null);
+      addToast(removeForEveryone ? "Group deleted" : "Left group", undefined, "success");
+    } catch (error) {
+      addToast("Group action failed", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const manageGroup = async (action: () => Promise<void>, success: string) => {
+    try {
+      await action();
+      await refreshConversations();
+      addToast(success, undefined, "success");
+    } catch (error) {
+      addToast("Could not update group", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const deleteOwnMessage = async (messageId: string) => {
+    if (!token.current || !selectedConversationId) return;
+    try {
+      await deleteMessage(token.current, selectedConversationId, messageId);
+      await loadConversationMessages(selectedConversationId);
+      addToast("Message deleted", "The message has been removed for everyone.", "success");
+    } catch (error) {
+      addToast("Could not delete message", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
   const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
     const requestedInterfaceLanguage = value.interfaceLanguage;
     if (requestedInterfaceLanguage && requestedInterfaceLanguage !== settings.interfaceLanguage && token.current) {
@@ -383,7 +417,7 @@ export const AppShell: React.FC = () => {
         onRateTranslation={rateTranslation}
         onEditTranslation={editTranslation}
         onForward={setForwardingMessage}
-        onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))}
+        onDeleteMessage={(id) => void deleteOwnMessage(id)}
         onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")}
         onOpenNewChat={() => setIsNewChatOpen(true)}
         onStartCall={(type) => setCallState({ isOpen: true, type })}
@@ -391,6 +425,15 @@ export const AppShell: React.FC = () => {
         attachments={currentAttachments}
         onDownloadAttachment={downloadSharedFile}
         onLoadAttachmentPreview={loadSharedFilePreview}
+        onLeaveGroup={(id) => void closeGroup(id, false)}
+        onDeleteGroup={(id) => void closeGroup(id, true)}
+        availableUsers={users}
+        onAddMembers={(id, userIds) => token.current && void manageGroup(() => addGroupMembers(token.current!, id, userIds), "Members added")}
+        onRemoveMember={(id, userId) => token.current && void manageGroup(() => removeGroupMember(token.current!, id, userId), "Member removed")}
+        onChangeMemberRole={(id, userId, role) => token.current && void manageGroup(() => updateGroupRole(token.current!, id, userId, role), role === "admin" ? "Admin assigned" : "Admin removed")}
+        onSearchUsers={(query) => void searchUsers(query)}
+        onTransferOwnership={(id, userId) => token.current && void manageGroup(() => transferGroupOwnership(token.current!, id, userId), "Ownership transferred")}
+        onUpdateGroup={(id, title, description) => token.current && void manageGroup(() => updateGroupDetails(token.current!, id, title, description), "Group information updated")}
       />
     </div>
     <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
