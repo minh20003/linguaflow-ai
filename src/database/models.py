@@ -111,6 +111,14 @@ class User(Base):
         String(255),
         nullable=True,
     )
+    # Google `sub` is the stable, provider-issued user identifier. Email is
+    # deliberately not used as the OAuth identity because a user can change it.
+    google_subject: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        nullable=True,
+        index=True,
+    )
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -374,6 +382,11 @@ class Message(Base):
         String(36),
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    # A forward is a new message (and is translated for its new recipients),
+    # while this link lets clients label its provenance.
+    forwarded_from_message_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
     )
     edited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

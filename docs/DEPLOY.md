@@ -9,7 +9,7 @@ Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-
 |---|---|---|
 | Backend + Agent | Railway, dựng từ `Dockerfile` | **Đúng 1 bản sao**, không autoscale |
 | Cơ sở dữ liệu | PostgreSQL (plugin của Railway) | Supabase thay được, xem §6 |
-| Tệp đính kèm | Volume gắn vào `/app/data` của container backend | Không có object storage |
+| Tệp đính kèm | Supabase Storage, bucket private `attachments` | Backend kiểm tra quyền trước khi tải xuống |
 | Frontend | Vercel, thư mục gốc `frontend/` | Biến môi trường nhúng lúc build |
 
 > **Chỉ được chạy một bản sao.** `ConnectionManager` giữ danh sách socket trong bộ
@@ -44,7 +44,9 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
    | `JWT_SECRET` | chuỗi vừa sinh ở §1 |
    | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (tham chiếu của Railway) |
    | `CORS_ORIGINS` | `https://<ten-app>.vercel.app` |
-   | `UPLOAD_DIR` | `/app/data/uploads` |
+| `SUPABASE_URL` | URL project Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key, chỉ đặt ở backend |
+| `SUPABASE_STORAGE_BUCKET` | `attachments` |
    | `LLM_PROVIDER` | `groq` |
    | `GROQ_API_KEY` | khoá của bạn |
 
@@ -54,8 +56,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
    Không cần đặt `PORT`: Railway tự tiêm, và `CMD` trong `Dockerfile` đọc nó.
 
-4. **Settings → Volumes → Add volume**, mount path `/app/data`.
-   Bỏ bước này thì **mọi tệp đính kèm biến mất sau mỗi lần triển khai lại**.
+4. Tạo bucket private `attachments` trong Supabase Storage. Backend tự dùng
+   object storage khi có đủ `SUPABASE_URL` và `SUPABASE_SERVICE_ROLE_KEY`.
 5. **Settings → Networking → Generate Domain** để lấy tên miền công khai.
 6. Kiểm tra: `curl https://<backend>/health` phải trả `{"status":"ok","env":"production"}`.
 
@@ -132,6 +134,9 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |
 | `UPLOAD_DIR` | `./data/uploads` | Trỏ vào volume khi chạy trong container |
 | `MAX_UPLOAD_SIZE_BYTES` | 20 MiB | |
+| `SUPABASE_URL` | rỗng | Có giá trị cùng service role key thì bật Supabase Storage |
+| `SUPABASE_SERVICE_ROLE_KEY` | rỗng | Chỉ đặt ở backend, không bao giờ dùng `NEXT_PUBLIC_*` |
+| `SUPABASE_STORAGE_BUCKET` | `attachments` | Bucket private chứa nội dung file |
 | `LLM_PROVIDER` + khoá tương ứng | `groq` | `groq` \| `deepseek` \| `gemini` \| `openai` |
 | `JWT_EXPIRE_MINUTES` | 1440 | Access token **không thu hồi được** trước khi hết hạn |
 | `REFRESH_EXPIRE_DAYS` | 30 | |
@@ -254,8 +259,16 @@ Resend) và gửi liên kết đặt lại — khi đó bỏ hẳn phần ghi lo
 pg_dump "$DATABASE_URL" > backup-$(date +%F).sql   # cơ sở dữ liệu
 ```
 
-Tệp đính kèm nằm trên volume, không nằm trong bản dump ở trên — sao lưu riêng
-bằng cách tải thư mục `/app/data/uploads` từ shell của Railway.
+Nội dung tệp đính kèm nằm trong Supabase Storage, không nằm trong bản dump ở trên.
+Trước lần deploy đầu tiên dùng Storage, chuyển file local còn tồn tại bằng:
+
+```bash
+python -m scripts.migrate_attachments_to_supabase
+```
+
+Lệnh mặc định giữ nguyên file local. Sau khi lượt đầu không có `failed` hoặc
+`missing_local`, có thể chạy lại với `--delete-local-after-verify`; script chỉ
+xóa từng file sau khi tải object về và xác minh SHA-256 trùng khớp.
 
 ## 9. Giới hạn đã biết
 
@@ -286,6 +299,6 @@ Ghi ra để người vận hành biết, không phải để bỏ qua:
 | WebSocket đóng với mã `4401` | Token sai, hết hạn, hoặc không gửi khung `auth` trong 10 giây | Đăng nhập lại |
 | Container dừng ngay khi khởi động, log nói `asyncio extension requires an async driver` | `DATABASE_URL` trỏ driver đồng bộ | Hiếm — ứng dụng tự đổi tiền tố; kiểm tra xem URL có ghi rõ `+psycopg` không |
 | Container dừng, log nói `JWT_SECRET` | Thiếu, hoặc còn là giá trị mẫu ở production | Sinh khoá mới theo §1 |
-| Tệp đính kèm biến mất sau khi deploy | Chưa gắn volume, hoặc `UPLOAD_DIR` không trỏ vào volume | Xem §2 bước 4 |
+| Upload vẫn ghi vào container | Thiếu `SUPABASE_URL` hoặc `SUPABASE_SERVICE_ROLE_KEY` | Đặt đủ hai biến rồi deploy lại |
 | Tin nhắn gửi được nhưng người kia không nhận | Đang chạy nhiều hơn một bản sao | Đặt lại về 1 replica |
 | Tin nhắn không được dịch, cờ `is_fallback` bật | Hết hạn mức LLM hoặc khoá sai | Kiểm tra khoá, `make metrics` xem tỷ lệ fallback |

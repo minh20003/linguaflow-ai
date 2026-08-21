@@ -1,0 +1,243 @@
+import { API_BASE } from "@/config/env";
+import { getApiErrorMessage, parseJson, type ApiErrorBody } from "@/shared/api/response";
+import type { AuthUser } from "@/shared/types/auth";
+import type { Conversation, Message, MessageAttachment, User } from "../types";
+
+interface ApiUser {
+  id: string;
+  email: string;
+  username: string;
+  display_name: string;
+  preferred_language: string;
+}
+
+interface ApiConversation {
+  id: string;
+  type: "direct" | "group";
+  title: string | null;
+  member_ids: string[];
+  members: ApiUser[];
+  last_message: string | null;
+  last_message_at: string | null;
+  online_member_ids: string[];
+  unread_count: number;
+}
+
+interface ApiTranslation {
+  translation_id: string;
+  target_language: string;
+  translated_text: string;
+  my_rating?: number | null;
+  my_correction?: string | null;
+  my_edit?: { edited_text: string } | null;
+}
+
+export interface ApiMessage {
+  id: string;
+  client_message_id: string;
+  conversation_id: string;
+  sender_id: string;
+  original_text: string;
+  source_language: string;
+  translations: ApiTranslation[];
+  created_at: string;
+  deleted_at: string | null;
+  reply_to_message_id: string | null;
+  forwarded_from_message_id?: string | null;
+  attachment?: ApiAttachment | null;
+}
+
+export interface ApiAttachment {
+  id: string;
+  conversation_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  created_at: string;
+  download_url: string;
+}
+
+function avatar(seed: string): string {
+  return `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=eff6ff`;
+}
+
+export function toLanguageCode(value: string): User["nativeLanguage"] {
+  const supported = ["en", "vi", "ja", "ko", "zh", "es", "fr", "de", "th", "id"];
+  return (supported.includes(value) ? value : "en") as User["nativeLanguage"];
+}
+
+function time(value: string | null): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+export function toChatUser(user: ApiUser | AuthUser): User {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.display_name || user.username || user.email,
+    username: user.username || user.email.split("@", 1)[0],
+    avatar: avatar(user.display_name || user.username || user.email),
+    nativeLanguage: toLanguageCode(user.preferred_language),
+    onlineStatus: "offline",
+  };
+}
+
+export function toConversation(item: ApiConversation, currentUserId: string): Conversation {
+  const others = item.members.filter((member) => member.id !== currentUserId);
+  const recipient = others[0] ? toChatUser(others[0]) : undefined;
+  const isGroup = item.type === "group";
+  const name = isGroup ? (item.title || "Untitled group") : (recipient?.name || "Direct message");
+  const members: User[] = item.members.map(toChatUser).map((member) => ({
+    ...member,
+    onlineStatus: (item.online_member_ids.includes(member.id) ? "online" : "offline") as User["onlineStatus"],
+  }));
+  return {
+    id: item.id,
+    type: item.type,
+    name,
+    avatar: avatar(name),
+    isOnline: Boolean(recipient && item.online_member_ids.includes(recipient.id)),
+    recipient: recipient && { ...recipient, onlineStatus: item.online_member_ids.includes(recipient.id) ? "online" : "offline" },
+    members: isGroup ? members : undefined,
+    memberCount: isGroup ? members.length : undefined,
+    lastMessage: item.last_message || "No messages yet",
+    lastMessageTime: time(item.last_message_at),
+    unreadCount: item.unread_count,
+  };
+}
+
+export function toMessage(item: ApiMessage, users: Map<string, User>, preferredLanguage: string): Message {
+  const sender = users.get(item.sender_id);
+  const translation = item.translations.find((entry) => entry.target_language === preferredLanguage);
+  return {
+    id: item.id,
+    senderId: item.sender_id,
+    senderName: sender?.name,
+    senderAvatar: sender?.avatar,
+    conversationId: item.conversation_id,
+    content: item.deleted_at ? "This message was deleted" : item.original_text,
+    translation: translation ? {
+      translationId: translation.translation_id,
+      originalText: item.original_text,
+      originalLanguage: toLanguageCode(item.source_language),
+      translatedText: translation.translated_text,
+      targetLanguage: toLanguageCode(translation.target_language),
+      status: "success",
+      rating: translation.my_rating === 1 || translation.my_rating === 5 ? translation.my_rating : undefined,
+      correction: translation.my_correction ?? undefined,
+      editedText: translation.my_edit?.edited_text,
+    } : undefined,
+    timestamp: time(item.created_at),
+    status: "delivered",
+    replyTo: item.reply_to_message_id ? { id: item.reply_to_message_id, senderName: "Reply", content: "" } : undefined,
+    forwardedFromMessageId: item.forwarded_from_message_id ?? undefined,
+    attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
+  };
+}
+
+export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
+  return {
+    id: item.id,
+    type: item.content_type.startsWith("image/") ? "image" : "file",
+    name: item.filename,
+    size: item.size < 1024 * 1024
+      ? `${Math.max(1, Math.ceil(item.size / 1024))} KB`
+      : `${(item.size / (1024 * 1024)).toFixed(1)} MB`,
+    url: `${API_BASE}${item.download_url}`,
+    contentType: item.content_type,
+    createdAt: item.created_at,
+  };
+}
+
+/**
+ * The API returns a reply ID rather than embedding the original message.
+ * Resolve it from the conversation payload so reply previews still work after
+ * a page refresh.
+ */
+export function toMessages(items: ApiMessage[], users: Map<string, User>, preferredLanguage: string): Message[] {
+  const originals = new Map(items.map((item) => [item.id, item]));
+
+  return items.map((item) => {
+    const message = toMessage(item, users, preferredLanguage);
+    const original = item.reply_to_message_id ? originals.get(item.reply_to_message_id) : undefined;
+    if (!message.replyTo || !original) return message;
+
+    const originalSender = users.get(original.sender_id);
+    const translatedReply = original.translations.find(
+      (translation) => translation.target_language === preferredLanguage,
+    );
+    return {
+      ...message,
+      replyTo: {
+        id: original.id,
+        senderName: originalSender?.name || "Message",
+        // A quote should match the language this reader sees in the thread;
+        // otherwise the composer preview and the persisted reply disagree.
+        content: original.deleted_at
+          ? "This message was deleted"
+          : translatedReply?.translated_text || original.original_text,
+      },
+    };
+  });
+}
+
+async function request<T>(path: string, accessToken: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${accessToken}`, ...init.headers },
+  });
+  if (response.status === 204) return undefined as T;
+  const body = await parseJson<T & ApiErrorBody>(response);
+  if (!response.ok) throw new Error(getApiErrorMessage(body, "Request failed"));
+  return body as T;
+}
+
+export function getMe(token: string) { return request<AuthUser>("/api/v1/auth/me", token); }
+export function listUsers(token: string, query: string) { return request<ApiUser[]>(`/api/v1/users?q=${encodeURIComponent(query)}`, token); }
+export function listConversations(token: string) { return request<ApiConversation[]>("/api/v1/conversations", token); }
+export function getMessages(token: string, conversationId: string) { return request<ApiMessage[]>(`/api/v1/conversations/${conversationId}/messages`, token); }
+export function listAttachments(token: string, conversationId: string) {
+  return request<ApiAttachment[]>(`/api/v1/conversations/${conversationId}/attachments`, token);
+}
+export function createConversation(token: string, type: "direct" | "group", memberIds: string[], title?: string) {
+  return request<ApiConversation>("/api/v1/conversations", token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, member_ids: memberIds, title }) });
+}
+export function markRead(token: string, conversationId: string) { return request<void>(`/api/v1/conversations/${conversationId}/read`, token, { method: "POST" }); }
+export function deleteMessage(token: string, conversationId: string, messageId: string) { return request<void>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, token, { method: "DELETE" }); }
+export function uploadAttachment(token: string, conversationId: string, file: File) {
+  const form = new FormData(); form.append("file", file);
+  return request<ApiAttachment>(`/api/v1/conversations/${conversationId}/attachments`, token, { method: "POST", body: form });
+}
+export async function fetchAttachmentBlob(token: string, attachment: MessageAttachment) {
+  const response = await fetch(attachment.url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok) {
+    const body = await parseJson<ApiErrorBody>(response);
+    throw new Error(getApiErrorMessage(body, "Could not download file"));
+  }
+  return response.blob();
+}
+export async function downloadAttachment(token: string, attachment: MessageAttachment) {
+  const objectUrl = URL.createObjectURL(await fetchAttachmentBlob(token, attachment));
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = attachment.name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+export function submitTranslationFeedback(token: string, translationId: string, rating: 1 | 5) {
+  return request<{ feedback_id: string }>(`/api/v1/translations/${translationId}/feedback`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rating }),
+  });
+}
+export function submitTranslationEdit(token: string, translationId: string, editedText: string) {
+  return request<{ edit_id: string; edited_text: string }>(`/api/v1/translations/${translationId}/edits`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ edited_text: editedText }),
+  });
+}

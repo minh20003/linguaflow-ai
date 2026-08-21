@@ -272,6 +272,7 @@ async def websocket_endpoint(
                     text=event.text,
                     attachment_id=event.attachment_id,
                     reply_to_message_id=event.reply_to_message_id,
+                    forwarded_from_message_id=event.forwarded_from_message_id,
                 )
             except ConversationNotFoundError:
                 await db.rollback()
