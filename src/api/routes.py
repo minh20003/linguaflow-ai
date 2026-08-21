@@ -98,6 +98,8 @@ from src.services.chat import (
     TranslationNotFoundError,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.correction_log import schedule_correction_record
+from src.services.customization import resolve_conversation_profile
 from src.services.email import EmailDeliveryError, send_registration_otp_email
 from src.services.profiles import (
     profile_for,
@@ -1532,6 +1534,11 @@ async def submit_translation_edit(
     Each call appends, so editing again keeps the earlier attempt. The text is
     private to its author and no WebSocket event follows: nobody else's screen
     changes because of it.
+
+    With `consent_to_share`, and only with it, a second and much narrower record
+    is written in the background: the term the machine used, the term this
+    reader used instead, and a few words around it with identifiers removed.
+    That record — not this one — is what the glossary is mined from (ADR-28).
     """
     service = ChatService(db)
     try:
@@ -1557,6 +1564,23 @@ async def submit_translation_edit(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+
+    # After the edit is safely stored, and detached from it: this is a
+    # by-product, and nothing about mining a glossary may put a reader's own
+    # correction at risk. `schedule_correction_record` checks consent itself, so
+    # no future call site can forget to.
+    profile = await resolve_conversation_profile(db, translation.message_id)
+    schedule_correction_record(
+        machine_text=translation.translated_text,
+        human_text=edit.edited_text,
+        source_language=profile.source_language,
+        target_language=translation.target_language,
+        domain=profile.domain,
+        audience=profile.audience,
+        user_id=current_user.id,
+        translation_id=translation.id,
+        consent_to_share=payload.consent_to_share,
+    )
 
     return TranslationEditResponse(
         edit_id=edit.id,

@@ -715,7 +715,7 @@ async def test_translation_cache_hit_does_not_publish_a_withdrawn_message(
         source_language="en",
     )
     translation_service._translation_cache[
-        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
     ] = "Chao buoi sang"
     message.deleted_at = datetime.now(UTC)
     await test_db.commit()
@@ -777,8 +777,44 @@ async def test_translation_cache_detector_disagreement_runs_the_graph(
         source_language="en",
     )
     translation_service._translation_cache[
-        translation_service._cache_key(conversation.id, "Good morning", "en", "vi")
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
     ] = "Chao buoi sang"
+    graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
+    publisher = RecordingPublisher()
+
+    await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
+
+    assert calls.count("vi") == 1
+    assert [event["model"] for event in publisher.events_for("vi")] == ["primary-model"]
+
+
+@pytest.mark.asyncio
+async def test_the_translation_cache_never_serves_one_standing_to_another(
+    test_db, test_user, test_user_two, conversation_factory, monkeypatch
+):
+    """A cached phrase written for a client must not be handed to a colleague.
+
+    `_is_cacheable` admits only very short phrases, which is exactly the set
+    where the address form carries the meaning, so a cache keyed by language
+    alone would be wrong precisely where it is used most — and silently, since
+    a hit produces an ordinary-looking translation.
+    """
+    monkeypatch.setattr(translation_service, "_detect_local", lambda _text: "en")
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await persist_message(
+        test_db,
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        text="Good morning",
+        source_language="en",
+    )
+    # Seeded under a standing nobody in this conversation holds; the members
+    # are unprofiled, so the fan-out asks for `peer`.
+    translation_service._translation_cache[
+        translation_service._cache_key(
+            conversation.id, "Good morning", "en", "vi", "client"
+        )
+    ] = "Kinh chao quy khach"
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
     publisher = RecordingPublisher()
 

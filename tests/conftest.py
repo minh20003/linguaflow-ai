@@ -55,12 +55,16 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 get_settings.cache_clear()
 
+from src import database as database_module
 from src.api.routes import router as api_router
 from src.api.websocket import get_connection_manager
 from src.api.websocket import router as websocket_router
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import correction_log as correction_log_module
+from src.services import message_memory as message_memory_module
+from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
 from src.services.connection_manager import ConnectionManager
 
@@ -193,9 +197,26 @@ def _init_engines(schema: str) -> None:
         autoflush=False,
     )
 
+    # And point the application's own engine at this schema as well.
+    #
+    # `get_db` is overridden by fixtures, so requests were already covered. What
+    # was not: a task scheduled from *inside* a request — translating a message,
+    # inferring a profile, recording a correction — takes
+    # `get_async_session_maker()` rather than an injected factory, because in
+    # production there is nothing to inject. That maker knew the test database
+    # but not this schema, so the write landed nowhere and the failure was
+    # swallowed exactly as a production failure would be: the endpoint returns
+    # 201 and the table stays empty.
+    #
+    # It stayed hidden because every test with a background task either injected
+    # a factory or patched the scheduler away — that is, none of them went
+    # through the path production uses. Setting the cached engine here fixes the
+    # class of problem once, rather than each test file discovering it again.
+    database_module._engine = test_engine
+
 
 async def _settle_background_translations() -> None:
-    """Stop translation tasks still running for the test that just finished.
+    """Stop background tasks still running for the test that just finished.
 
     Sending or editing a message schedules translation in a task that
     deliberately outlives the request (`schedule_translations`). No test waits
@@ -214,11 +235,28 @@ async def _settle_background_translations() -> None:
     the suite. Production never does this — the process is not torn down between
     messages — so this belongs to the harness, not to the service.
     """
-    pending = [task for task in translation_module._BACKGROUND_TASKS if not task.done()]
+    tracked = (
+        *translation_module._BACKGROUND_TASKS,
+        # Sending a message also schedules a conversation-profile inference,
+        # which outlives the request the same way and has the same problem.
+        *profile_inference_module._BACKGROUND_TASKS,
+        *message_memory_module._BACKGROUND_TASKS,
+        *correction_log_module._BACKGROUND_TASKS,
+    )
+    pending = [task for task in tracked if not task.done()]
     for task in pending:
         task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+
+    # Only await the ones this loop owns. `ws_client` drives the app through
+    # starlette's TestClient, which runs it on its own loop in another thread,
+    # so a task scheduled from a WebSocket handler belongs to that loop —
+    # awaiting it from here fails with "attached to a different loop" and turns
+    # a passing test into a teardown error. Cancelling is still worth doing for
+    # those: it stops them before the schema goes away.
+    loop = asyncio.get_running_loop()
+    ours = [task for task in pending if task.get_loop() is loop]
+    if ours:
+        await asyncio.gather(*ours, return_exceptions=True)
 
 
 async def _close_engines() -> None:
@@ -234,6 +272,10 @@ async def _close_engines() -> None:
         await _ws_engine.dispose()
         _ws_engine = None
         _ws_session_maker = None
+
+    # Leaving this set would hand the next test an engine bound to a schema that
+    # no longer exists — and, once again, silently.
+    database_module._engine = None
 
 
 @pytest.fixture(scope="session")

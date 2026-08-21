@@ -21,6 +21,15 @@ down by:
   supplied-context count, not a judgement about how much context the sentence
   needs.
 
+Three further fields are optional and carried only by the samples that test
+them: ``domain`` and ``audience`` say what the conversation is about and who it
+is with, and ``honorific_profile`` says where the reader stands. Absent is a
+real state rather than a gap — it is what every conversation looks like before
+anything has been inferred — so a sample without them exercises exactly the
+prompt it always did. Glossary terms are not listed per sample: they are
+selected from the shipped ``seed/glossary_en_vi.jsonl`` by the same rule
+production uses, so what is scored is the glossary that ships.
+
 Speakers in ``context_messages`` are coded ``U01``, ``U02``, ``U03``, numbered in
 order of first appearance within each conversation. They carry no name and no
 role, because the real ``ContextProvider`` supplies none — ``context_messages``
@@ -53,10 +62,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
 
 from src.agents.context_provider import InMemoryContextProvider  # noqa: E402
+from src.agents.customization import Customization  # noqa: E402
 from src.agents.graph import build_translation_graph  # noqa: E402
 from src.agents.observability import build_runnable_config  # noqa: E402
 from src.agents.prompts import build_context_block  # noqa: E402
 from src.config import configure_logging, get_settings  # noqa: E402
+from src.services.glossary import normalize_term, select_terms  # noqa: E402
 from src.services.llm import extract_text, get_llm  # noqa: E402
 from src.services.metrics import group_scores, percentile  # noqa: E402
 
@@ -91,6 +102,12 @@ System translation: {actual}
 - Meaning preserved relative to the original (most important)
 - Correct pronouns and recovered subjects given the conversation history above
 - Technical terms, proper nouns and figures kept intact
+- Addresses the reader as the reference does. Where the target language marks \
+standing — Vietnamese pronouns, Japanese keigo, Korean verb endings — using \
+the wrong one is a real error, not a stylistic difference
+- Renders in-house terms as the reference does. The same word is often left \
+alone for a colleague and translated for a client, and the reference shows \
+which was wanted here
 - Reads naturally in the target language
 
 # Constraints
@@ -174,14 +191,89 @@ def parse_score(raw: str) -> float | None:
     return min(1.0, max(0.0, float(match.group(1))))
 
 
+SEED_GLOSSARY = Path(__file__).resolve().parents[1] / "seed" / "glossary_en_vi.jsonl"
+
+
+class SeedEntry:
+    """One glossary entry read from the shipped seed file.
+
+    Attribute names match the ORM model because `select_terms` reads them off
+    either — which is the point of it being pure. Scoring against a hand-made
+    glossary would measure a fixture; scoring against the file that actually
+    ships measures the product.
+    """
+
+    def __init__(self, row: dict) -> None:
+        self.source_term = row["source_term"]
+        self.source_term_normalized = normalize_term(row["source_term"])
+        self.target_term = row["target_term"]
+        self.source_language = row["source_language"]
+        self.target_language = row["target_language"]
+        self.domain = row["domain"]
+        self.audience = row["audience"]
+        self.keep_verbatim = bool(row["keep_verbatim"])
+
+
+def load_seed_glossary() -> list[SeedEntry]:
+    """Read the shipped glossary, or nothing if it is absent.
+
+    Absent is survivable: samples that do not turn on a glossary score exactly
+    as they did before it existed, so a missing file degrades the run rather
+    than ending it.
+    """
+    if not SEED_GLOSSARY.exists():
+        return []
+    return [
+        SeedEntry(json.loads(line))
+        for line in SEED_GLOSSARY.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+class SampleCustomizationProvider:
+    """Answers with whatever the sample under test declares.
+
+    The graph asks per translation, so the sample being run has to be set
+    first. Single-threaded by construction: `run_eval` awaits one sample at a
+    time, deliberately, so quota is spent in a predictable order.
+    """
+
+    def __init__(self, entries: list[SeedEntry]) -> None:
+        self._entries = entries
+        self.sample: dict = {}
+
+    async def get_customization(
+        self, conversation_id, *, original_text, source_language, target_language
+    ) -> Customization:
+        """Build the customization the sample asks for."""
+        domain = self.sample.get("domain", "")
+        audience = self.sample.get("audience", "")
+        candidates = [
+            entry
+            for entry in self._entries
+            if entry.source_language == source_language
+            and entry.target_language == target_language
+        ]
+        return Customization(
+            domain=domain,
+            audience=audience,
+            glossary_terms=select_terms(
+                candidates, text=original_text, domain=domain, audience=audience
+            ),
+        )
+
+
 async def run_sample(
     sample: dict,
     graph,
     provider: InMemoryContextProvider,
     judge_llm: BaseChatModel,
+    customization: SampleCustomizationProvider | None = None,
 ) -> dict:
     """Run the agent on one sample and score the result."""
     conversation_id = f"eval-{sample['id']}"
+    if customization is not None:
+        customization.sample = sample
 
     for msg in sample.get("context_messages", []):
         provider.add_message(conversation_id, msg)
@@ -192,11 +284,17 @@ async def run_sample(
             "original_text": sample["original_text"],
             "source_language": sample["source_language"],
             "target_language": sample["target_language"],
+            # Absent on most samples, and absent is meaningful: it is the state
+            # of every conversation before anything has been inferred, so those
+            # samples exercise exactly the prompt they always did.
+            "honorific_profile": sample.get("honorific_profile", ""),
         },
         config=build_runnable_config(
             conversation_id=conversation_id,
             sample_id=sample["id"],
             category=sample.get("category"),
+            audience=sample.get("audience") or None,
+            honorific_profile=sample.get("honorific_profile") or None,
         ),
     )
 
@@ -679,14 +777,19 @@ async def main() -> int:
     # Built once for the whole run: the configuration is identical across samples,
     # and InMemoryContextProvider already partitions by conversation_id.
     context_provider = InMemoryContextProvider()
-    graph = build_translation_graph(context_provider)
+    customization_provider = SampleCustomizationProvider(load_seed_glossary())
+    graph = build_translation_graph(
+        context_provider, customization_provider=customization_provider
+    )
     judge_llm = get_llm(provider=args.judge_provider)
 
     results = []
     for i, sample in enumerate(samples, 1):
         print(f"[{i}/{len(samples)}] {sample['id']} ({sample.get('category', '')})")
         try:
-            result = await run_sample(sample, graph, context_provider, judge_llm)
+            result = await run_sample(
+                sample, graph, context_provider, judge_llm, customization_provider
+            )
         except Exception as exc:
             print(f"    [!] Lỗi: {type(exc).__name__}: {exc}")
             continue

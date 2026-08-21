@@ -38,6 +38,21 @@ REQUIRED_KEYS = {
     "note",
 }
 
+# Fields only the samples that test them carry. Optional rather than required
+# because absent is a real state, not a gap: it is what every conversation looks
+# like before anything has been inferred about it, so a sample without them
+# exercises exactly the prompt the sample always exercised. Making them required
+# would mean editing fifty-three rows to write "" in three places.
+OPTIONAL_KEYS = {
+    "domain",
+    "audience",
+    "honorific_profile",
+}
+
+# The four standings the schema allows. Repeated here rather than imported so a
+# value silently added to the database does not silently become valid data.
+HONORIFIC_PROFILES = {"senior", "peer", "junior", "client"}
+
 
 @pytest.fixture(scope="module")
 def samples() -> list[dict]:
@@ -49,7 +64,10 @@ def samples() -> list[dict]:
 def test_every_row_has_the_same_keys(samples):
     """A missing field would fail a run partway through, after paying for it."""
     for sample in samples:
-        assert set(sample) == REQUIRED_KEYS, sample.get("id")
+        missing = REQUIRED_KEYS - set(sample)
+        assert not missing, f"{sample.get('id')} is missing {sorted(missing)}"
+        unknown = set(sample) - REQUIRED_KEYS - OPTIONAL_KEYS
+        assert not unknown, f"{sample.get('id')} carries unknown {sorted(unknown)}"
 
 
 def test_ids_are_unique(samples):
@@ -96,3 +114,34 @@ def test_the_set_covers_the_languages_it_was_built_for(samples):
     }
 
     assert EVALUATED_LANGUAGES <= covered
+
+
+def test_a_declared_standing_is_one_the_schema_allows(samples):
+    """A sample naming a fifth standing would exercise a prompt branch that
+    cannot exist in production, and score it as if it could."""
+    for sample in samples:
+        standing = sample.get("honorific_profile")
+        if standing:
+            assert standing in HONORIFIC_PROFILES, sample["id"]
+
+
+def test_the_audience_samples_differ_only_in_who_is_reading(samples):
+    """The pair is the measurement. If the two rows drifted apart in wording,
+    a difference in score would no longer be evidence that audience mattered."""
+    pair = [s for s in samples if s["category"] == "glossary_audience"]
+
+    assert len(pair) == 2
+    assert pair[0]["original_text"] == pair[1]["original_text"]
+    assert {s["audience"] for s in pair} == {"internal", "client"}
+    assert pair[0]["expected_translation"] != pair[1]["expected_translation"]
+
+
+def test_the_honorific_samples_cover_more_than_one_language(samples):
+    """Vietnamese marks standing with pronouns, Japanese with keigo and often no
+    pronoun at all. A rule that only works for one of them is a pronoun table
+    wearing a relationship's clothes (ADR-23)."""
+    rows = [s for s in samples if s["category"] == "honorific_recipient"]
+
+    assert len(rows) >= 3
+    assert len({s["target_language"] for s in rows}) >= 2
+    assert len({s["honorific_profile"] for s in rows}) >= 2

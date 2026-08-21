@@ -118,8 +118,15 @@ async def summarize_attempts(
     have no portable SQL form — SQLite has no `percentile_cont` — and computing
     part of the summary in the database and the rest here would mean two
     definitions of the same metric. The volume this project produces (one row
-    per recipient language per message) stays well inside what a single query
-    can return; `since` is there for when it does not.
+    per recipient bucket per message — a bucket being a language and a standing,
+    so up to four per language) stays well inside what a single query can
+    return; `since` is there for when it does not.
+
+    `language_pairs` stays keyed by the language pair alone, deliberately.
+    NFR-01 is about the delay a reader experiences, and that is the same
+    question whichever standing they were translated at; splitting the key would
+    turn one headline latency figure into four thinner samples. The consequence
+    to keep in mind when reading it: `count` counts buckets, not messages.
 
     Args:
         session: An open database session.
