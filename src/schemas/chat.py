@@ -158,6 +158,7 @@ class AttachmentResponse(BaseModel):
     filename: str
     content_type: str
     size: int
+    created_at: datetime
 
     @computed_field
     @property

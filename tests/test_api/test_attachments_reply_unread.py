@@ -84,6 +84,7 @@ async def test_sending_with_an_attachment_binds_it_to_that_message(
     test_user,
     test_user_headers,
     test_user_two,
+    test_user_three,
     conversation_factory,
     ws_client,
 ):
@@ -95,6 +96,13 @@ async def test_sending_with_an_attachment_binds_it_to_that_message(
         files={"file": ("ke-hoach.pdf", b"%PDF-1.4 plan", "application/pdf")},
     )
     attachment_id = upload.json()["id"]
+
+    before_send = await client.get(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+    )
+    assert before_send.status_code == 200
+    assert before_send.json() == []
 
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
@@ -120,6 +128,20 @@ async def test_sending_with_an_attachment_binds_it_to_that_message(
         headers=test_user_headers,
     )
     assert history.json()[0]["attachment"]["filename"] == "ke-hoach.pdf"
+
+    documents = await client.get(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=auth_headers_for_user(test_user_two),
+    )
+    assert documents.status_code == 200
+    assert [document["id"] for document in documents.json()] == [attachment_id]
+    assert documents.json()[0]["created_at"]
+
+    outsider = await client.get(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=auth_headers_for_user(test_user_three),
+    )
+    assert outsider.status_code == 403
 
 
 @pytest.mark.asyncio

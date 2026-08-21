@@ -141,6 +141,9 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./data/chroma"
     upload_dir: str = "./data/uploads"
     max_upload_size_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "attachments"
 
     # JWT Authentication
     jwt_secret: str = ""  # Required: set in environment
