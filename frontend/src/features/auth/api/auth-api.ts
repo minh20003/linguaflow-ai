@@ -54,22 +54,14 @@ export function signIn(email: string, password: string, remember: boolean): Prom
   );
 }
 
-export interface PendingRegistrationResponse {
-  pending_id: string;
-  email: string;
-  expires_in_seconds: number;
-  cooldown_seconds: number;
-  message: string;
-}
-
-export function registerInit({
+export function signUp({
   fullName,
   email,
   password,
   preferredLanguage = "vi",
-}: RegisterInput): Promise<PendingRegistrationResponse> {
+}: RegisterInput): Promise<AuthSession> {
   const normalizedEmail = email.trim().toLowerCase();
-  return request<PendingRegistrationResponse>(
+  return request<AuthSession>(
     "/api/v1/auth/register",
     {
       method: "POST",
@@ -83,40 +75,6 @@ export function registerInit({
     },
     "Unable to create your account. Please try again.",
   );
-}
-
-export function verifyRegisterOtp(pendingId: string, otp: string): Promise<AuthSession> {
-  return request<AuthSession>(
-    "/api/v1/auth/register/verify",
-    {
-      method: "POST",
-      body: JSON.stringify({
-        pending_id: pendingId,
-        otp: otp.trim(),
-      }),
-    },
-    "Invalid or expired verification code.",
-  );
-}
-
-export function resendRegisterOtp(pendingId: string): Promise<{ pending_id: string; expires_in_seconds: number; cooldown_seconds: number; message: string }> {
-  return request(
-    "/api/v1/auth/register/resend",
-    {
-      method: "POST",
-      body: JSON.stringify({ pending_id: pendingId }),
-    },
-    "Unable to resend verification code.",
-  );
-}
-
-export function signUp({
-  fullName,
-  email,
-  password,
-  preferredLanguage = "vi",
-}: RegisterInput): Promise<PendingRegistrationResponse> {
-  return registerInit({ fullName, email, password, preferredLanguage });
 }
 
 export function requestPasswordReset(email: string): Promise<{ message: string; reset_token?: string }> {
