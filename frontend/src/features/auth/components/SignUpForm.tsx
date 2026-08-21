@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
+import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, Loader2, KeyRound, ArrowLeft } from 'lucide-react';
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
-import { signUp, signInWithGoogle } from '../api/auth-api';
+import { signUp, verifyRegisterOtp, resendRegisterOtp, signInWithGoogle } from '../api/auth-api';
 import { saveSession } from '@/shared/lib/session';
 
 interface SignUpFormProps {
@@ -14,6 +14,12 @@ interface SignUpFormProps {
 }
 
 export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess }) => {
+  const [step, setStep] = useState<'form' | 'otp'>('form');
+  const [pendingId, setPendingId] = useState('');
+  const [otp, setOtp] = useState('');
+  const [cooldown, setCooldown] = useState(60);
+  const [resending, setResending] = useState(false);
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,6 +37,15 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
   });
 
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Countdown timer for OTP resend
+  useEffect(() => {
+    if (step !== 'otp' || cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [step, cooldown]);
 
   // Validation logic
   const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -72,12 +87,34 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
     setIsLoading(true);
 
     try {
-      const session = await signUp({
+      const pending = await signUp({
         fullName,
         email,
         password,
         preferredLanguage: 'vi',
       });
+      setPendingId(pending.pending_id);
+      setCooldown(pending.cooldown_seconds || 60);
+      setStep('otp');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to create your account. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otp.length !== 6) {
+      setFormError('Please enter the complete 6-digit verification code.');
+      return;
+    }
+
+    setFormError(null);
+    setIsLoading(true);
+
+    try {
+      const session = await verifyRegisterOtp(pendingId, otp);
       saveSession(session, true);
       onSuccess({
         name: session.user.display_name,
@@ -86,9 +123,24 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       });
       onNavigate('language-onboarding');
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Unable to create your account. Please try again.');
+      setFormError(error instanceof Error ? error.message : 'Invalid or expired verification code.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (cooldown > 0 || resending) return;
+    setResending(true);
+    setFormError(null);
+    try {
+      const res = await resendRegisterOtp(pendingId);
+      setCooldown(res.cooldown_seconds || 60);
+      setOtp('');
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Unable to resend verification code.');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -106,6 +158,110 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       setIsLoading(false);
     }
   }, [onNavigate, onSuccess]);
+
+  if (step === 'otp') {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.25 }}
+        className="bg-white rounded-2xl border border-slate-200/80 p-6 sm:p-8 shadow-sm shadow-slate-100"
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setStep('form');
+            setFormError(null);
+          }}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors mb-4 cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to details
+        </button>
+
+        <div className="mb-6">
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Check your email</h2>
+          <p className="text-sm text-slate-500 mt-1">
+            We sent a 6-digit verification code to <span className="font-semibold text-slate-800">{email}</span>.
+          </p>
+        </div>
+
+        <AnimatePresence>
+          {formError && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 overflow-hidden"
+            >
+              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs font-medium">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                <span>{formError}</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <form onSubmit={handleVerifyOtp} className="space-y-4">
+          <div>
+            <label htmlFor="otp-input" className="block text-xs font-semibold text-slate-700 mb-1.5">
+              Verification code
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <KeyRound className="w-4 h-4" />
+              </div>
+              <input
+                id="otp-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={otp}
+                onChange={(e) => {
+                  const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+                  setOtp(digits);
+                  if (formError) setFormError(null);
+                }}
+                placeholder="000000"
+                className="w-full h-12 pl-10 pr-3.5 text-center text-lg tracking-widest font-mono font-bold bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-300"
+              />
+            </div>
+          </div>
+
+          <button
+            id="verify-otp-submit-button"
+            type="submit"
+            disabled={isLoading || otp.length !== 6}
+            className="w-full h-11 mt-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all shadow-sm shadow-indigo-600/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Verifying...</span>
+              </>
+            ) : (
+              <>
+                <span>Complete registration</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={handleResendOtp}
+              disabled={cooldown > 0 || resending}
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
+            >
+              {cooldown > 0 ? `Resend code in ${cooldown}s` : resending ? 'Resending code...' : 'Resend verification code'}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -339,7 +495,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
           {isLoading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Creating account...</span>
+              <span>Sending verification code...</span>
             </>
           ) : (
             <>
