@@ -1,0 +1,88 @@
+{"source_term": "UI", "target_term": "UI", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "UI", "target_term": "giao diện", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "backend", "target_term": "backend", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "backend", "target_term": "hệ thống phía máy chủ", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "frontend", "target_term": "frontend", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "frontend", "target_term": "giao diện người dùng", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "deploy", "target_term": "deploy", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "deploy", "target_term": "triển khai", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "release", "target_term": "release", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "release", "target_term": "bản phát hành", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "bug", "target_term": "bug", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "bug", "target_term": "lỗi", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "hotfix", "target_term": "hotfix", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "hotfix", "target_term": "bản vá khẩn", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "rollback", "target_term": "rollback", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "rollback", "target_term": "khôi phục phiên bản trước", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "endpoint", "target_term": "endpoint", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "endpoint", "target_term": "điểm truy cập", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "database", "target_term": "database", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "database", "target_term": "cơ sở dữ liệu", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "server", "target_term": "server", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "server", "target_term": "máy chủ", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "cache", "target_term": "cache", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "cache", "target_term": "bộ nhớ đệm", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "dashboard", "target_term": "dashboard", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "dashboard", "target_term": "bảng điều khiển", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "feature", "target_term": "feature", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "feature", "target_term": "tính năng", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "milestone", "target_term": "milestone", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "milestone", "target_term": "mốc bàn giao", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "deadline", "target_term": "deadline", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "deadline", "target_term": "hạn chót", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "scope", "target_term": "scope", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "scope", "target_term": "phạm vi công việc", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "requirement", "target_term": "requirement", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "requirement", "target_term": "yêu cầu", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "feedback", "target_term": "feedback", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "feedback", "target_term": "góp ý", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "demo", "target_term": "demo", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "demo", "target_term": "buổi trình diễn", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "review", "target_term": "review", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "review", "target_term": "rà soát", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "environment", "target_term": "environment", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "environment", "target_term": "môi trường", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "performance", "target_term": "performance", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "performance", "target_term": "hiệu năng", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "security", "target_term": "security", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "security", "target_term": "bảo mật", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "integration", "target_term": "integration", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "integration", "target_term": "tích hợp", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "downtime", "target_term": "downtime", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "downtime", "target_term": "thời gian ngừng hoạt động", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "workaround", "target_term": "workaround", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "workaround", "target_term": "giải pháp tạm", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "root cause", "target_term": "root cause", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "root cause", "target_term": "nguyên nhân gốc", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "incident", "target_term": "incident", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "incident", "target_term": "sự cố", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "estimate", "target_term": "estimate", "source_language": "en", "target_language": "vi", "domain": "", "audience": "internal", "keep_verbatim": true}
+{"source_term": "estimate", "target_term": "ước lượng thời gian", "source_language": "en", "target_language": "vi", "domain": "", "audience": "client", "keep_verbatim": false}
+{"source_term": "API", "target_term": "API", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "staging", "target_term": "staging", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "production", "target_term": "production", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "sprint", "target_term": "sprint", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "backlog", "target_term": "backlog", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "commit", "target_term": "commit", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "merge", "target_term": "merge", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "branch", "target_term": "branch", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "pull request", "target_term": "pull request", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "code review", "target_term": "code review", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "CI", "target_term": "CI", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "log", "target_term": "log", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "token", "target_term": "token", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "webhook", "target_term": "webhook", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "SDK", "target_term": "SDK", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "SLA", "target_term": "SLA", "source_language": "en", "target_language": "vi", "domain": "", "audience": "", "keep_verbatim": true}
+{"source_term": "invoice", "target_term": "hoá đơn", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "contract", "target_term": "hợp đồng", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "payment", "target_term": "thanh toán", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "deliverable", "target_term": "hạng mục bàn giao", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "kick-off", "target_term": "buổi khởi động dự án", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "stakeholder", "target_term": "bên liên quan", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "onboarding", "target_term": "quá trình tiếp nhận", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "acceptance", "target_term": "nghiệm thu", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "proposal", "target_term": "đề xuất", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "quotation", "target_term": "báo giá", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "scope creep", "target_term": "phình phạm vi", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}
+{"source_term": "change request", "target_term": "yêu cầu thay đổi", "source_language": "en", "target_language": "vi", "domain": "commercial", "audience": "", "keep_verbatim": false}

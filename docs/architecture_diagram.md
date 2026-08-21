@@ -52,7 +52,8 @@ graph TD
     SameLang{Ngôn ngữ nguồn = đích?}
     SameLang -->|Có| ReturnOriginal[Trả về nguyên bản]
     SameLang -->|Không| BuildContext[Đọc 3-5 tin gần nhất<br/>từ bảng messages]
-    BuildContext --> Prompt[Tạo prompt: text + context + target_lang]
+    BuildContext --> Customize[customize: đọc lĩnh vực và đối tượng<br/>từ conversation_profiles — không gọi LLM]
+    Customize --> Prompt[Tạo prompt: text + context<br/>+ target_lang + vị thế xưng hô]
     Prompt --> CallLLM[Gọi LLM — streaming]
     CallLLM --> Valid{Bản dịch hợp lệ?}
     Valid -->|Không / timeout| FallbackProvider[Provider dự phòng<br/>deep-translator, ADR-07]

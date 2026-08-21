@@ -139,3 +139,43 @@ hỏi mật khẩu máy chủ, một tin chửi thề, một tin có số điệ
 tiếp cần ngữ cảnh để hiểu đại từ — rồi đối chiếu `make metrics`: cả bốn phải có
 `outcome = llm`, không tin nào rơi vào `refusal` hay `dropped_identifier`, và bản dịch
 phải còn đủ số điện thoại lẫn link.
+
+
+## Glossary và kính ngữ — hai giới hạn đã biết (bổ sung 20/08)
+
+1. **Tầng dự phòng không nhận glossary lẫn chỉ dẫn xưng hô.** `deep-translator`
+   (ADR-07) chỉ nhận đúng nguyên văn tin nhắn: không prompt, không mục
+   `# Audience`, không khối `<glossary>`. Một tin rơi xuống tầng hai vì thế mất
+   cả tính nhất quán thuật ngữ lẫn cách xưng hô đã chọn. Đây là đánh đổi chấp
+   nhận được vì tầng hai chỉ chạy khi tầng một đã hỏng, và một bản dịch hơi lệch
+   giọng vẫn hơn hẳn một tin nhắn chưa dịch (NFR-02) — nhưng nó có nghĩa là tỷ lệ
+   rơi xuống tầng hai cũng chính là tỷ lệ mất glossary.
+
+2. **Thuật ngữ đích được coi là một phần của nguồn khi kiểm rò rỉ định danh.**
+   `find_leaked_identifiers` (ADR-21) từ chối bản dịch chứa email, dãy ≥ 9 chữ số
+   hay token dạng khoá mà tin nhắn gốc không có. Một thuật ngữ glossary **theo
+   định nghĩa** là chữ mà tin nhắn không có — ép một cách dịch nghĩa là thế — nên
+   một mã sản phẩm nằm trong glossary sẽ bị đọc thành định danh do model bịa ra,
+   và **cả bản dịch bị vứt**. Vì vậy các thuật ngữ đích đã được quản trị viên
+   duyệt được nối vào phần "nguồn" **chỉ cho phép kiểm này**, không cho gì khác.
+   Hệ quả cần biết: một mục glossary độc hại có thể đưa một định danh vào bản dịch
+   mà lớp (2) của ADR-21 không chặn. Đó là lý do mục glossary phải qua duyệt.
+
+3. **Truy hồi theo ngữ nghĩa mở một lối thứ hai vào bảng `messages`** (ADR-27),
+   và mọi ràng buộc của lối thứ nhất phải áp lại nguyên vẹn. Hai điều được kiểm
+   bằng test riêng vì cả hai đều hỏng **im lặng** — dòng lấy sai vẫn trông y hệt
+   dòng lấy đúng, và bản dịch sinh ra vẫn trôi chảy:
+
+   - `test_a_withdrawn_message_never_returns_through_recall` — người gửi đã thu
+     hồi thì không ai đọc được nữa trong ứng dụng, nên cũng không được quay lại
+     qua đường này.
+   - `test_recall_never_reaches_into_another_conversation` — truy hồi bị giới hạn
+     trong một hội thoại. Với sang hội thoại khác là lấy chữ từ luồng người đọc
+     chưa từng tham gia rồi đặt trước mặt model: đúng cái rò rỉ mà ADR-21 canh ở
+     **đầu ra**, chỉ khác là đưa vào từ **đầu vào**, nơi chưa lớp nào canh.
+
+   Cần lưu ý phần **chưa** làm: không có lớp nào kiểm rằng dòng được truy hồi
+   nằm trong phạm vi người nhận *hiện tại* được phép đọc. Hiện điều đó đúng theo
+   cách dựng — thành viên vào sau vốn đọc được toàn bộ lịch sử qua
+   `GET /conversations/{id}/messages` — nên truy hồi không mở thêm kênh nào, đúng
+   như đã ghi ở mục "cố ý không làm" số 5.

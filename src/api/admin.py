@@ -1,0 +1,348 @@
+"""Administrative view of the glossary and its review queue.
+
+A separate router rather than another block in `routes.py`, for the reason
+`metrics.py` gives: several branches edit that file at once, and a new module
+cannot conflict with them.
+
+Every endpoint here is gated on `get_admin_user`. The gate is the whole
+authorization model — `users.role` compared to the string `"admin"` — so it has
+to be on each one rather than assumed from the path prefix.
+
+What an administrator can see is bounded by design, not by omission. A proposal
+carries a term pair, two counts, and a few anonymised fragments; it does not
+carry who wrote them, which conversation they came from, or anything around
+them. The rule it serves is that administrators do not read user content
+(docs/NewFeature.md, diagram 2), and the queries below are the place that rule
+is either kept or quietly lost.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.deps import get_admin_user
+from src.database import get_db
+from src.database.models import (
+    GLOSSARY_PROPOSAL_STATUSES,
+    GlossaryEntry,
+    GlossaryProposal,
+    GlossaryProposalCitation,
+    User,
+)
+from src.schemas.glossary import (
+    GlossaryApprovalRequest,
+    GlossaryCitationSummary,
+    GlossaryEntryRequest,
+    GlossaryEntryResponse,
+    GlossaryProposalResponse,
+    GlossaryRejectionRequest,
+)
+from src.services.embeddings import embed, embedding_model_name
+from src.services.glossary import normalize_term
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# One page of a review queue. A reviewer works through a handful at a time; a
+# larger page just means more of them go unread.
+MAX_PAGE = 100
+
+
+async def _citations(db: AsyncSession, proposal_id: str) -> list[GlossaryCitationSummary]:
+    """The anonymised fragments attached to one proposal."""
+    rows = (
+        await db.scalars(
+            select(GlossaryProposalCitation)
+            .where(GlossaryProposalCitation.proposal_id == proposal_id)
+            .order_by(GlossaryProposalCitation.observed_at)
+        )
+    ).all()
+    return [GlossaryCitationSummary.model_validate(row) for row in rows]
+
+
+async def _load_proposal(db: AsyncSession, proposal_id: str) -> GlossaryProposal:
+    """Fetch a proposal or answer 404."""
+    proposal = await db.scalar(
+        select(GlossaryProposal).where(GlossaryProposal.id == proposal_id)
+    )
+    if proposal is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proposal was not found",
+        )
+    return proposal
+
+
+def _require_pending(proposal: GlossaryProposal) -> None:
+    """Refuse to decide the same proposal twice.
+
+    409 rather than 200: two administrators working the queue at once would
+    otherwise both believe they were the one who approved it, and the second
+    decision would silently overwrite the first — including its reason.
+    """
+    if proposal.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This proposal has already been {proposal.status}",
+        )
+
+
+@router.get(
+    "/admin/glossary/proposals",
+    response_model=list[GlossaryProposalResponse],
+)
+async def list_glossary_proposals(
+    status_filter: str = Query(
+        default="pending",
+        alias="status",
+        description="pending, approved or rejected. Defaults to pending.",
+    ),
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE),
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> list[GlossaryProposalResponse]:
+    """List proposals awaiting a decision, newest first.
+
+    Newest first because a term the team has just started arguing about is more
+    useful to settle than one from six weeks ago.
+    """
+    if status_filter not in GLOSSARY_PROPOSAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown status: {status_filter}",
+        )
+
+    proposals = (
+        await db.scalars(
+            select(GlossaryProposal)
+            .where(GlossaryProposal.status == status_filter)
+            .order_by(GlossaryProposal.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return [
+        GlossaryProposalResponse(
+            **{
+                field: getattr(proposal, field)
+                for field in GlossaryProposalResponse.model_fields
+                if field != "citations"
+            },
+            citations=await _citations(db, proposal.id),
+        )
+        for proposal in proposals
+    ]
+
+
+@router.post(
+    "/admin/glossary/proposals/{proposal_id}/approve",
+    response_model=GlossaryEntryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def approve_glossary_proposal(
+    proposal_id: str,
+    payload: GlossaryApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Turn a proposal into an entry the translation engine is bound by.
+
+    The proposal is marked `approved` and kept, not deleted: it is the record of
+    where the entry came from, and it is also what stops the miner proposing the
+    same term again next week.
+
+    The entry is embedded here rather than in the background. Without a vector
+    it is still found by exact match, but the variants people actually type —
+    "stg" for "staging environment" — would go on being missed until somebody
+    noticed why, and an administrator has just been told the term is now in use.
+    """
+    proposal = await _load_proposal(db, proposal_id)
+    _require_pending(proposal)
+
+    source_term = payload.source_term or proposal.source_term
+    target_term = payload.target_term or proposal.target_term
+    domain = proposal.domain if payload.domain is None else payload.domain
+    audience = proposal.audience if payload.audience is None else payload.audience
+    keep_verbatim = (
+        proposal.keep_verbatim if payload.keep_verbatim is None else payload.keep_verbatim
+    )
+
+    vector = await embed(source_term)
+    entry = GlossaryEntry(
+        source_term=source_term,
+        source_term_normalized=normalize_term(source_term),
+        target_term=target_term,
+        source_language=proposal.source_language,
+        target_language=proposal.target_language,
+        domain=domain,
+        audience=audience,
+        keep_verbatim=keep_verbatim,
+        status="active",
+        approved_by=current_user.id,
+        embedding=vector,
+        embedding_model=embedding_model_name() if vector else "",
+    )
+    db.add(entry)
+
+    proposal.status = "approved"
+    proposal.reviewed_by = current_user.id
+    proposal.reviewed_at = _now()
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        # The unique constraint on (term, languages, domain, audience). Two
+        # reviewers approving near-identical proposals land here, and so does one
+        # reviewer approving a term already added by hand.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A glossary entry for this term and scope already exists",
+        ) from exc
+
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.post(
+    "/admin/glossary/proposals/{proposal_id}/reject",
+    response_model=GlossaryProposalResponse,
+)
+async def reject_glossary_proposal(
+    proposal_id: str,
+    payload: GlossaryRejectionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> GlossaryProposalResponse:
+    """Refuse a proposal, and record why.
+
+    The row stays forever, with its embedding. That is what lets the miner
+    recognise the same term next week in different words and not ask again —
+    which is the difference between a queue somebody works and one they stop
+    opening (ADR-28).
+    """
+    proposal = await _load_proposal(db, proposal_id)
+    _require_pending(proposal)
+
+    proposal.status = "rejected"
+    proposal.reject_reason = payload.reason
+    proposal.reviewed_by = current_user.id
+    proposal.reviewed_at = _now()
+    await db.commit()
+    await db.refresh(proposal)
+
+    return GlossaryProposalResponse(
+        **{
+            field: getattr(proposal, field)
+            for field in GlossaryProposalResponse.model_fields
+            if field != "citations"
+        },
+        citations=await _citations(db, proposal.id),
+    )
+
+
+@router.get("/admin/glossary", response_model=list[GlossaryEntryResponse])
+async def list_glossary_entries(
+    include_retired: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=MAX_PAGE * 5),
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> list[GlossaryEntryResponse]:
+    """List the entries currently in force."""
+    query = select(GlossaryEntry).order_by(
+        GlossaryEntry.source_language,
+        GlossaryEntry.target_language,
+        GlossaryEntry.source_term_normalized,
+    )
+    if not include_retired:
+        query = query.where(GlossaryEntry.status == "active")
+
+    entries = (await db.scalars(query.limit(limit))).all()
+    return [GlossaryEntryResponse.model_validate(entry) for entry in entries]
+
+
+@router.post(
+    "/admin/glossary",
+    response_model=GlossaryEntryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_glossary_entry(
+    payload: GlossaryEntryRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Add a term by hand, without waiting for anybody to correct it first.
+
+    The mining pipeline needs several people to disagree with the machine before
+    it proposes anything, which is right for discovering a house style and
+    useless for a term the team already knows it wants.
+    """
+    vector = await embed(payload.source_term)
+    entry = GlossaryEntry(
+        source_term=payload.source_term,
+        source_term_normalized=normalize_term(payload.source_term),
+        target_term=payload.target_term,
+        source_language=payload.source_language,
+        target_language=payload.target_language,
+        domain=payload.domain,
+        audience=payload.audience,
+        keep_verbatim=payload.keep_verbatim,
+        status="active",
+        approved_by=current_user.id,
+        embedding=vector,
+        embedding_model=embedding_model_name() if vector else "",
+    )
+    db.add(entry)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A glossary entry for this term and scope already exists",
+        ) from exc
+
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.delete(
+    "/admin/glossary/{entry_id}",
+    response_model=GlossaryEntryResponse,
+)
+async def retire_glossary_entry(
+    entry_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Take an entry out of use without deleting it.
+
+    DELETE by verb, retirement by effect, and deliberately so: a translation
+    delivered last month was shaped by this term, and removing the row would
+    erase the only explanation for the wording a reader is looking at. Retiring
+    it stops it shaping anything new.
+    """
+    entry = await db.scalar(select(GlossaryEntry).where(GlossaryEntry.id == entry_id))
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Glossary entry was not found",
+        )
+
+    entry.status = "retired"
+    await db.commit()
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+def _now():
+    """The current instant, as the database columns store it."""
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC)

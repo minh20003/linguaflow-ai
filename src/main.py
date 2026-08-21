@@ -17,6 +17,7 @@ from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
 from src.agents.observability import verify_langfuse_credentials
+from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
 from src.api.websocket import router as websocket_router
@@ -116,6 +117,7 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
 
 

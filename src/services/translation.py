@@ -36,15 +36,18 @@ from src.agents.nodes.translation import _HAS_LETTER, _MIN_DETECT_CHARS, _detect
 from src.agents.observability import build_runnable_config
 from src.database import get_async_session_maker
 from src.database.models import (
+    DEFAULT_HONORIFIC_PROFILE,
     Conversation,
     ConversationMember,
     Message,
+    ParticipantProfile,
     TranslationAttempt,
     TranslationResult,
     User,
 )
 from src.schemas.chat import TranslationCompletedEvent
 from src.services.context_provider import DatabaseContextProvider
+from src.services.customization import DatabaseCustomizationProvider
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +59,7 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 # calls for common short phrases without turning translation delivery into a
 # cache dependency or changing the persistence contract.
 _CACHE_MAX_SIZE = 200
-_translation_cache: dict[tuple[str, str, str, str], str] = {}
+_translation_cache: dict[tuple[str, str, str, str, str], str] = {}
 
 
 def _normalize_cache_text(text: str) -> str:
@@ -75,13 +78,24 @@ def _cache_key(
     text: str,
     source_language: str,
     target_language: str,
-) -> tuple[str, str, str, str]:
-    """Build a case-preserving key scoped to the conversation."""
+    honorific_profile: str,
+) -> tuple[str, str, str, str, str]:
+    """Build a case-preserving key scoped to the conversation and the standing.
+
+    The standing is part of the key and cannot be left out. `_is_cacheable`
+    admits only phrases of at most thirty characters and three words, which is
+    precisely the set where the address form *is* the message: "Ok em", "Chào
+    anh", "Vâng ạ". Keyed by language alone, the wording written for a junior
+    colleague would be served to a client, which is the exact confusion the
+    feature exists to prevent — and silently, since a cache hit produces a
+    perfectly ordinary translation.
+    """
     return (
         conversation_id,
         _normalize_cache_text(text),
         source_language,
         target_language,
+        honorific_profile,
     )
 
 
@@ -113,6 +127,7 @@ def _cache_primary_translation(
     *,
     snapshot: Mapping[str, Any],
     target_language: str,
+    honorific_profile: str,
     source_language: str,
     translated_text: str,
 ) -> None:
@@ -129,6 +144,7 @@ def _cache_primary_translation(
                 str(snapshot["original_text"]),
                 source_language,
                 target_language,
+                honorific_profile,
             )
         ] = translated_text
     except Exception as exc:
@@ -195,8 +211,17 @@ def schedule_translations(
 
 
 def _default_graph_factory(session: AsyncSession, message_id: str) -> Any:
-    """Build a graph reading context from the database, excluding this message."""
-    return build_translation_graph(DatabaseContextProvider(session, message_id))
+    """Build a graph reading context and audience from the database.
+
+    Both providers are bound to the session this bucket owns. They are separate
+    objects rather than one because they answer unrelated questions from
+    unrelated tables, and because the evaluation harness supplies context
+    without wanting a conversation profile at all.
+    """
+    return build_translation_graph(
+        DatabaseContextProvider(session, message_id),
+        customization_provider=DatabaseCustomizationProvider(session),
+    )
 
 
 def _log_task_failure(task: asyncio.Task) -> None:
@@ -217,17 +242,17 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        conversation_type, recipients_by_language = await _recipients_by_language(
+        conversation_type, recipients_by_bucket = await _recipients_by_bucket(
             session, snapshot["conversation_id"]
         )
 
-    if not recipients_by_language:
+    if not recipients_by_bucket:
         return
 
-    recipients_by_language = _include_direct_sender(
+    recipients_by_bucket = _include_direct_sender(
         conversation_type=conversation_type,
         sender_id=snapshot["sender_id"],
-        recipients_by_language=recipients_by_language,
+        recipients_by_bucket=recipients_by_bucket,
     )
 
     await asyncio.gather(
@@ -235,48 +260,72 @@ async def _translate_message(
             _translate_into(
                 snapshot=snapshot,
                 target_language=language,
+                honorific_profile=honorific_profile,
                 user_ids=user_ids,
                 publisher=publisher,
                 session_factory=session_factory,
                 graph_factory=graph_factory,
             )
-            for language, user_ids in recipients_by_language.items()
+            for (language, honorific_profile), user_ids in recipients_by_bucket.items()
         )
     )
 
 
-async def _recipients_by_language(
+async def _recipients_by_bucket(
     session: AsyncSession,
     conversation_id: str,
-) -> tuple[str | None, dict[str, list[str]]]:
-    """Group a conversation's members by the language each of them reads.
+) -> tuple[str | None, dict[tuple[str, str], list[str]]]:
+    """Group a conversation's members by the language *and standing* they read at.
 
-    One query answers everything the fan-out needs: which languages are in play,
+    One query answers everything the fan-out needs: which buckets are in play,
     who wants each, and whether this is a one-to-one conversation. The
     conversation type rides along on the same join rather than costing a second
     round trip — this runs in a background task that can be abandoned when the
     caller goes away, and every extra await inside the session block is another
     point where that leaves a connection checked out.
 
+    The standing joins in on an outer join, so a member nobody has profiled yet
+    lands in the neutral `peer` bucket rather than dropping out of the fan-out
+    entirely. Every conversation is in that state until it has enough messages
+    to infer from, so this is the common path (ADR-24).
+
+    Grouping by the pair is what multiplies the work: a group of ten reading
+    three languages goes from three model calls to at most nine — not ten, and
+    a `direct` conversation is unaffected because each language there has
+    exactly one reader. That cost buys the only thing that makes Vietnamese,
+    Japanese and Korean read correctly to a manager and a client sitting in the
+    same thread (ADR-23).
+
     The sender is included deliberately. If they wrote in a language other than
     the one they read, they get a translation too — which falls out for free.
 
     Returns:
         The conversation's type (None when it has no members), and the members
-        grouped by the language each of them reads.
+        grouped by the `(language, standing)` bucket each of them reads at.
     """
     rows = await session.execute(
-        select(ConversationMember.user_id, User.preferred_language, Conversation.type)
+        select(
+            ConversationMember.user_id,
+            User.preferred_language,
+            Conversation.type,
+            ParticipantProfile.honorific_profile,
+        )
         .join(User, User.id == ConversationMember.user_id)
         .join(Conversation, Conversation.id == ConversationMember.conversation_id)
+        .outerjoin(
+            ParticipantProfile,
+            (ParticipantProfile.conversation_id == ConversationMember.conversation_id)
+            & (ParticipantProfile.user_id == ConversationMember.user_id),
+        )
         .where(ConversationMember.conversation_id == conversation_id)
     )
 
     conversation_type: str | None = None
-    grouped: dict[str, list[str]] = {}
-    for user_id, language, row_type in rows:
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for user_id, language, row_type, profile in rows:
         conversation_type = row_type
-        grouped.setdefault(language, []).append(user_id)
+        bucket = (language, profile or DEFAULT_HONORIFIC_PROFILE)
+        grouped.setdefault(bucket, []).append(user_id)
     return conversation_type, grouped
 
 
@@ -284,8 +333,8 @@ def _include_direct_sender(
     *,
     conversation_type: str | None,
     sender_id: str,
-    recipients_by_language: dict[str, list[str]],
-) -> dict[str, list[str]]:
+    recipients_by_bucket: dict[tuple[str, str], list[str]],
+) -> dict[tuple[str, str], list[str]]:
     """Let a one-to-one sender receive the translation of their own message.
 
     Grouping by reading language puts the sender in the bucket for the language
@@ -304,18 +353,19 @@ def _include_direct_sender(
     Args:
         conversation_type: `direct` or `group`, as read alongside the members.
         sender_id: Account that sent the message.
-        recipients_by_language: Grouping to extend, left untouched.
+        recipients_by_bucket: Grouping to extend, left untouched.
 
     Returns:
-        The same grouping, with the sender added to every language in a direct
-        conversation.
+        The same grouping, with the sender added to every bucket in a direct
+        conversation. A direct conversation has two members, so that is at most
+        two buckets and the sender receives at most one extra event.
     """
     if conversation_type != "direct":
-        return recipients_by_language
+        return recipients_by_bucket
 
     return {
-        language: user_ids if sender_id in user_ids else [*user_ids, sender_id]
-        for language, user_ids in recipients_by_language.items()
+        bucket: user_ids if sender_id in user_ids else [*user_ids, sender_id]
+        for bucket, user_ids in recipients_by_bucket.items()
     }
 
 
@@ -323,12 +373,13 @@ async def _translate_into(
     *,
     snapshot: Mapping[str, Any],
     target_language: str,
+    honorific_profile: str,
     user_ids: list[str],
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
     graph_factory: Callable[[AsyncSession, str], Any],
 ) -> None:
-    """Run the agent for one target language, then persist and publish."""
+    """Run the agent for one bucket, then persist and publish."""
     from src.config import get_settings
 
     cacheable = _is_cacheable(str(snapshot["original_text"]))
@@ -341,6 +392,7 @@ async def _translate_into(
                     str(snapshot["original_text"]),
                     confirmed_source,
                     target_language,
+                    honorific_profile,
                 )
             )
         except Exception as exc:
@@ -351,6 +403,7 @@ async def _translate_into(
             if await _serve_cached_translation(
                 snapshot=snapshot,
                 target_language=target_language,
+                honorific_profile=honorific_profile,
                 source_language=confirmed_source,
                 translated_text=cached_text,
                 user_ids=user_ids,
@@ -379,6 +432,7 @@ async def _translate_into(
                 attempt_id=attempt_id,
                 snapshot=snapshot,
                 target_language=target_language,
+                honorific_profile=honorific_profile,
                 outcome=outcome,
                 telemetry=(result or {}).get("telemetry") or {},
                 source_language=(result or {}).get("source_language") or "",
@@ -395,6 +449,10 @@ async def _translate_into(
             "original_text": snapshot["original_text"],
             "source_language": snapshot["source_language"],
             "target_language": target_language,
+            # Read by no node yet — the prompt work that uses it comes later.
+            # Carried now so the graph, the persisted row and the measurement
+            # row all describe the same bucket from this point on.
+            "honorific_profile": honorific_profile,
         }
 
         try:
@@ -405,6 +463,9 @@ async def _translate_into(
                         conversation_id=snapshot["conversation_id"],
                         message_id=snapshot["message_id"],
                         target_language=target_language,
+                        # Without this, the traces for a message translated into
+                        # four standings are indistinguishable in Langfuse.
+                        honorific_profile=honorific_profile,
                         attempt_id=attempt_id,
                         # One of the three keys Langfuse promotes to a
                         # first-class attribute; as ordinary metadata the
@@ -472,6 +533,7 @@ async def _translate_into(
             session,
             message_id=snapshot["message_id"],
             target_language=target_language,
+            honorific_profile=honorific_profile,
             translated_text=translated_text,
             model=str(result.get("model") or ""),
             latency_ms=int(result.get("latency_ms") or 0),
@@ -490,6 +552,7 @@ async def _translate_into(
             _cache_primary_translation(
                 snapshot=snapshot,
                 target_language=target_language,
+                honorific_profile=honorific_profile,
                 source_language=str(result["source_language"]),
                 translated_text=translated_text,
             )
@@ -534,6 +597,7 @@ async def _serve_cached_translation(
     *,
     snapshot: Mapping[str, Any],
     target_language: str,
+    honorific_profile: str,
     source_language: str,
     translated_text: str,
     user_ids: list[str],
@@ -562,6 +626,7 @@ async def _serve_cached_translation(
                 session,
                 message_id=snapshot["message_id"],
                 target_language=target_language,
+                honorific_profile=honorific_profile,
                 translated_text=translated_text,
                 model="cache",
                 latency_ms=0,
@@ -600,6 +665,7 @@ async def record_attempt(
     attempt_id: str,
     snapshot: Mapping[str, Any],
     target_language: str,
+    honorific_profile: str,
     outcome: str,
     telemetry: Mapping[str, Any],
     source_language: str,
@@ -630,6 +696,7 @@ async def record_attempt(
                 id=attempt_id,
                 message_id=snapshot["message_id"],
                 target_language=target_language,
+                honorific_profile=honorific_profile,
                 source_language_declared=snapshot["source_language"],
                 source_language_detected=detected,
                 outcome=outcome,
@@ -680,6 +747,7 @@ async def _persist_translation(
     *,
     message_id: str,
     target_language: str,
+    honorific_profile: str,
     translated_text: str,
     model: str,
     latency_ms: int,
@@ -687,13 +755,14 @@ async def _persist_translation(
 ) -> TranslationResult | None:
     """Store one translation, or return the existing row if it is already there.
 
-    The unique constraint on (message_id, target_language) means a retry cannot
-    create a second row, so members sharing a language keep sharing one
-    `translation_id` (docs/CONTRACT.md section 4.4).
+    The unique constraint on (message_id, target_language, honorific_profile)
+    means a retry cannot create a second row, so members sharing a language and
+    a standing keep sharing one `translation_id` (docs/CONTRACT.md section 4.4).
     """
     translation = TranslationResult(
         message_id=message_id,
         target_language=target_language,
+        honorific_profile=honorific_profile,
         translated_text=translated_text,
         model=model,
         latency_ms=latency_ms,
@@ -704,10 +773,16 @@ async def _persist_translation(
         await session.commit()
     except IntegrityError:
         await session.rollback()
+        # The standing has to be in this filter. `scalar()` does not raise on
+        # several rows, it returns the first, so without it a retry would hand
+        # back another bucket's row — and that id travels straight into the
+        # WebSocket event and into `record_attempt`, attaching the reader's
+        # rating and edits to a translation they never saw.
         existing = await session.scalar(
             select(TranslationResult).where(
                 TranslationResult.message_id == message_id,
                 TranslationResult.target_language == target_language,
+                TranslationResult.honorific_profile == honorific_profile,
             )
         )
         return existing

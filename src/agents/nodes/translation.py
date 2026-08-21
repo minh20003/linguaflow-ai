@@ -24,6 +24,10 @@ from src.agents.context_provider import (
     ContextProvider,
     NullContextProvider,
 )
+from src.agents.customization import (
+    CustomizationProvider,
+    NullCustomizationProvider,
+)
 from src.agents.guardrails import (
     MAX_INPUT_CHARS,
     classify_leak_source,
@@ -41,6 +45,7 @@ from src.agents.guardrails import (
 from src.agents.prompts import (
     DETECT_LANGUAGE_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
+    build_audience_block,
     build_user_prompt,
     new_prompt_nonce,
 )
@@ -265,6 +270,83 @@ def make_build_context(
     return build_context
 
 
+def make_customize(provider: CustomizationProvider | None = None):
+    """Bind a customization source and return the `customize` node.
+
+    Bound the same way `build_context` is, and for the same reason: the node
+    signature LangGraph expects takes only the state, so anything else it needs
+    has to be closed over when the graph is built.
+
+    Args:
+        provider: Source of the audience facts. Defaults to knowing nothing.
+
+    Returns:
+        The `customize` node.
+    """
+    source = provider or NullCustomizationProvider()
+
+    async def customize(state: AgentState) -> dict:
+        """Load who this translation is for, degrading to knowing nothing.
+
+        No model is called here. The standing already arrived in the state from
+        the fan-out, and the subject area and audience were inferred in the
+        background long before this message; this node only reads them. Putting
+        the inference here instead would run it once per bucket for a single
+        message, which is up to four times for the same answer.
+
+        Every failure path returns the empty customization rather than raising.
+        The prompt then reads exactly as it did before this node existed, which
+        is a worse translation and still a translation — the guarantee NFR-02
+        makes about every other step applies here too.
+        """
+        started = time.perf_counter()
+
+        def unknown() -> dict:
+            """Continue with no audience facts."""
+            return {
+                "domain": "",
+                "audience": "",
+                "glossary_terms": [],
+                **_telemetry(
+                    state,
+                    customize_ms=_elapsed_ms(started),
+                    customized=False,
+                    glossary_hits=0,
+                ),
+            }
+
+        conversation_id = state.get("conversation_id", "")
+        if not conversation_id:
+            return unknown()
+
+        try:
+            customization = await source.get_customization(
+                conversation_id,
+                original_text=state.get("original_text", ""),
+                source_language=state.get("source_language", ""),
+                target_language=state.get("target_language", ""),
+            )
+        except Exception as exc:
+            # Same reasoning as build_context: a missing audience costs quality,
+            # never delivery.
+            logger.warning("customize failed: %s", exc)
+            return unknown()
+
+        return {
+            "domain": customization.domain,
+            "audience": customization.audience,
+            "glossary_terms": list(customization.glossary_terms),
+            **_telemetry(
+                state,
+                customize_ms=_elapsed_ms(started),
+                customized=bool(customization.domain or customization.audience),
+                glossary_hits=len(customization.glossary_terms),
+            ),
+        }
+
+    return customize
+
+
 async def translate(state: AgentState) -> dict:
     """Translate the message with the LLM, including conversation context."""
     original_text = (state.get("original_text") or "").strip()
@@ -311,11 +393,22 @@ async def translate(state: AgentState) -> dict:
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
         target_language=target_language,
         nonce=nonce,
+        # Renders to "" when nothing has been inferred and no standing was
+        # supplied, which is the state of every conversation for its first few
+        # messages. `.format` runs outside the try below, so this must not be
+        # able to raise: `build_audience_block` reads unknown values as absent
+        # rather than rejecting them.
+        audience_block=build_audience_block(
+            domain=state.get("domain", ""),
+            audience=state.get("audience", ""),
+            honorific_profile=state.get("honorific_profile", ""),
+        ),
     )
     user_prompt = build_user_prompt(
         original_text=original_text,
         context_messages=state.get("context_messages", []),
         nonce=nonce,
+        glossary_terms=state.get("glossary_terms", []),
     )
 
     # Any latency already recorded by detect_language is carried forward so the
@@ -460,7 +553,19 @@ async def validate_output(state: AgentState) -> dict:
     # carrying an identifier the message itself never contained came either from
     # that context or from nowhere. Neither is deliverable (ADR-21).
     context_messages = state.get("context_messages", []) or []
-    leaked = find_leaked_identifiers(translated_text, original_text)
+    # A glossary term is by definition wording the message does not contain —
+    # that is what forcing a rendering means — so a product code or a
+    # part number sitting in one would read to the leak check as an identifier
+    # the model invented, and the whole translation would be discarded. The
+    # terms are administrator-approved configuration, so they are treated as
+    # part of the source for this check and for nothing else (ADR-21, ADR-26).
+    known_terms = " ".join(
+        term.target_term for term in state.get("glossary_terms", []) or []
+    )
+    leaked = find_leaked_identifiers(
+        translated_text,
+        f"{original_text} {known_terms}" if known_terms else original_text,
+    )
     if leaked:
         # Count only. The values are the very thing that must not spread, and a
         # server log is read by people the conversation never included.
