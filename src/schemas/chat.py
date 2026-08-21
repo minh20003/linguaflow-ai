@@ -53,6 +53,40 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class GroupMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_ids: list[str] = Field(min_length=1)
+
+
+class GroupRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["admin", "member"]
+
+
+class GroupTransferOwnerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1)
+
+
+class GroupUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Group name must not be blank")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
 class ConversationMemberSummary(BaseModel):
     """Enough about a member to render them and to know what they read."""
 
@@ -66,6 +100,7 @@ class ConversationMemberSummary(BaseModel):
     username: str | None = None
     display_name: str | None = None
     preferred_language: str
+    group_role: Literal["owner", "admin", "member"] = "member"
     # The standing this member holds in *this* conversation, which is why it
     # cannot be validated straight off the User row: the same account is a
     # junior colleague in one thread and a client in another.
@@ -92,6 +127,7 @@ class ConversationResponse(BaseModel):
     id: str
     type: ConversationType
     title: str | None
+    description: str | None = None
     created_by: str
     created_at: UtcDatetime
     member_ids: list[str]

@@ -293,6 +293,7 @@ class Conversation(Base):
     )
     type: Mapped[str] = mapped_column(String(10), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("users.id", ondelete="RESTRICT"),
@@ -303,6 +304,7 @@ class Conversation(Base):
         nullable=False,
         server_default=func.now(),
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ConversationMember(Base):
@@ -328,6 +330,7 @@ class ConversationMember(Base):
         nullable=False,
         server_default=func.now(),
     )
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="member", server_default="member")
     # How far this member has read. Null means they have never opened the
     # conversation, so everything in it counts as unread.
     last_read_at: Mapped[datetime | None] = mapped_column(

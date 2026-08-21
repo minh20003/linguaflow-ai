@@ -45,6 +45,7 @@ from src.database import get_db
 from src.database.models import (
     Attachment,
     Conversation,
+    ConversationMember,
     Feedback,
     Message,
     PasswordResetToken,
@@ -81,6 +82,10 @@ from src.schemas.chat import (
     EditMessageRequest,
     FeedbackRequest,
     FeedbackResponse,
+    GroupMembersRequest,
+    GroupRoleRequest,
+    GroupTransferOwnerRequest,
+    GroupUpdateRequest,
     MessageDeletedEvent,
     MessageReadEvent,
     MessageResponse,
@@ -236,14 +241,13 @@ def _generate_otp() -> str:
 
 @router.post(
     "/auth/register",
-    response_model=PendingRegisterResponse,
-    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AuthResponse,
 )
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-) -> PendingRegisterResponse:
-    """Validate registration and create a pending identity awaiting email OTP verification (Batch F)."""
+) -> AuthResponse:
+    """Create an email/password account and immediately issue an authenticated session."""
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
@@ -251,6 +255,30 @@ async def register(
     if existing_user is not None:
         detail = "Email is already registered" if existing_user.email == request.email else "Username is already registered"
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    user = User(
+        email=request.email,
+        username=request.username,
+        display_name=(request.display_name or request.username).strip(),
+        password_hash=get_password_hash(request.password),
+        preferred_language=request.preferred_language,
+        interface_language=request.preferred_language,
+        role="member",
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username is already registered",
+        ) from exc
+
+    return await _issue_auth_response(user, db, remember=True)
+
+    # Legacy OTP implementation retained below temporarily to keep the schema
+    # migration reversible. It is unreachable: registration is email/password only.
 
     now = datetime.now(UTC)
     otp = _generate_otp()
@@ -407,7 +435,10 @@ async def resend_register_otp(
     request: ResendRegisterOtpRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ResendRegisterOtpResponse:
-    """Request a replacement 6-digit OTP for a pending registration."""
+    """Retired: registration uses email and password directly."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Email verification is no longer required")
+
+    # Retained only with the old database migration; unreachable.
     now = datetime.now(UTC)
     otp = _generate_otp()
     otp_hash = get_password_hash(otp)
@@ -507,7 +538,10 @@ async def verify_register_otp(
     request: VerifyRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
-    """Verify 6-digit OTP, consume pending registration, and create authenticated user account."""
+    """Retired: registration uses email and password directly."""
+    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Email verification is no longer required")
+
+    # Retained only with the old database migration; unreachable.
     pending = await db.get(PendingRegistration, request.pending_id)
     if pending is None:
         raise HTTPException(
@@ -1222,10 +1256,17 @@ async def _conversation_response(
     if members is None:
         members = await service.get_conversation_members(conversation_id=conversation.id)
     profiles = profiles or {}
+    role_rows = await service._db.execute(
+        select(ConversationMember.user_id, ConversationMember.role).where(
+            ConversationMember.conversation_id == conversation.id
+        )
+    )
+    group_roles = dict(role_rows.all())
     return ConversationResponse(
         id=conversation.id,
         type=conversation.type,
         title=conversation.title,
+        description=conversation.description,
         created_by=conversation.created_by,
         created_at=conversation.created_at,
         member_ids=[member.id for member in members],
@@ -1239,6 +1280,7 @@ async def _conversation_response(
                 username=member.username,
                 display_name=member.display_name,
                 preferred_language=member.preferred_language,
+                group_role=group_roles.get(member.id, "member"),
                 honorific_profile=profile_for(profiles, member.id),
             )
             for member in members
@@ -1295,6 +1337,93 @@ async def create_conversation(
         result.conversation,
         profiles=await resolve_profiles(db, result.conversation.id),
     )
+
+
+async def _group_access(db: AsyncSession, conversation_id: str, user_id: str) -> tuple[Conversation, ConversationMember]:
+    conversation = await db.get(Conversation, conversation_id)
+    if conversation is None or conversation.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Group was not found")
+    if conversation.type != "group":
+        raise HTTPException(status_code=400, detail="This operation is only available for groups")
+    membership = await db.get(ConversationMember, (conversation_id, user_id))
+    if membership is None:
+        raise HTTPException(status_code=403, detail="You are not a member of this group")
+    return conversation, membership
+
+
+@router.post("/conversations/{conversation_id}/members", status_code=204)
+async def add_group_members(conversation_id: str, payload: GroupMembersRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    _, actor = await _group_access(db, conversation_id, current_user.id)
+    if actor.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Only group administrators can add members")
+    found = set((await db.scalars(select(User.id).where(User.id.in_(payload.user_ids)))).all())
+    if found != set(payload.user_ids):
+        raise HTTPException(status_code=404, detail="One or more users were not found")
+    existing = set((await db.scalars(select(ConversationMember.user_id).where(ConversationMember.conversation_id == conversation_id, ConversationMember.user_id.in_(payload.user_ids)))).all())
+    db.add_all(ConversationMember(conversation_id=conversation_id, user_id=user_id, role="member") for user_id in found - existing)
+    await db.commit()
+
+
+@router.patch("/conversations/{conversation_id}", status_code=204)
+async def update_group_details(conversation_id: str, payload: GroupUpdateRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    conversation, membership = await _group_access(db, conversation_id, current_user.id)
+    if membership.role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Only group administrators can edit group information")
+    conversation.title = payload.title
+    conversation.description = payload.description
+    await db.commit()
+
+
+@router.delete("/conversations/{conversation_id}/members/{user_id}", status_code=204)
+async def remove_group_member(conversation_id: str, user_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    _, actor = await _group_access(db, conversation_id, current_user.id)
+    target = await db.get(ConversationMember, (conversation_id, user_id))
+    if actor.role not in {"owner", "admin"} or target is None:
+        raise HTTPException(status_code=403 if target else 404, detail="Member cannot be removed")
+    if target.role == "owner" or (actor.role == "admin" and target.role == "admin"):
+        raise HTTPException(status_code=403, detail="You cannot remove this group administrator")
+    await db.delete(target)
+    await db.commit()
+
+
+@router.patch("/conversations/{conversation_id}/members/{user_id}/role", status_code=204)
+async def update_group_role(conversation_id: str, user_id: str, payload: GroupRoleRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    _, actor = await _group_access(db, conversation_id, current_user.id)
+    target = await db.get(ConversationMember, (conversation_id, user_id))
+    if actor.role != "owner" or target is None or target.role == "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can change this role")
+    target.role = payload.role
+    await db.commit()
+
+
+@router.post("/conversations/{conversation_id}/leave", status_code=204)
+async def leave_group(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    _, membership = await _group_access(db, conversation_id, current_user.id)
+    if membership.role == "owner":
+        raise HTTPException(status_code=409, detail="Transfer ownership or delete the group first")
+    await db.delete(membership)
+    await db.commit()
+
+
+@router.post("/conversations/{conversation_id}/owner", status_code=204)
+async def transfer_group_owner(conversation_id: str, payload: GroupTransferOwnerRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    conversation, actor = await _group_access(db, conversation_id, current_user.id)
+    target = await db.get(ConversationMember, (conversation_id, payload.user_id))
+    if actor.role != "owner" or target is None or target.user_id == actor.user_id:
+        raise HTTPException(status_code=403, detail="Ownership can only be transferred to another group member")
+    actor.role = "admin"
+    target.role = "owner"
+    conversation.created_by = target.user_id
+    await db.commit()
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_group(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
+    conversation, membership = await _group_access(db, conversation_id, current_user.id)
+    if membership.role != "owner":
+        raise HTTPException(status_code=403, detail="Only the group owner can delete the group")
+    conversation.deleted_at = datetime.now(UTC)
+    await db.commit()
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])

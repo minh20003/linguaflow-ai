@@ -196,6 +196,7 @@ class ChatService:
                 ConversationMember(
                     conversation_id=conversation.id,
                     user_id=user_id,
+                    role="owner" if conversation_type == "group" and user_id == creator_id else "member",
                 )
                 for user_id in unique_member_ids
             ]
@@ -257,7 +258,7 @@ class ChatService:
                 ConversationMember,
                 ConversationMember.conversation_id == Conversation.id,
             )
-            .where(ConversationMember.user_id == user_id)
+            .where(ConversationMember.user_id == user_id, Conversation.deleted_at.is_(None))
             .order_by(Conversation.created_at.desc(), Conversation.id.desc())
         )
         return list(result.all())
