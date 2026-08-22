@@ -168,17 +168,20 @@ MESSAGE_BLOCK_TEMPLATE = """\
 # the target language is the only version of this that generalises (ADR-23).
 HONORIFIC_DIRECTIVES = {
     "senior": (
-        "The reader is senior to the sender. Address them the way the target "
-        "language addresses a senior colleague, and keep the sender's "
-        "references to themselves correspondingly modest."
+        "The reader is senior to the sender. Address them as the target "
+        "language addresses a senior colleague, and have the sender speak of "
+        "themselves from the junior side of that same relationship."
     ),
     "peer": (
         "The reader and the sender are peers. Use the neutral forms colleagues "
         "of equal standing use with one another."
     ),
     "junior": (
-        "The reader is junior to the sender. Use the familiar forms a senior "
-        "colleague would use, warm rather than curt."
+        "The reader is junior to the sender. Address them as the target "
+        "language addresses a more junior colleague, and have the sender speak "
+        "of themselves from the senior side of that same relationship. Warm "
+        "rather than curt: this is ordinary difference in standing at work, "
+        "not distance."
     ),
     "client": (
         "The reader is a client, not a colleague. Use the polite business "
@@ -191,10 +194,32 @@ HONORIFIC_DIRECTIVES = {
 # instruction: a language that does not mark the distinction grammatically is
 # exactly where a model starts inventing "Dear Sir" and "I would be most
 # grateful" out of a four-word message.
+#
+# The first two sentences were added after measuring, and each names a failure
+# seen in a real run rather than one imagined here. Both directions came back
+# rendered one-sided — "Anh/chị có thể xem qua" addresses the reader correctly
+# and leaves the speaker nowhere, when Vietnamese settles the pair together.
+# Asked to address a junior reader, the models reached for `bạn` and
+# `cậu/mình`: neutral and chummy respectively, wrong in different directions.
+#
+# Tuning stopped here, and the two attempts that went further are worth knowing
+# about. Telling the model that supplying the speaker's term is grammar rather
+# than an added courtesy made `mistral-small-latest` invert the pair — "Em nhờ
+# anh xem qua" for a *junior* reader, a well-formed sentence asserting the
+# opposite hierarchy. Spelling the direction out again on top of that produced
+# "Em thầy xem giúp con", which is not a register anyone uses at work, and a
+# sample that leaked its conversation history into the translation. Past a
+# point, more instruction here does not make a small model more precise; it
+# crowds out the constraints above that were already working.
 _HONORIFIC_FLOOR = (
-    "Express this through the forms and politeness the target language already "
-    "has. Never add greetings, titles or courtesies the message does not "
-    "contain, and never drop any it does."
+    "Where the target language marks this relationship on both sides — "
+    "Vietnamese pairs a term for the reader with one for the speaker, Japanese "
+    "and Korean carry it in the verb — render both sides of it, not only the "
+    "way the reader is addressed. Do not retreat to the language's neutral or "
+    "age-blind forms when it has forms that carry the relationship. Express "
+    "this through the forms and politeness the target language already has. "
+    "Never add greetings, titles or courtesies the message does not contain, "
+    "and never drop any it does."
 )
 
 AUDIENCE_BLOCK_TEMPLATE = """\
