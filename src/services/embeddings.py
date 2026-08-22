@@ -29,9 +29,15 @@ logger = logging.getLogger(__name__)
 # the widths differ, which is exactly why the width is pinned in the schema and
 # checked below rather than trusted.
 DEFAULT_MODELS: dict[str, str] = {
-    "gemini": "models/text-embedding-004",
+    # `models/text-embedding-004` was withdrawn and now answers 404. Its
+    # replacement returns 3072 dimensions by default, which is why the width is
+    # requested explicitly below rather than accepted.
+    "gemini": "models/gemini-embedding-001",
     "openai": "text-embedding-3-small",
-    "local": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    # MiniLM-L12-v2 sat here and returns 384 dimensions, which the
+    # `vector(768)` columns reject — the same shape of mistake as the two
+    # above, and the reason `local` had never actually run.
+    "local": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
 }
 
 # Which settings field carries each provider's key, and so — since
@@ -54,22 +60,37 @@ class EmbeddingConfigError(RuntimeError):
 _CLIENTS: dict[tuple[str, str], Any] = {}
 
 
-def _build_client(provider: str, model: str) -> Any:
+def _build_client(provider: str, model: str, api_key: str) -> Any:
     """Import and construct one provider's client.
 
     Imported inside the function so a provider nobody uses does not have to be
     installed — `sentence-transformers` in particular pulls in torch, which is
     several hundred megabytes and has no place in an image that will never call
     it (ADR-18).
+
+    The key is passed in rather than left to the provider package to find. Both
+    packages fall back to reading the environment, and this project keeps its
+    keys in `.env`, which pydantic-settings reads *without* exporting — so the
+    client would raise for a missing key that `get_embedder` had just confirmed
+    was present. `embed` swallows every failure by design, so the visible effect
+    was not an error but silence: both retrieval flags could be switched on and
+    do nothing at all.
     """
+    # The width is asked for, not accepted. `message_embeddings.embedding` and
+    # `glossary_entries.embedding` are `vector(768)` columns, and both current
+    # hosted models return something wider unless told otherwise — a vector of
+    # the wrong width is rejected by the column, so this is the difference
+    # between retrieval working and every insert failing.
     if provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        return GoogleGenerativeAIEmbeddings(model=model)
+        return GoogleGenerativeAIEmbeddings(
+            model=model, google_api_key=api_key, output_dimensionality=EMBEDDING_DIM
+        )
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
-        return OpenAIEmbeddings(model=model)
+        return OpenAIEmbeddings(model=model, api_key=api_key, dimensions=EMBEDDING_DIM)
 
     from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -97,7 +118,8 @@ def get_embedder(settings: Settings | None = None) -> Any:
     # Checked before the provider package is imported, so a missing key reports
     # itself rather than surfacing as an ImportError about an absent package.
     key_field = PROVIDER_KEY_FIELD.get(provider)
-    if key_field and not getattr(settings, key_field, ""):
+    api_key = getattr(settings, key_field, "") if key_field else ""
+    if key_field and not api_key:
         raise EmbeddingConfigError(
             f"EMBEDDING_PROVIDER={provider} but {key_field.upper()} is not set. "
             f"Add {key_field.upper()} to .env, or set EMBEDDING_PROVIDER=local "
@@ -107,7 +129,7 @@ def get_embedder(settings: Settings | None = None) -> Any:
     model = settings.embedding_model or DEFAULT_MODELS[provider]
     cached = _CLIENTS.get((provider, model))
     if cached is None:
-        cached = _build_client(provider, model)
+        cached = _build_client(provider, model, api_key)
         _CLIENTS[(provider, model)] = cached
     return cached
 
