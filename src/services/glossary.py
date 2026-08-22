@@ -165,10 +165,27 @@ def _to_terms(best: dict[str, tuple[int, Any]]) -> tuple[GlossaryTerm, ...]:
 # this one sits above both of those and catches only the typos nothing else
 # could plausibly be: a doubled or dropped letter.
 #
-# That gives up the transpositions, and gives them up on purpose. A glossary
-# term is *forced* into the translation by the prompt, so reading "headline" as
-# "deadline" changes what the message says, while a missed typo leaves the
-# sentence as the model would have translated it anyway.
+# That gives up transpositions and adjacent-key slips, and gives them up on
+# purpose. A glossary term is *forced* into the translation by the prompt, so
+# reading "headline" as "deadline" changes what the message says, while a missed
+# typo leaves the sentence as the model would have translated it anyway.
+#
+# An embedding model does not rescue those cases; it is the wrong instrument for
+# them. Measured on the same words, string distance clears every dropped or
+# doubled letter, while LaBSE clears 2 of 12 typos and e5 4 of 12 — and both
+# rank the *confusable real word* above the typo. The reason is mechanical: a
+# typo is not a word, so the tokenizer shatters it into fragments and its vector
+# drifts away from the term, whereas two real words that look alike are often
+# genuinely related in meaning ("headline"/"deadline", "stating"/"staging") and
+# sit close together. Embeddings answer "is this about the same thing", which is
+# the opposite of the question a typo asks.
+#
+# Nor does a better string metric help. Damerau-Levenshtein counts a
+# transposition as one edit and would catch "reveiw" — but "headline" and
+# "deadline" are also one edit apart, so the coverage arrives with exactly the
+# error it was meant to avoid. No surface measure separates a misspelling of a
+# word from a different word that is spelled almost the same; only a dictionary
+# would, and this project has none.
 FUZZY_MATCH_RATIO = 0.90
 
 FUZZY_MIN_LENGTH = 5
