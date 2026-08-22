@@ -353,3 +353,13 @@
 
 .known .hint:last-child,
 .conflict .hint:last-child { margin-bottom: var(--s-2); }
+
+/* The buttons on one glossary row. Wrapping rather than a fixed row: retired
+   entries carry a badge and two buttons where an active one carries two, and a
+   narrow column should stack them instead of widening the table. */
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}

@@ -39,6 +39,7 @@ from src.schemas.glossary import (
     GlossaryCitationSummary,
     GlossaryEntryRequest,
     GlossaryEntryResponse,
+    GlossaryEntryUpdateRequest,
     GlossaryProposalResponse,
     GlossaryRejectionRequest,
     GlossarySimilarEntry,
@@ -355,6 +356,95 @@ async def create_glossary_entry(
     return GlossaryEntryResponse.model_validate(entry)
 
 
+async def _load_entry(db: AsyncSession, entry_id: str) -> GlossaryEntry:
+    """Fetch an entry or answer 404."""
+    entry = await db.scalar(select(GlossaryEntry).where(GlossaryEntry.id == entry_id))
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Glossary entry was not found",
+        )
+    return entry
+
+
+@router.patch(
+    "/admin/glossary/{entry_id}",
+    response_model=GlossaryEntryResponse,
+)
+async def update_glossary_entry(
+    entry_id: str,
+    payload: GlossaryEntryUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Correct an entry that is already in force.
+
+    Only the fields sent are changed; the language pair is not one of them,
+    because a term whose pair is wrong is a different entry rather than a
+    mistyped one, and the embedding and the unique constraint are both scoped
+    to the pair.
+
+    The source term is re-embedded when it changes, for the same reason
+    approval embeds in the first place: without a fresh vector the semantic
+    stage would go on matching the old wording, silently, and the only symptom
+    would be a term that stops being found.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    if payload.source_term is not None and payload.source_term != entry.source_term:
+        entry.source_term = payload.source_term
+        entry.source_term_normalized = normalize_term(payload.source_term)
+        entry.embedding, entry.embedding_model = await embed_with_model(
+            payload.source_term
+        )
+    if payload.target_term is not None:
+        entry.target_term = payload.target_term
+    if payload.domain is not None:
+        entry.domain = payload.domain
+    if payload.audience is not None:
+        entry.audience = payload.audience
+    if payload.keep_verbatim is not None:
+        entry.keep_verbatim = payload.keep_verbatim
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        # An edit can collide with an existing row the same way an insert can:
+        # the scope it is being moved to may already be taken.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A glossary entry for this term and scope already exists",
+        ) from exc
+
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.post(
+    "/admin/glossary/{entry_id}/restore",
+    response_model=GlossaryEntryResponse,
+)
+async def restore_glossary_entry(
+    entry_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Put a retired entry back into use.
+
+    The counterpart of retirement, and the reason retirement can be undone at
+    all: nothing was deleted, so restoring is a status change rather than a
+    re-creation — the entry keeps its id, its embedding and the date it was
+    first approved.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    entry.status = "active"
+    await db.commit()
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
 @router.delete(
     "/admin/glossary/{entry_id}",
     response_model=GlossaryEntryResponse,
@@ -369,14 +459,9 @@ async def retire_glossary_entry(
     DELETE by verb, retirement by effect, and deliberately so: a translation
     delivered last month was shaped by this term, and removing the row would
     erase the only explanation for the wording a reader is looking at. Retiring
-    it stops it shaping anything new.
+    it stops it shaping anything new, and `POST .../restore` undoes it.
     """
-    entry = await db.scalar(select(GlossaryEntry).where(GlossaryEntry.id == entry_id))
-    if entry is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Glossary entry was not found",
-        )
+    entry = await _load_entry(db, entry_id)
 
     entry.status = "retired"
     await db.commit()

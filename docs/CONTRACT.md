@@ -173,7 +173,9 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/admin/glossary/proposals/{proposal_id}/reject` | `{"reason": str}` | `GlossaryProposalDTO`, §3.12 | Đã hiện thực |
 | `GET` | `/admin/glossary?include_retired=&limit=` | — | `[GlossaryEntryDTO]`, §3.12 | Đã hiện thực |
 | `POST` | `/admin/glossary` | `{"source_term", "target_term", "source_language", "target_language", "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `PATCH` | `/admin/glossary/{entry_id}` | `{"source_term"?, "target_term"?, "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, §3.12 | Đã hiện thực |
 | `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/{entry_id}/restore` | — | `GlossaryEntryDTO` với `status = "active"`, §3.12 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -556,6 +558,27 @@ cùng làm hàng đợi sẽ đều tin mình là người đã duyệt, và quy
 giao tháng trước được định hình bởi thuật ngữ đang active lúc đó; xoá dòng là xoá mất lời
 giải thích duy nhất cho câu chữ người đọc đang nhìn. Nghỉ hưu thì nó thôi định hình những
 bản dịch mới (§5 ghi chú 16).
+
+**`keep_verbatim = true` nghĩa là thuật ngữ không được dịch**, và prompt khi đó ghi
+`"<thuật ngữ>": leave untranslated, exactly as written` chứ **không** đọc tới `target_term`.
+Cột `target_term` vẫn `NOT NULL` nên vẫn phải có giá trị, và quy ước — do chính prompt đề xuất
+thuật ngữ đặt ra — là **lặp lại đúng thuật ngữ nguồn**. Màn hình quản trị vì thế tự điền và khoá
+ô bản dịch khi ô "giữ nguyên" được tích: trước 22/08 biểu mẫu vẫn đòi một bản dịch mà nó sắp
+bỏ qua, và không có gì trên màn hình nói ra điều đó.
+
+**`POST /admin/glossary/{id}/restore` là chiều ngược lại của việc nghỉ hưu (22/08).** Vì
+không có gì bị xoá nên khôi phục chỉ là đổi `status` về `active`: mục giữ nguyên `id`,
+embedding và ngày được duyệt lần đầu, thay vì được tạo lại thành một dòng thứ hai mà người
+đọc phải đối chiếu mới biết máy đang dùng dòng nào.
+
+**`PATCH /admin/glossary/{id}` sửa một mục đang có hiệu lực (22/08).** Chỉ những trường được
+gửi mới thay đổi, nên một màn hình chưa biết tới cột thêm về sau không thể xoá trắng cột đó
+bằng cách bỏ sót. **Cặp ngôn ngữ không sửa được**: một mục sai cặp ngôn ngữ là một mục khác
+chứ không phải một mục gõ nhầm, và cả embedding lẫn ràng buộc duy nhất đều gắn với cặp ấy.
+Khi `source_term` đổi, server **tính lại embedding** — không có vector mới thì tầng khớp ngữ
+nghĩa vẫn khớp theo cách viết cũ, im lặng, và triệu chứng duy nhất là một thuật ngữ bỗng
+không còn được tìm thấy. Sửa được là cần thiết vì phương án còn lại tệ hơn: sửa một lỗi gõ
+bằng cách cho mục cũ nghỉ hưu rồi thêm một mục gần giống sẽ để lại hai dòng vĩnh viễn.
 
 ## 4. WebSocket Protocol
 
