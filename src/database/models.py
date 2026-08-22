@@ -51,6 +51,25 @@ EMBEDDING_DIM = 768
 HONORIFIC_PROFILES = ("senior", "peer", "junior", "client")
 DEFAULT_HONORIFIC_PROFILE = "peer"
 
+# The scope a glossary entry is filed under, and the same words the background
+# profile inference must answer with.
+#
+# A closed vocabulary rather than free text, and the reason is mechanical: the
+# lookup compares an entry's scope to a conversation's *by equality*
+# (`_scope_rank` in `src/services/glossary.py`), so an entry filed under
+# "client" and a conversation profiled as "an external client" never meet. Both
+# ends were free text until 22/08 and the two halves of the feature could
+# therefore describe the same conversation in words that do not match — the
+# audience glossary looked implemented and did nothing outside the evaluation
+# harness, which supplies the scope directly (ADR-24, ADR-26).
+#
+# Not enforced by a CheckConstraint: `""` is a real value meaning "applies
+# everywhere", and an administrator may still file a term under a word of their
+# own for a scope this list has not learned about yet. The list is what the
+# model is held to and what the admin screen offers first.
+GLOSSARY_AUDIENCES = ("internal", "client")
+GLOSSARY_DOMAINS = ("engineering", "commercial", "support")
+
 # A glossary entry is never deleted, only retired: a translation delivered last
 # month was shaped by a term that was active then, and dropping the row would
 # erase the only explanation for the wording a reader is looking at.

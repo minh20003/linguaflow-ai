@@ -333,14 +333,17 @@ who it is with, and where each speaker stands relative to the others.
 # Constraints
 - Speakers are labelled U01, U02 and so on. Use exactly those labels; you do \
 not know anyone's name and must not guess one.
-- `domain` is a short noun phrase for the subject area, in English, at most \
-four words. Examples: "software delivery", "contract negotiation", "customer \
-support". Use "" if the transcript does not say.
-- `audience` describes who is in the room, in English, at most four words. \
-Examples: "an internal engineering team", "an external client", "a supplier". \
+- `domain` is the subject area, chosen from exactly this list: {domains}. Use \
+"" if the transcript does not say. Answer with the bare word and nothing else.
+- `audience` is who is in the room, chosen from exactly this list: \
+{audiences} — `internal` when everyone present belongs to the same \
+organisation, `client` when a customer or other outside party is among them. \
 The distinction that matters is whether outsiders are present, because it \
 decides whether in-house jargon is appropriate. Use "" if the transcript does \
-not say.
+not say. Answer with the bare word and nothing else.
+- Both are matched **letter for letter** against the terminology settings, so \
+a word outside these lists, or a phrase around one, is read as "" and the \
+answer is thrown away.
 - For each speaker give one standing, chosen from exactly these four:
   - `senior` — others defer to them, they assign work or approve it
   - `peer` — no visible difference in standing
@@ -389,9 +392,12 @@ one it renders; infer it from the quoted usage below.
 words. "the user interfaces" becomes "user interface".
 - If the correction shows the term should be left in {source_language} rather \
 than translated, set `keep_verbatim` to true and repeat the term as the target.
-- `domain` and `audience` describe when the entry applies, in English, at most \
-four words each. Leave either "" when the evidence does not say — "" means \
-"applies everywhere", which is the safer default and the one to prefer.
+- `domain` and `audience` describe when the entry applies, and each is chosen \
+from a fixed list: `domain` from {domains}, `audience` from {audiences}. Leave \
+either "" when the evidence does not say — "" means "applies everywhere", \
+which is the safer default and the one to prefer. Both are matched letter for \
+letter against the terminology settings, so a word outside these lists, or a \
+phrase around one, is read as "".
 - If the evidence is not about a term at all — a rephrasing, a fixed typo, a \
 difference of style — return {{"skip": true}} and nothing else. Most \
 corrections are this. Proposing them wastes a reviewer's attention and teaches \
