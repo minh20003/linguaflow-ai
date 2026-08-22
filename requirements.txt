@@ -14,8 +14,12 @@ langchain-openai>=0.3.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
 langchain-mistralai>=0.2.0
-# Observability cho Agent (F-03.4). API CallbackHandler khác nhau giữa các major
-# version — module src/agents/observability.py viết theo v4.
+# Observability cho Agent (F-03.4). Backend chon bang OBSERVABILITY_PROVIDER;
+# mac dinh la Braintrust (ADR-29). Tich hop LangChain nam trong chinh goi
+# braintrust — goi rieng braintrust-langchain da bi khai tu.
+braintrust>=0.34.0
+# Langfuse van giu de chon lai duoc. API CallbackHandler khac nhau giua cac major
+# version — module src/agents/observability.py viet theo v4.
 langfuse>=4.0.0,<5.0.0
 # Nhan dien ngon ngu cuc bo (~1ms), giam so lan goi LLM detect
 langdetect>=1.0.9

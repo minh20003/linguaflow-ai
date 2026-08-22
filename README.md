@@ -52,7 +52,7 @@ User → WebSocket → FastAPI → Translation Service → LangGraph Agent → L
 - Alembic migrations
 
 ### Observability
-- Langfuse (optional)
+- Braintrust (optional, default), or Langfuse — set `OBSERVABILITY_PROVIDER`
 
 ## Prerequisites
 
@@ -215,7 +215,7 @@ Summary:
 - **Frontend**: Vercel (root directory: `frontend/`)
 - **Backend**: Railway with Docker
 - **Database**: Railway PostgreSQL
-- **Observability**: Langfuse (optional)
+- **Observability**: Braintrust (optional, default) or Langfuse
 
 ## Security Note
 

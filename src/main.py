@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
-from src.agents.observability import verify_langfuse_credentials
+from src.agents.observability import verify_tracing_credentials
 from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s in %s mode", settings.app_name, settings.app_env)
 
     # Blocking, so it runs once here rather than on any request path.
-    verify_langfuse_credentials()
+    verify_tracing_credentials()
 
     # The schema is not created here. Alembic owns it (ADR-06), and the
     # container runs `alembic upgrade head` before this process starts, so an

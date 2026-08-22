@@ -31,7 +31,7 @@ nó tạo ra đúng một tin nhắn mà người nhận phải đọc chưa d�
 | Ngữ cảnh → prompt | 5 tin gần nhất của **cùng một hội thoại** | Provider LLM | Truy vấn khoá cứng theo `conversation_id`; loại tin đã thu hồi và tin không có văn bản; mỗi dòng bị escape và cắt 500 ký tự | `AGENT_CONTEXT_SIZE=0` |
 | Đầu ra bản dịch | Bản dịch tin nhắn | Người nhận trong hội thoại | Ba lớp kiểm rò rỉ ở §3.3 | Không (là chức năng chính) |
 | Tầng dịch dự phòng | **Chỉ** tin nhắn gốc, không kèm ngữ cảnh | Endpoint công cộng của Google Translate | Không gửi ngữ cảnh; chịu cùng giới hạn độ dài và cùng phép kiểm ngôn ngữ đầu ra | `FALLBACK_TRANSLATOR_ENABLED=false` |
-| Tracing | **Toàn bộ prompt**, gồm cả ngữ cảnh | Langfuse (cloud) | Công bố tại §6.4; không đặt khoá thì không gửi gì | Bỏ trống `LANGFUSE_*` |
+| Tracing | **Toàn bộ prompt**, gồm cả ngữ cảnh | Braintrust (cloud), hoặc Langfuse khi chọn lại | Công bố tại §6.4; không đặt khoá thì không gửi gì | `OBSERVABILITY_PROVIDER=none`, hoặc bỏ trống khoá của backend đang chọn |
 | Log máy chủ | Chỉ **hình dạng**: mã ngôn ngữ, độ dài, số lượng, tên ngoại lệ | Log Railway | Không ghi nội dung tin nhắn, không ghi giá trị định danh rò rỉ, không ghi đoạn văn trùng | — |
 | Cache dịch trong tiến trình | Cụm ngắn ≤ 30 ký tự đã dịch | Bộ nhớ tiến trình | Khoá cache **có `conversation_id`**, nên một hội thoại không bao giờ đọc được bản dịch của hội thoại khác | — |
 | Fan-out WebSocket | Bản dịch theo ngôn ngữ | Thành viên của đúng hội thoại đó | Danh sách người nhận lấy từ `conversation_members`, cộng người gửi ở `direct` (CONTRACT §4.4) | — |

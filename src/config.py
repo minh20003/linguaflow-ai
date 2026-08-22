@@ -150,7 +150,22 @@ class Settings(BaseSettings):
     fallback_translator_enabled: bool = True
     fallback_translator_timeout_seconds: int = Field(default=5, ge=1, le=30)
 
-    # Observability — Langfuse (F-03.4). Empty keys disable tracing.
+    # Observability (F-03.4). Which backend receives the traces, or none.
+    #
+    # A switch rather than a hard-wired vendor because a trace backend is the
+    # one dependency whose failure mode is silence: it never breaks a
+    # translation, so the only way to tell a working exporter from a broken one
+    # is to be able to point the same flow at another and compare (ADR-29).
+    observability_provider: Literal["braintrust", "langfuse", "none"] = "braintrust"
+
+    # Braintrust. An empty key disables tracing whatever the provider says.
+    braintrust_api_key: str = ""
+    # The project traces are filed under. Braintrust creates it on first use, so
+    # a typo here does not fail — it opens a second, empty project instead.
+    braintrust_project: str = "linguaflow"
+
+    # Langfuse, kept selectable after the move to Braintrust. Empty keys disable
+    # tracing.
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     # Accepts either env name. The Langfuse SDK itself reads LANGFUSE_BASE_URL,

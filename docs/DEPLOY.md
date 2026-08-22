@@ -48,8 +48,8 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
    | `LLM_PROVIDER` | `groq` |
    | `GROQ_API_KEY` | khoá của bạn |
 
-   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `LANGFUSE_*` để
-   bật tracing, `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
+   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `BRAINTRUST_API_KEY`
+   để bật tracing (hoặc `OBSERVABILITY_PROVIDER=langfuse` cùng `LANGFUSE_*`), `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
    nhắn sang endpoint Google Translate không chính thức (ADR-07, ADR-15).
 
    Không cần đặt `PORT`: Railway tự tiêm, và `CMD` trong `Dockerfile` đọc nó.
@@ -142,7 +142,9 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `SMTP_USER`, `SMTP_PASSWORD` | — | Bắt buộc ở production |
 | `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP |
 | `SMTP_USE_TLS` | `true` | Bật STARTTLS cho cổng 587 |
-| `LANGFUSE_*` | rỗng | Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
+| `OBSERVABILITY_PROVIDER` | `braintrust` | `braintrust` \| `langfuse` \| `none`. Chọn backend nhận trace (ADR-29) |
+| `BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT` | rỗng / `linguaflow` | Rỗng là tắt tracing. Khoá Braintrust bắt đầu bằng `sk-` |
+| `LANGFUSE_*` | rỗng | Chỉ dùng khi `OBSERVABILITY_PROVIDER=langfuse`. Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
 
 ### 5.1. Khoá bí mật — cần cấp những gì
 
@@ -153,7 +155,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Có, ở production** | Server từ chối khởi động nếu thiếu ở `APP_ENV=production` |
 | `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
+| `BRAINTRUST_API_KEY` (hoặc `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` khi chọn Langfuse) | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
 | `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
 
 ### 5.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)
