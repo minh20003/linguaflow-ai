@@ -166,6 +166,11 @@ GLOSSARY_THRESHOLDS: dict[str, float] = {
     # 0.65 sits clear of every unrelated pair and gives up the two weakest true
     # ones on purpose.
     "models/gemini-embedding-001": 0.65,
+    # Measured 22/08 on the same pairs: unrelated words top out at 0.616 and
+    # 6 of 8 true variants clear it, against 8 of 8 for -001. The newer model
+    # retrieves passages better and separates terms slightly worse — two
+    # different jobs, which is why the two are configured independently.
+    "models/gemini-embedding-2": 0.65,
     # The local models, at the highest threshold that lets no wrong pair
     # through. An earlier note here claimed no threshold existed because the
     # worst true pair scores below the best false one — that only rules out a
