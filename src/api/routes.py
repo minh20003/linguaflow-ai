@@ -66,7 +66,6 @@ from src.schemas.auth import (
     UserResponse,
     VerifyRegisterRequest,
 )
-from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.schemas.chat import (
     AttachmentResponse,
     ConversationCreateRequest,
@@ -101,6 +100,7 @@ from src.services.connection_manager import ConnectionManager
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
 from src.services.email import EmailDeliveryError, send_registration_otp_email
+from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.services.profiles import (
     profile_for,
     resolve_profiles,

@@ -16,21 +16,19 @@ Covers:
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from google.auth import exceptions as google_exceptions
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from google.auth import exceptions as google_exceptions
 
 from src.config import Settings
-from src.database.models import RefreshSession, User
+from src.database.models import User
 from src.services.google_auth import (
     GoogleAuthError,
     GoogleUserInfo,
     _verify_id_token_sync,
-    verify_google_token,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
