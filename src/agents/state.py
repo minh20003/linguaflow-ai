@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     # form, and a manager and a client in one group are owed different ones.
     # `peer` is the neutral value and what an unprofiled conversation uses.
     honorific_profile: str
+    sender_honorific_profile: str
 
     # Conversation context
     context_messages: list[str]  # 3-5 recent messages, preformatted for the prompt

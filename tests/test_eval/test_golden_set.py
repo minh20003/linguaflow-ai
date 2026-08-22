@@ -47,6 +47,7 @@ OPTIONAL_KEYS = {
     "domain",
     "audience",
     "honorific_profile",
+    "sender_honorific_profile",
 }
 
 # The four standings the schema allows. Repeated here rather than imported so a

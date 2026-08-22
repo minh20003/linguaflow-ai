@@ -77,7 +77,15 @@ class Settings(BaseSettings):
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
     deepseek_api_key: str = ""
-    google_api_key: str = ""
+    # Accepts either name. Google's own documentation and SDK use
+    # `GEMINI_API_KEY`, so a .env written from those docs was read as no key at
+    # all — and `embed` reports every failure as None, so the visible effect was
+    # a quota error from the *old* key rather than anything pointing at the new
+    # one. Same trap, same fix, as LANGFUSE_HOST below.
+    google_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    )
     openai_api_key: str = ""
     mistral_api_key: str = ""
 
@@ -108,13 +116,12 @@ class Settings(BaseSettings):
     # did — and the reader is never told, because there is nothing they could
     # do about it (ADR-25).
     #
-    # Off by default, and that is not timidity. `sentence-transformers` and
-    # `langchain-huggingface` are opt-in extras in requirements.txt because they
-    # pull in torch, so an implicit fallback either fails on ImportError or
-    # drags half a gigabyte into a process that was never sized for it. Turning
-    # this on is a deployment decision taken together with uncommenting those
-    # two lines.
-    embedding_fallback_provider: Literal["", "local"] = ""
+    # On by default: an exhausted quota should not become an outage, and the
+    # two local packages now ship in requirements.txt for exactly this. The
+    # cost is real — they pull torch, roughly half a gigabyte, into the image.
+    # `embed_with_model` declines to fall back inside a test run, because a
+    # test that quietly loads a model that size is a test nobody can run twice.
+    embedding_fallback_provider: Literal["", "local"] = "local"
 
     # Each adds an embedding call to the request path, and NFR-01 is the
     # tightest figure in the project, so both were turned on against

@@ -18,6 +18,7 @@ and `embed` refuses rather than writing a vector the column cannot hold.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from src.config import Settings, get_settings
@@ -235,6 +236,14 @@ async def embed_with_model(
 
     fallback = settings.embedding_fallback_provider
     if not fallback or fallback == settings.embedding_provider:
+        return None, ""
+
+    # Never inside a test run. The fallback imports sentence-transformers, which
+    # pulls torch into the process; under pytest that has crashed the suite
+    # outright on Windows, and even where it does not, a test that silently
+    # loads half a gigabyte is one nobody will run twice. Tests that mean to
+    # exercise the fallback construct it explicitly.
+    if "pytest" in sys.modules:
         return None, ""
 
     # Only a provider that *had* a key and still failed gets a fallback. Without

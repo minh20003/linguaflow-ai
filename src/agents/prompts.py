@@ -229,11 +229,56 @@ AUDIENCE_BLOCK_TEMPLATE = """\
 """
 
 
+# Rank within the ladder. `client` is not on it: an outside party is a different
+# axis from seniority, which is why it is handled before the comparison rather
+# than given a number.
+_STANDING_RANK = {"junior": 0, "peer": 1, "senior": 2}
+
+
+def relative_standing(reader: str, sender: str) -> str:
+    """Where the reader stands *relative to the sender*, not in the room.
+
+    `participant_profiles` records one standing per person, but how one person
+    addresses another is a relationship between two. The two coincide only when
+    the sender happens to sit at the top of the ladder. In a group of A senior,
+    B junior and C junior, a message from B to C used to be rendered "the reader
+    is junior to the sender" — while B and C are peers — because the register C
+    saw came from the conversation's ladder rather than from the B-C pair
+    (ADR-23).
+
+    Args:
+        reader: The reader's standing in the conversation.
+        sender: The sender's. Empty when nothing has been inferred yet, in which
+            case the reader's own standing is returned unchanged and the prompt
+            reads exactly as it did before this existed.
+
+    Returns:
+        One of the four standings, or "" when neither side is known.
+    """
+    if not sender:
+        return reader
+    # A customer on either side makes the exchange commercial, whichever of them
+    # is writing: the politeness a vendor owes a client and the politeness a
+    # client is written with are the same register.
+    if reader == "client" or sender == "client":
+        return "client"
+    if reader not in _STANDING_RANK or sender not in _STANDING_RANK:
+        return reader
+
+    difference = _STANDING_RANK[reader] - _STANDING_RANK[sender]
+    if difference > 0:
+        return "senior"
+    if difference < 0:
+        return "junior"
+    return "peer"
+
+
 def build_audience_block(
     *,
     domain: str = "",
     audience: str = "",
     honorific_profile: str = "",
+    sender_honorific_profile: str = "",
 ) -> str:
     """Render the section describing who the translation is for.
 
@@ -249,6 +294,10 @@ def build_audience_block(
             `HONORIFIC_DIRECTIVES` is treated as unknown and contributes
             nothing, so a value added to the database ahead of this file cannot
             produce a broken prompt.
+        sender_honorific_profile: The sender's standing. Combined with the
+            reader's into the *relationship* between them, because that is what
+            a language marks — see `relative_standing`. Empty leaves the
+            reader's standing to speak for itself, as it did before.
 
     Returns:
         The rendered section, or "" when there is nothing to say.
@@ -259,7 +308,9 @@ def build_audience_block(
     if audience:
         lines.append(f"- This conversation is with: {audience}.")
 
-    directive = HONORIFIC_DIRECTIVES.get(honorific_profile)
+    directive = HONORIFIC_DIRECTIVES.get(
+        relative_standing(honorific_profile, sender_honorific_profile)
+    )
     if directive:
         lines.append(f"- {directive}")
         lines.append(f"- {_HONORIFIC_FLOOR}")

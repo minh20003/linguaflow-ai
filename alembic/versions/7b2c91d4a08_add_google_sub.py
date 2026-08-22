@@ -4,7 +4,7 @@ Google Sign-In subject identifier for Batch G. Supports both explicit Settings
 linking and full Google sign-in identity resolution.
 
 Revision ID: 7b2c91d4a08
-Revises: d4e9f60a12b3
+Revises: ef06ca79ef49
 Create Date: 2026-08-20
 
 """

@@ -296,6 +296,11 @@ async def run_sample(
             # of every conversation before anything has been inferred, so those
             # samples exercise exactly the prompt they always did.
             "honorific_profile": sample.get("honorific_profile", ""),
+            # The other half of the pair. Absent on every sample that predates
+            # it, which is the state of a real conversation before anything has
+            # been inferred, so those samples exercise the prompt they always
+            # did (ADR-23).
+            "sender_honorific_profile": sample.get("sender_honorific_profile", ""),
         },
         config=build_runnable_config(
             conversation_id=conversation_id,
