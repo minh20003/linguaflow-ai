@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.customization import GlossaryTerm
 from src.config import Settings, get_settings
 from src.database.models import GlossaryEntry
-from src.services.embeddings import embed, embedding_model_name
+from src.services.embeddings import embed, embedding_model_name, glossary_threshold_for
 
 logger = logging.getLogger(__name__)
 
@@ -251,18 +251,21 @@ async def _add_semantic_matches(
     rather than on a few hundred rows, and doing it here keeps the whole
     decision — scope, exactness, threshold — in one readable place.
     """
+    # Plain `embed`, not `embed_with_model`: this is the read path, and falling
+    # back here would be work that cannot pay off. A vector from the local model
+    # matches no Gemini-stored entry by construction, so the fallback would load
+    # a half-gigabyte model onto the request path to produce a query guaranteed
+    # to return nothing. Writers fall back — a vector stored under its true model
+    # is useful later — readers just go quiet.
     vector = await embed(text, settings=settings)
     if vector is None:
         return
 
-    # The *resolved* name, not the raw setting. Entries are written with
-    # `embedding_model_name()`, and EMBEDDING_MODEL empty — the documented
-    # default — used to make this an empty string, which disabled the guard
-    # entirely: every stored vector was then compared whatever produced it,
-    # including rows left behind by a run on a different model. A vector from
-    # another space clears the 0.60 threshold at random, and the term it drags
-    # in is forced into the translation with nothing anywhere reporting it.
+    # The threshold belongs to the space this query vector lives in, so it is
+    # looked up by the model that produced it rather than read off a single
+    # global constant.
     model = embedding_model_name(settings)
+    threshold = glossary_threshold_for(model, settings)
     for entry in candidates:
         if entry.source_term_normalized in already:
             continue
@@ -272,5 +275,5 @@ async def _add_semantic_matches(
         # returns a number, and the number means nothing.
         if model and entry.embedding_model and entry.embedding_model != model:
             continue
-        if _cosine(list(entry.embedding), vector) >= settings.glossary_similarity_threshold:
+        if _cosine(list(entry.embedding), vector) >= threshold:
             offer(entry, bonus=0)

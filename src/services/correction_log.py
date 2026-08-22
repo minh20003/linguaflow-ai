@@ -26,7 +26,7 @@ from src.agents.guardrails import sanitize_context_message
 from src.config import Settings, get_settings
 from src.database import get_async_session_maker
 from src.database.models import CorrectionLog
-from src.services.embeddings import embed, embedding_model_name
+from src.services.embeddings import embed_with_model
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ async def _store(
     lost one.
     """
     try:
-        vector = await embed(human_phrase, settings=settings)
+        vector, vector_model = await embed_with_model(human_phrase, settings=settings)
         async with session_factory() as session:
             session.add(
                 CorrectionLog(
@@ -212,7 +212,7 @@ async def _store(
                     consent_to_share=True,
                     anonymized_snippet=snippet,
                     embedding=vector,
-                    embedding_model=embedding_model_name(settings) if vector else "",
+                    embedding_model=vector_model,
                 )
             )
             await session.commit()

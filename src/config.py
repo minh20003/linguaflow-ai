@@ -23,12 +23,7 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
 )
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
 
-# The embedding model `glossary_similarity_threshold` was calibrated against.
-# A cosine threshold is a property of an embedding space, not of a task: the
-# same 0.60 that separates true variants from unrelated words here matches
-# everything on another model. Named once so the warning below and the comment
-# on the field cannot drift apart.
-CALIBRATED_EMBEDDING_MODEL = "models/gemini-embedding-001"
+
 
 
 class Settings(BaseSettings):
@@ -107,6 +102,19 @@ class Settings(BaseSettings):
     # developers with different .env files would otherwise describe two
     # different schemas.
     embedding_model: str = ""
+    # Where embedding goes when the configured provider runs out of quota.
+    # Empty disables it; `local` embeds in-process, needs no key and cannot be
+    # rate limited, so a translation never stops because an embedding budget
+    # did — and the reader is never told, because there is nothing they could
+    # do about it (ADR-25).
+    #
+    # Off by default, and that is not timidity. `sentence-transformers` and
+    # `langchain-huggingface` are opt-in extras in requirements.txt because they
+    # pull in torch, so an implicit fallback either fails on ImportError or
+    # drags half a gigabyte into a process that was never sized for it. Turning
+    # this on is a deployment decision taken together with uncommenting those
+    # two lines.
+    embedding_fallback_provider: Literal["", "local"] = ""
 
     # Each adds an embedding call to the request path, and NFR-01 is the
     # tightest figure in the project, so both were turned on against
@@ -117,22 +125,17 @@ class Settings(BaseSettings):
     # separates cleanly on the model named below (ADR-26, ADR-27).
     semantic_glossary_enabled: bool = True
     rag_context_enabled: bool = False
-    # Cosine a glossary term must reach to be injected without an exact match.
+    # Override for the per-model table in `services/embeddings.py`. Zero means
+    # "use the table", which is the normal setting: a cosine threshold belongs
+    # to an embedding space, so one number cannot serve several models, and the
+    # provider now changes by itself when a quota runs out. Set this only to
+    # measure a new model without editing code.
     #
-    # **This number is meaningless without the model it was calibrated on.**
-    # Measured against `gemini-embedding-001` comparing a term with the whole
-    # message, which is what `_add_semantic_matches` does: true variants scored
-    # 0.586-0.695, unrelated words 0.477-0.531. 0.60 clears every unrelated word
-    # by a margin and gives up the weakest true match on purpose — a term below
-    # the line is simply absent from the glossary and the model translates it
-    # itself, which is the safe direction. A wrongly matched term is *forced*
-    # into the output by the prompt.
-    #
-    # The same number means nothing elsewhere. On `multilingual-e5-base` every
-    # pair, true and false alike, scores 0.83 +/- 0.01, so 0.60 would match
-    # everything and 0.82 would match at random. Changing EMBEDDING_MODEL means
-    # re-measuring this, and `_warn_uncalibrated_threshold` says so out loud.
-    glossary_similarity_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    # Every threshold in that table is set for precision over recall. A term
+    # below the line is absent from the glossary and the model translates it
+    # itself; a term above it is *forced* into the output by the prompt. The
+    # two mistakes do not cost the same.
+    glossary_similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     rag_top_k: int = Field(default=3, ge=1, le=10)
 
     # Secondary translation provider tried when the LLM path fails (ADR-07).
@@ -265,29 +268,30 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def _warn_uncalibrated_threshold(self) -> "Settings":
-        """Say so when the similarity threshold was measured on another model.
+    def _warn_unmeasured_embedding_model(self) -> "Settings":
+        """Say so when semantic matching is on for a model nobody has measured.
 
-        Not an error, because a team may well have re-measured and set both
-        deliberately, and refusing to boot over a tuning constant would be
-        worse than the mistake. But silence here is the expensive outcome: a
-        threshold carried across embedding spaces does not fail, it matches the
-        wrong terms and forces them into translations, and nothing downstream
-        would ever say why.
+        Not an error: the table in `services/embeddings.py` answers with a
+        threshold that admits almost nothing, so an unmeasured model degrades to
+        exact matching rather than to random terms. But silence would leave a
+        team believing a feature is working when it is deliberately inert.
         """
-        if self.semantic_glossary_enabled:
-            model = self.embedding_model or (
-                CALIBRATED_EMBEDDING_MODEL if self.embedding_provider == "gemini" else ""
+        if self.semantic_glossary_enabled and self.glossary_similarity_threshold == 0:
+            from src.services.embeddings import (  # noqa: PLC0415
+                DEFAULT_MODELS,
+                GLOSSARY_THRESHOLDS,
             )
-            if model != CALIBRATED_EMBEDDING_MODEL:
+
+            model = self.embedding_model or DEFAULT_MODELS.get(
+                self.embedding_provider, ""
+            )
+            if model not in GLOSSARY_THRESHOLDS:
                 logging.getLogger(__name__).warning(
-                    "GLOSSARY_SIMILARITY_THRESHOLD=%.2f was calibrated on %s, but "
-                    "EMBEDDING_MODEL is %r. A cosine threshold does not carry between "
-                    "embedding models — re-measure it or turn SEMANTIC_GLOSSARY_ENABLED "
-                    "off.",
-                    self.glossary_similarity_threshold,
-                    CALIBRATED_EMBEDDING_MODEL,
-                    model or f"(default for {self.embedding_provider})",
+                    "SEMANTIC_GLOSSARY_ENABLED is on but %r has no measured "
+                    "threshold, so it will match almost nothing. Measure it and add "
+                    "a row to GLOSSARY_THRESHOLDS, or set "
+                    "GLOSSARY_SIMILARITY_THRESHOLD to override.",
+                    model,
                 )
         return self
 

@@ -43,7 +43,7 @@ from src.schemas.glossary import (
     GlossaryRejectionRequest,
     GlossarySimilarEntry,
 )
-from src.services.embeddings import embed, embedding_model_name
+from src.services.embeddings import embed_with_model
 from src.services.glossary import normalize_term
 
 logger = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ async def approve_glossary_proposal(
         proposal.keep_verbatim if payload.keep_verbatim is None else payload.keep_verbatim
     )
 
-    vector = await embed(source_term)
+    vector, vector_model = await embed_with_model(source_term)
     entry = GlossaryEntry(
         source_term=source_term,
         source_term_normalized=normalize_term(source_term),
@@ -236,7 +236,7 @@ async def approve_glossary_proposal(
         status="active",
         approved_by=current_user.id,
         embedding=vector,
-        embedding_model=embedding_model_name() if vector else "",
+        embedding_model=vector_model,
     )
     db.add(entry)
 
@@ -326,7 +326,7 @@ async def create_glossary_entry(
     it proposes anything, which is right for discovering a house style and
     useless for a term the team already knows it wants.
     """
-    vector = await embed(payload.source_term)
+    vector, vector_model = await embed_with_model(payload.source_term)
     entry = GlossaryEntry(
         source_term=payload.source_term,
         source_term_normalized=normalize_term(payload.source_term),
@@ -339,7 +339,7 @@ async def create_glossary_entry(
         status="active",
         approved_by=current_user.id,
         embedding=vector,
-        embedding_model=embedding_model_name() if vector else "",
+        embedding_model=vector_model,
     )
     db.add(entry)
     try:

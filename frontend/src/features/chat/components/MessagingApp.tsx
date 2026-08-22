@@ -650,9 +650,14 @@ const MessageCluster = memo(function MessageCluster({ messages, name, initials, 
                     </button>
                   </span>
                 )}
-                {message.isFallback && (
-                  <span className={styles.deliveryIcon} role="img" aria-label={uiText(lang, "chat.fallbackTranslation")} title={uiText(lang, "chat.fallbackTranslation")}>⚠</span>
-                )}
+                {/* `isFallback` is deliberately not shown. Which provider
+                    produced a translation is an operational fact, not something
+                    the reader can act on: the message is translated either way,
+                    and a warning triangle under it only invites doubt about a
+                    sentence they have no way to check. The flag still travels
+                    in the event and still lands in `translation_attempts`,
+                    where the fallback rate is a metric the admin screen reports
+                    (ADR-16). */}
                 {awaiting && <span className={styles.messageTimestamp}>{uiText(lang, "chat.translating")}</span>}
                 {message.delivery === "failed" && <button className={styles.retryButton} type="button" onClick={() => onRetry(message.id)}>{uiText(lang, "chat.sendFailedRetry")}</button>}
                 {/* Delivery is only ever about my own messages — a tick under

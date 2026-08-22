@@ -147,6 +147,116 @@ def embedding_model_name(settings: Settings | None = None) -> str:
     )
 
 
+# What a term has to score to be injected without an exact string match, per
+# model. A cosine threshold is a property of an embedding space, not of a task,
+# so one number cannot serve several models — measured on this project's own
+# terms, `gemini-embedding-001` separates true variants from unrelated words
+# cleanly while `multilingual-e5-base` puts both at 0.83 +/- 0.01.
+#
+# Every number here is set for **precision over recall**, deliberately. A term
+# below the line is simply absent from the glossary and the model translates it
+# itself; a term above it is *forced* into the output by the prompt. Missing a
+# real variant costs a slightly flatter translation. Matching a wrong one
+# changes what the message says.
+GLOSSARY_THRESHOLDS: dict[str, float] = {
+    # Measured 22/08: true variants 0.586-0.756, unrelated words 0.477-0.574.
+    # 0.65 sits clear of every unrelated pair and gives up the two weakest true
+    # ones on purpose.
+    "models/gemini-embedding-001": 0.65,
+    # Measured and deliberately absent: all three multilingual local models score
+    # the *worst* true pair below the *best* false pair — e5 by 0.039, LaBSE by
+    # 0.100, mpnet by 0.213. A negative gap means no threshold exists, not that
+    # the right one has not been found, so there is nothing to tune and they fall
+    # through to UNMEASURED_GLOSSARY_THRESHOLD. That is what makes the fallback
+    # below safe: dropping to a local model turns semantic matching off rather
+    # than turning it random.
+    #
+    # Mistral is absent for a different reason: `mistral-embed` returns 1024
+    # dimensions and rejects `output_dimension`, `codestral-embed` returns 1536,
+    # and the columns are `vector(768)`. Adding it is a migration plus a pass to
+    # re-embed everything, and it would then exclude every model that currently
+    # works — a schema decision, not a configuration one (ADR-25).
+}
+
+# A model nobody has measured gets a threshold that admits almost nothing, so
+# switching provider under quota pressure degrades to exact matching rather than
+# to random terms. Measure it and add a row above to turn it on properly.
+UNMEASURED_GLOSSARY_THRESHOLD = 0.95
+
+
+def glossary_threshold_for(model: str, settings: Settings | None = None) -> float:
+    """The similarity a term must reach in this model's space.
+
+    Args:
+        model: The model that produced the query vector, resolved.
+        settings: Configuration. A non-zero `glossary_similarity_threshold`
+            overrides the table, for measuring a new model without editing code.
+    """
+    settings = settings or get_settings()
+    if settings.glossary_similarity_threshold > 0:
+        return settings.glossary_similarity_threshold
+    return GLOSSARY_THRESHOLDS.get(model, UNMEASURED_GLOSSARY_THRESHOLD)
+
+
+async def embed_with_model(
+    text: str, *, settings: Settings | None = None
+) -> tuple[list[float] | None, str]:
+    """Embed one string, and say which model actually produced the vector.
+
+    The name is not decoration. Vectors from two models occupy different spaces;
+    comparing them returns a number that means nothing, and storing one under
+    the other's name poisons the table for good. When a hosted provider is out
+    of quota this falls back to a local model, so the *configured* name and the
+    *producing* name stop agreeing — every caller that stores or compares a
+    vector needs the second one.
+
+    The fallback is what keeps a quota failure from becoming a service failure,
+    and it degrades in the safe direction on its own: a local query vector
+    matches no Gemini-stored entry, so semantic glossary matching quietly
+    returns nothing and exact matching carries the message. The reader sees a
+    translation and never learns an embedding budget ran out.
+
+    Returns:
+        The vector and its model, or `(None, "")` when every provider failed.
+    """
+    settings = settings or get_settings()
+    vector = await embed(text, settings=settings)
+    if vector is not None:
+        return vector, embedding_model_name(settings)
+
+    fallback = settings.embedding_fallback_provider
+    if not fallback or fallback == settings.embedding_provider:
+        return None, ""
+
+    # Only a provider that *had* a key and still failed gets a fallback. Without
+    # a key it never ran, and that is a misconfiguration rather than a quota
+    # running out — falling back would paper over it, and would pull a
+    # half-gigabyte local model into a process that was never meant to have one,
+    # which is exactly what happened to the test suite when this rule was
+    # missing.
+    key_field = PROVIDER_KEY_FIELD.get(settings.embedding_provider)
+    if key_field and not getattr(settings, key_field, ""):
+        return None, ""
+
+    logger.warning(
+        "Embedding provider %r returned nothing; falling back to %s. Semantic "
+        "glossary matching is inert until it recovers, because a vector from "
+        "another model cannot be compared with the stored ones.",
+        settings.embedding_provider,
+        fallback,
+    )
+    local = settings.model_copy(
+        update={
+            "embedding_provider": fallback,
+            "embedding_model": DEFAULT_MODELS[fallback],
+        }
+    )
+    vector = await embed(text, settings=local)
+    if vector is None:
+        return None, ""
+    return vector, embedding_model_name(local)
+
+
 async def embed(text: str, *, settings: Settings | None = None) -> list[float] | None:
     """Turn one piece of text into a vector, or return None.
 
