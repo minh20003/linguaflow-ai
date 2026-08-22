@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.customization import GlossaryTerm
 from src.config import Settings, get_settings
 from src.database.models import GlossaryEntry
-from src.services.embeddings import embed
+from src.services.embeddings import embed, embedding_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,14 @@ async def _add_semantic_matches(
     if vector is None:
         return
 
-    model = settings.embedding_model
+    # The *resolved* name, not the raw setting. Entries are written with
+    # `embedding_model_name()`, and EMBEDDING_MODEL empty — the documented
+    # default — used to make this an empty string, which disabled the guard
+    # entirely: every stored vector was then compared whatever produced it,
+    # including rows left behind by a run on a different model. A vector from
+    # another space clears the 0.60 threshold at random, and the term it drags
+    # in is forced into the translation with nothing anywhere reporting it.
+    model = embedding_model_name(settings)
     for entry in candidates:
         if entry.source_term_normalized in already:
             continue

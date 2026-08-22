@@ -287,7 +287,7 @@ class Settings(BaseSettings):
                     "off.",
                     self.glossary_similarity_threshold,
                     CALIBRATED_EMBEDDING_MODEL,
-                    model or f"(mặc định của {self.embedding_provider})",
+                    model or f"(default for {self.embedding_provider})",
                 )
         return self
 

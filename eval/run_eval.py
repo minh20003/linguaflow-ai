@@ -503,21 +503,26 @@ def _metric_rows(summary: dict, accuracy: float) -> list[tuple[str, str, str, bo
         # between runs into a pass mark nobody can justify. They earn their
         # place by being deterministic — a movement here is a movement in the
         # output, never in the judge's mood (ADR-17).
-        ("chrF++ trung bình", "—", f"{summary['avg_chrf']:.1f}", True),
-        ("BLEU trung bình", "—", f"{summary['avg_bleu']:.1f}", True),
-        ("TER trung bình (thấp hơn tốt hơn)", "—", f"{summary['avg_ter']:.1f}", True),
+        ("chrF++ trung bình", "—", f"{summary['avg_chrf']:.1f}" if summary["avg_chrf"] else "— (không có sacrebleu)", True),
+        ("BLEU trung bình", "—", f"{summary['avg_bleu']:.1f}" if summary["avg_bleu"] else "— (không có sacrebleu)", True),
+        ("TER trung bình (thấp hơn tốt hơn)", "—", f"{summary['avg_ter']:.1f}" if summary["avg_ter"] else "— (không có sacrebleu)", True),
+        # A metric with nothing to measure is not a metric that failed. A run
+        # with no glossary sample in it — `--limit 5`, the smoke test CLAUDE.md
+        # documents — used to print "0.0% · Chưa đạt" for a rule nothing broke.
         (
             "Đúng ngôn ngữ đích",
             "100%",
-            f"{summary['language_compliance'] * 100:.1f}%",
-            summary["language_compliance"] >= 1.0,
+            f"{summary['language_compliance'] * 100:.1f}%" if summary["scored"] else "—",
+            summary["language_compliance"] >= 1.0 or not summary["scored"],
         ),
         (
             "Tuân thủ glossary"
             f" ({summary['glossary_samples']} mẫu có thuật ngữ)",
             "100%",
-            f"{summary['glossary_adherence'] * 100:.1f}%",
-            summary["glossary_adherence"] >= 1.0,
+            f"{summary['glossary_adherence'] * 100:.1f}%"
+            if summary["glossary_samples"]
+            else "—",
+            summary["glossary_adherence"] >= 1.0 or not summary["glossary_samples"],
         ),
         (
             "Rò ngữ cảnh vào bản dịch",
@@ -953,7 +958,8 @@ async def main() -> int:
     if not args.no_write:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(
-            render_report(results, summary, args.judge_provider), encoding="utf-8"
+            render_report(results, summary, judge_provider, judge_model),
+            encoding="utf-8",
         )
         print(f"Đã ghi báo cáo: {REPORT_PATH}")
         run_path = write_run(results, summary, judge_provider, judge_model)

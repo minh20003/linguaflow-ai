@@ -359,7 +359,9 @@ async def _query_vector(
         )
         return (list(vector) if vector is not None else None), 0.0
 
-    if strategy == "message_plus_recent":
+    if strategy == "message_plus_previous":
+        text = "\n".join([*window[-1:], message])
+    elif strategy == "message_plus_recent":
         text = "\n".join([*window, message])
     else:
         text = "\n".join(window)
