@@ -163,13 +163,20 @@ GLOSSARY_THRESHOLDS: dict[str, float] = {
     # 0.65 sits clear of every unrelated pair and gives up the two weakest true
     # ones on purpose.
     "models/gemini-embedding-001": 0.65,
-    # Measured and deliberately absent: all three multilingual local models score
-    # the *worst* true pair below the *best* false pair — e5 by 0.039, LaBSE by
-    # 0.100, mpnet by 0.213. A negative gap means no threshold exists, not that
-    # the right one has not been found, so there is nothing to tune and they fall
-    # through to UNMEASURED_GLOSSARY_THRESHOLD. That is what makes the fallback
-    # below safe: dropping to a local model turns semantic matching off rather
-    # than turning it random.
+    # The local models, at the highest threshold that lets no wrong pair
+    # through. An earlier note here claimed no threshold existed because the
+    # worst true pair scores below the best false one — that only rules out a
+    # threshold with full recall. Set the line above every false pair instead
+    # and each model keeps the matches it is *sure* of, which is the trade this
+    # project wants everywhere: a term below the line is absent from the
+    # glossary and the model translates it itself.
+    #
+    # What they keep, out of 8 semantic variants and 6 typos:
+    #   LaBSE   4 semantic, 1 typo  — the only local model doing semantic work
+    #   e5      1 semantic, 6 typos — a surface matcher wearing an embedding
+    #   MiniLM  3 semantic, 2 typos — and 384 dimensions, so it needs a migration
+    "sentence-transformers/LaBSE": 0.675,
+    "intfloat/multilingual-e5-base": 0.855,
     #
     # Mistral is absent for a different reason: `mistral-embed` returns 1024
     # dimensions and rejects `output_dimension`, `codestral-embed` returns 1536,
