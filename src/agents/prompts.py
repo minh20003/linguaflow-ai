@@ -168,17 +168,20 @@ MESSAGE_BLOCK_TEMPLATE = """\
 # the target language is the only version of this that generalises (ADR-23).
 HONORIFIC_DIRECTIVES = {
     "senior": (
-        "The reader is senior to the sender. Address them the way the target "
-        "language addresses a senior colleague, and keep the sender's "
-        "references to themselves correspondingly modest."
+        "The reader is senior to the sender. Address them as the target "
+        "language addresses a senior colleague, and have the sender speak of "
+        "themselves from the junior side of that same relationship."
     ),
     "peer": (
         "The reader and the sender are peers. Use the neutral forms colleagues "
         "of equal standing use with one another."
     ),
     "junior": (
-        "The reader is junior to the sender. Use the familiar forms a senior "
-        "colleague would use, warm rather than curt."
+        "The reader is junior to the sender. Address them as the target "
+        "language addresses a more junior colleague, and have the sender speak "
+        "of themselves from the senior side of that same relationship. Warm "
+        "rather than curt: this is ordinary difference in standing at work, "
+        "not distance."
     ),
     "client": (
         "The reader is a client, not a colleague. Use the polite business "
@@ -191,10 +194,32 @@ HONORIFIC_DIRECTIVES = {
 # instruction: a language that does not mark the distinction grammatically is
 # exactly where a model starts inventing "Dear Sir" and "I would be most
 # grateful" out of a four-word message.
+#
+# The first two sentences were added after measuring, and each names a failure
+# seen in a real run rather than one imagined here. Both directions came back
+# rendered one-sided — "Anh/chị có thể xem qua" addresses the reader correctly
+# and leaves the speaker nowhere, when Vietnamese settles the pair together.
+# Asked to address a junior reader, the models reached for `bạn` and
+# `cậu/mình`: neutral and chummy respectively, wrong in different directions.
+#
+# Tuning stopped here, and the two attempts that went further are worth knowing
+# about. Telling the model that supplying the speaker's term is grammar rather
+# than an added courtesy made `mistral-small-latest` invert the pair — "Em nhờ
+# anh xem qua" for a *junior* reader, a well-formed sentence asserting the
+# opposite hierarchy. Spelling the direction out again on top of that produced
+# "Em thầy xem giúp con", which is not a register anyone uses at work, and a
+# sample that leaked its conversation history into the translation. Past a
+# point, more instruction here does not make a small model more precise; it
+# crowds out the constraints above that were already working.
 _HONORIFIC_FLOOR = (
-    "Express this through the forms and politeness the target language already "
-    "has. Never add greetings, titles or courtesies the message does not "
-    "contain, and never drop any it does."
+    "Where the target language marks this relationship on both sides — "
+    "Vietnamese pairs a term for the reader with one for the speaker, Japanese "
+    "and Korean carry it in the verb — render both sides of it, not only the "
+    "way the reader is addressed. Do not retreat to the language's neutral or "
+    "age-blind forms when it has forms that carry the relationship. Express "
+    "this through the forms and politeness the target language already has. "
+    "Never add greetings, titles or courtesies the message does not contain, "
+    "and never drop any it does."
 )
 
 AUDIENCE_BLOCK_TEMPLATE = """\
@@ -204,11 +229,56 @@ AUDIENCE_BLOCK_TEMPLATE = """\
 """
 
 
+# Rank within the ladder. `client` is not on it: an outside party is a different
+# axis from seniority, which is why it is handled before the comparison rather
+# than given a number.
+_STANDING_RANK = {"junior": 0, "peer": 1, "senior": 2}
+
+
+def relative_standing(reader: str, sender: str) -> str:
+    """Where the reader stands *relative to the sender*, not in the room.
+
+    `participant_profiles` records one standing per person, but how one person
+    addresses another is a relationship between two. The two coincide only when
+    the sender happens to sit at the top of the ladder. In a group of A senior,
+    B junior and C junior, a message from B to C used to be rendered "the reader
+    is junior to the sender" — while B and C are peers — because the register C
+    saw came from the conversation's ladder rather than from the B-C pair
+    (ADR-23).
+
+    Args:
+        reader: The reader's standing in the conversation.
+        sender: The sender's. Empty when nothing has been inferred yet, in which
+            case the reader's own standing is returned unchanged and the prompt
+            reads exactly as it did before this existed.
+
+    Returns:
+        One of the four standings, or "" when neither side is known.
+    """
+    if not sender:
+        return reader
+    # A customer on either side makes the exchange commercial, whichever of them
+    # is writing: the politeness a vendor owes a client and the politeness a
+    # client is written with are the same register.
+    if reader == "client" or sender == "client":
+        return "client"
+    if reader not in _STANDING_RANK or sender not in _STANDING_RANK:
+        return reader
+
+    difference = _STANDING_RANK[reader] - _STANDING_RANK[sender]
+    if difference > 0:
+        return "senior"
+    if difference < 0:
+        return "junior"
+    return "peer"
+
+
 def build_audience_block(
     *,
     domain: str = "",
     audience: str = "",
     honorific_profile: str = "",
+    sender_honorific_profile: str = "",
 ) -> str:
     """Render the section describing who the translation is for.
 
@@ -224,6 +294,10 @@ def build_audience_block(
             `HONORIFIC_DIRECTIVES` is treated as unknown and contributes
             nothing, so a value added to the database ahead of this file cannot
             produce a broken prompt.
+        sender_honorific_profile: The sender's standing. Combined with the
+            reader's into the *relationship* between them, because that is what
+            a language marks — see `relative_standing`. Empty leaves the
+            reader's standing to speak for itself, as it did before.
 
     Returns:
         The rendered section, or "" when there is nothing to say.
@@ -234,7 +308,9 @@ def build_audience_block(
     if audience:
         lines.append(f"- This conversation is with: {audience}.")
 
-    directive = HONORIFIC_DIRECTIVES.get(honorific_profile)
+    directive = HONORIFIC_DIRECTIVES.get(
+        relative_standing(honorific_profile, sender_honorific_profile)
+    )
     if directive:
         lines.append(f"- {directive}")
         lines.append(f"- {_HONORIFIC_FLOOR}")

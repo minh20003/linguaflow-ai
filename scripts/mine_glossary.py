@@ -50,7 +50,7 @@ from src.database.models import (  # noqa: E402
     GlossaryProposal,
     GlossaryProposalCitation,
 )
-from src.services.embeddings import embed, embedding_model_name  # noqa: E402
+from src.services.embeddings import embed_with_model  # noqa: E402
 from src.services.glossary import normalize_term  # noqa: E402
 from src.services.glossary_mining import (  # noqa: E402
     Cluster,
@@ -231,7 +231,7 @@ async def mine(args: argparse.Namespace) -> int:
         if args.no_write:
             continue
 
-        vector = await embed(source_term, settings=settings)
+        vector, vector_model = await embed_with_model(source_term, settings=settings)
         async with session_factory() as session:
             proposal = GlossaryProposal(
                 source_term=source_term,
@@ -247,7 +247,7 @@ async def mine(args: argparse.Namespace) -> int:
                 distinct_user_count=cluster.distinct_user_count,
                 rationale=str(described.get("rationale") or "")[:1000],
                 embedding=vector,
-                embedding_model=embedding_model_name(settings) if vector else "",
+                embedding_model=vector_model,
             )
             session.add(proposal)
             await session.flush()

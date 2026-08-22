@@ -28,6 +28,25 @@ class GlossaryCitationSummary(BaseModel):
     observed_at: datetime
 
 
+class GlossarySimilarEntry(BaseModel):
+    """An entry already in the glossary that covers the same source term.
+
+    Shown beside a proposal so a reviewer approves into a known state rather
+    than a blank one. Without it the queue invites the same term to be approved
+    twice under two scopes with two different renderings, and the lookup then
+    picks between them by scope rank — a decision nobody made on purpose.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_term: str
+    target_term: str
+    domain: str
+    audience: str
+    status: str
+
+
 class GlossaryProposalResponse(BaseModel):
     """A term waiting for a decision, with the evidence behind it."""
 
@@ -51,6 +70,15 @@ class GlossaryProposalResponse(BaseModel):
     reject_reason: str
     created_at: datetime
     citations: list[GlossaryCitationSummary] = Field(default_factory=list)
+    # What the glossary already says about this term. `similar_entries` is the
+    # evidence and `conflicts_with_active` is the verdict a reviewer acts on:
+    # true means an entry is live *now* with a different rendering, so the
+    # machine has been translating this term correctly by the glossary's current
+    # lights and the proposal is asking to change the answer, not to supply a
+    # missing one. Those are different decisions and the queue used to show them
+    # identically.
+    similar_entries: list[GlossarySimilarEntry] = Field(default_factory=list)
+    conflicts_with_active: bool = False
 
 
 class GlossaryEntryResponse(BaseModel):

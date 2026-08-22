@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.customization import GlossaryTerm
 from src.config import Settings, get_settings
 from src.database.models import GlossaryEntry
-from src.services.embeddings import embed
+from src.services.embeddings import embed, embedding_model_name, glossary_threshold_for
 
 logger = logging.getLogger(__name__)
 
@@ -218,11 +218,21 @@ async def lookup_terms(
         if current is None or rank + bonus > current[0]:
             best[key] = (rank + bonus, entry)
 
+    # Two stages, not three. A fuzzy stage for mistyped terms was built and
+    # then removed: no surface measure separates a misspelt word from a
+    # different word spelt almost the same — "headline" and "deadline" are one
+    # edit apart — and embeddings are worse at it than string distance, because
+    # a typo is not a word and its vector drifts away from the term while two
+    # similar real words sit close together. Both measured; both recorded in
+    # ADR-26. A mistyped term is therefore left to the translating model, which
+    # reads around a slip the way a person does, instead of to a rule that
+    # would force the wrong term in whenever it guessed wrong.
     for entry in candidates:
         if contains_term(normalized_text, entry.source_term_normalized):
             # An exact hit outranks any semantic one, whatever their scopes: the
             # message literally contains this term.
             offer(entry, bonus=10)
+
 
     if settings.semantic_glossary_enabled:
         await _add_semantic_matches(
@@ -251,11 +261,21 @@ async def _add_semantic_matches(
     rather than on a few hundred rows, and doing it here keeps the whole
     decision — scope, exactness, threshold — in one readable place.
     """
+    # Plain `embed`, not `embed_with_model`: this is the read path, and falling
+    # back here would be work that cannot pay off. A vector from the local model
+    # matches no Gemini-stored entry by construction, so the fallback would load
+    # a half-gigabyte model onto the request path to produce a query guaranteed
+    # to return nothing. Writers fall back — a vector stored under its true model
+    # is useful later — readers just go quiet.
     vector = await embed(text, settings=settings)
     if vector is None:
         return
 
-    model = settings.embedding_model
+    # The threshold belongs to the space this query vector lives in, so it is
+    # looked up by the model that produced it rather than read off a single
+    # global constant.
+    model = embedding_model_name(settings)
+    threshold = glossary_threshold_for(model, settings)
     for entry in candidates:
         if entry.source_term_normalized in already:
             continue
@@ -265,5 +285,5 @@ async def _add_semantic_matches(
         # returns a number, and the number means nothing.
         if model and entry.embedding_model and entry.embedding_model != model:
             continue
-        if _cosine(list(entry.embedding), vector) >= settings.glossary_similarity_threshold:
+        if _cosine(list(entry.embedding), vector) >= threshold:
             offer(entry, bonus=0)

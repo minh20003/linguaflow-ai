@@ -58,8 +58,16 @@ from pathlib import Path
 
 # Allows running the file directly: python eval/run_eval.py
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from langchain_core.language_models.chat_models import BaseChatModel  # noqa: E402
+from quality_metrics import (  # noqa: E402
+    bleed_score,
+    glossary_adherence,
+    in_target_language,
+    looks_like_a_refusal,
+    score_translation,
+)
 
 from src.agents.context_provider import InMemoryContextProvider  # noqa: E402
 from src.agents.customization import Customization  # noqa: E402
@@ -288,6 +296,11 @@ async def run_sample(
             # of every conversation before anything has been inferred, so those
             # samples exercise exactly the prompt they always did.
             "honorific_profile": sample.get("honorific_profile", ""),
+            # The other half of the pair. Absent on every sample that predates
+            # it, which is the state of a real conversation before anything has
+            # been inferred, so those samples exercise the prompt they always
+            # did (ADR-23).
+            "sender_honorific_profile": sample.get("sender_honorific_profile", ""),
         },
         config=build_runnable_config(
             conversation_id=conversation_id,
@@ -303,6 +316,14 @@ async def run_sample(
     telemetry = state.get("telemetry", {})
     declared = sample["source_language"]
     detected = state.get("source_language") or declared
+
+    # Deterministic and free, so they are computed for every sample whether or
+    # not the judge managed to score it. A sample the judge refused still tells
+    # us whether the output changed since the last run (ADR-17).
+    mt = score_translation(
+        actual, sample["expected_translation"], target_language=sample["target_language"]
+    )
+    context_lines = sample.get("context_messages", [])
 
     return {
         "id": sample["id"],
@@ -332,6 +353,23 @@ async def run_sample(
         "llm_calls": telemetry.get("llm_calls", 0),
         "input_tokens": telemetry.get("input_tokens", 0),
         "output_tokens": telemetry.get("output_tokens", 0),
+        # Reference-based machine translation scores. chrF++ leads because it
+        # is computed on characters and so means the same thing for Vietnamese
+        # and Japanese; BLEU and TER are reported beside it because a course
+        # report is expected to carry them, not because they are better here.
+        "chrf": round(mt.chrf, 2) if mt else None,
+        "bleu": round(mt.bleu, 2) if mt else None,
+        "ter": round(mt.ter, 2) if mt else None,
+        # Properties the output must have whatever words it chose.
+        "bleed": round(
+            bleed_score(actual, source=sample["original_text"], context_lines=context_lines),
+            4,
+        ),
+        "glossary_adherence": glossary_adherence(
+            actual, state.get("glossary_terms") or ()
+        ),
+        "is_refusal": looks_like_a_refusal(actual),
+        "in_target_language": in_target_language(actual, sample["target_language"]),
     }
 
 
@@ -387,7 +425,44 @@ def summarize(results: list[dict]) -> dict:
         "llm_calls": sum(r["llm_calls"] for r in results),
         "input_tokens": sum(r["input_tokens"] for r in results),
         "output_tokens": sum(r["output_tokens"] for r in results),
+        # Reference-based scores, averaged over the samples a model actually
+        # translated. Passthrough is excluded here for the same reason it is
+        # excluded from the judge score: it would score perfectly for work
+        # nobody did.
+        "avg_chrf": _mean_of(translated, "chrf"),
+        "avg_bleu": _mean_of(translated, "bleu"),
+        "avg_ter": _mean_of(translated, "ter"),
+        # Generation properties. Each is a rate rather than a count so runs of
+        # different sizes stay comparable.
+        "avg_bleed": _mean_of(translated, "bleed"),
+        "glossary_adherence": _mean_of(translated, "glossary_adherence"),
+        "glossary_samples": sum(
+            1 for r in translated if r.get("glossary_adherence") is not None
+        ),
+        "refusals": sum(1 for r in translated if r.get("is_refusal")),
+        "language_compliance": _rate_of(translated, "in_target_language"),
     }
+
+
+def _mean_of(results: list[dict], key: str) -> float:
+    """Mean of one numeric field, skipping the rows that do not carry it.
+
+    Absent is not zero. A sample with no glossary terms has no adherence to
+    report, and counting it as 0.0 would say the glossary was ignored.
+    """
+    values = [r[key] for r in results if r.get(key) is not None]
+    return statistics.mean(values) if values else 0.0
+
+
+def _rate_of(results: list[dict], key: str) -> float:
+    """Share of rows where a tri-state field is True, ignoring the unknowns.
+
+    The local detector abstains on very short text, and this product translates
+    a lot of very short text. An abstention is not a failure, so it is left out
+    of the denominator rather than counted against the run.
+    """
+    known = [r[key] for r in results if r.get(key) is not None]
+    return sum(1 for value in known if value) / len(known) if known else 0.0
 
 
 def _metric_rows(summary: dict, accuracy: float) -> list[tuple[str, str, str, bool]]:
@@ -427,11 +502,53 @@ def _metric_rows(summary: dict, accuracy: float) -> list[tuple[str, str, str, bo
             str(summary["fallback"]),
             summary["fallback"] == 0,
         ),
+        # No target column for the reference-based scores, and deliberately
+        # none: there is no chrF++ figure that means "good enough" for chat
+        # messages this short, and inventing one would turn a comparison
+        # between runs into a pass mark nobody can justify. They earn their
+        # place by being deterministic — a movement here is a movement in the
+        # output, never in the judge's mood (ADR-17).
+        ("chrF++ trung bình", "—", f"{summary['avg_chrf']:.1f}" if summary["avg_chrf"] else "— (không có sacrebleu)", True),
+        ("BLEU trung bình", "—", f"{summary['avg_bleu']:.1f}" if summary["avg_bleu"] else "— (không có sacrebleu)", True),
+        ("TER trung bình (thấp hơn tốt hơn)", "—", f"{summary['avg_ter']:.1f}" if summary["avg_ter"] else "— (không có sacrebleu)", True),
+        # A metric with nothing to measure is not a metric that failed. A run
+        # with no glossary sample in it — `--limit 5`, the smoke test CLAUDE.md
+        # documents — used to print "0.0% · Chưa đạt" for a rule nothing broke.
+        (
+            "Đúng ngôn ngữ đích",
+            "100%",
+            f"{summary['language_compliance'] * 100:.1f}%" if summary["scored"] else "—",
+            summary["language_compliance"] >= 1.0 or not summary["scored"],
+        ),
+        (
+            "Tuân thủ glossary"
+            f" ({summary['glossary_samples']} mẫu có thuật ngữ)",
+            "100%",
+            f"{summary['glossary_adherence'] * 100:.1f}%"
+            if summary["glossary_samples"]
+            else "—",
+            summary["glossary_adherence"] >= 1.0 or not summary["glossary_samples"],
+        ),
+        (
+            "Rò ngữ cảnh vào bản dịch",
+            "≈ 0",
+            f"{summary['avg_bleed']:.3f}",
+            summary["avg_bleed"] < 0.05,
+        ),
+        (
+            "Số bản dịch là lời từ chối",
+            "0",
+            str(summary["refusals"]),
+            summary["refusals"] == 0,
+        ),
     ]
 
 
 def render_report(
-    results: list[dict], summary: dict, judge_provider: str | None = None
+    results: list[dict],
+    summary: dict,
+    judge_provider: str | None = None,
+    judge_model: str | None = None,
 ) -> str:
     """Generate Markdown report for evaluation results.
 
@@ -439,6 +556,7 @@ def render_report(
         results: List of scored sample results.
         summary: Aggregated summary statistics.
         judge_provider: Name of the LLM provider used as judge.
+        judge_model: Model that provider was asked for, if one was named.
 
     Returns:
         Formatted markdown report string.
@@ -456,7 +574,8 @@ def render_report(
         f"**Thời điểm chạy:** {now}",
         f"**Provider dịch:** {settings.llm_provider} · "
         f"**Model:** {settings.llm_model or 'mặc định của provider'}",
-        f"**Provider chấm điểm:** {judge_name}",
+        f"**Provider chấm điểm:** {judge_name} · "
+        f"**Model chấm:** {judge_model or 'mặc định của provider'}",
         f"**Bộ dữ liệu:** `eval/golden_set.jsonl` ({summary['total']} mẫu)",
         "",
         "> Điểm số do LLM tự chấm (LLM-as-judge), không phải đánh giá của người thật. "
@@ -614,7 +733,12 @@ def golden_set_sha() -> str:
     return hashlib.sha256(GOLDEN_SET.read_bytes()).hexdigest()[:12]
 
 
-def write_run(results: list[dict], summary: dict, judge_provider: str | None) -> Path:
+def write_run(
+    results: list[dict],
+    summary: dict,
+    judge_provider: str | None,
+    judge_model: str | None = None,
+) -> Path:
     """Persist the full run, including every translation in full.
 
     `report.md` is overwritten each time and truncates translations to fit a
@@ -633,6 +757,10 @@ def write_run(results: list[dict], summary: dict, judge_provider: str | None) ->
                 "provider": settings.llm_provider,
                 "model_configured": settings.llm_model,
                 "judge_provider": judge_provider or settings.llm_provider,
+                # Saved alongside the provider because two runs judged by
+                # different models are not the same measurement, and `--compare`
+                # has no way to notice that from the provider name alone.
+                "judge_model": judge_model or "",
                 "golden_set_sha": golden_set_sha(),
                 "summary": summary,
                 "samples": results,
@@ -746,8 +874,16 @@ async def main() -> int:
     parser.add_argument(
         "--judge-provider",
         help=(
-            "Provider dùng để chấm điểm. Nên đặt khác provider đang dịch, nếu không "
-            "model sẽ tự chấm chính nó và điểm bị thiên vị."
+            "Provider dùng để chấm điểm; mặc định lấy LLM_JUDGE_PROVIDER trong .env. "
+            "Nên đặt khác provider đang dịch, nếu không model sẽ tự chấm chính nó "
+            "và điểm bị thiên vị."
+        ),
+    )
+    parser.add_argument(
+        "--judge-model",
+        help=(
+            "Model của provider chấm điểm; mặc định lấy JUDGE_MODEL trong .env, "
+            "để rỗng thì dùng model mặc định của provider đó."
         ),
     )
     parser.add_argument(
@@ -766,10 +902,18 @@ async def main() -> int:
     configure_logging()
 
     samples = load_golden_set(args.limit)
-    translate_provider = get_settings().llm_provider
-    judge_name = args.judge_provider or translate_provider
+    settings = get_settings()
+    translate_provider = settings.llm_provider
+    # The flag wins over .env, and .env over "same as the translator". Resolved
+    # once here so the banner, the judge client and the saved run all name the
+    # same thing — a report claiming one judge while another did the scoring is
+    # worse than no report at all.
+    judge_provider = args.judge_provider or settings.llm_judge_provider or None
+    judge_model = args.judge_model or settings.judge_model or None
+    judge_name = judge_provider or translate_provider
+    judge_label = f"{judge_name}/{judge_model}" if judge_model else judge_name
     print(
-        f"Chạy {len(samples)} mẫu · dịch={translate_provider} · chấm={judge_name}"
+        f"Chạy {len(samples)} mẫu · dịch={translate_provider} · chấm={judge_label}"
         + ("  [CẢNH BÁO: model tự chấm chính nó]" if judge_name == translate_provider else "")
         + "\n"
     )
@@ -781,7 +925,7 @@ async def main() -> int:
     graph = build_translation_graph(
         context_provider, customization_provider=customization_provider
     )
-    judge_llm = get_llm(provider=args.judge_provider)
+    judge_llm = get_llm(provider=judge_provider, model=judge_model)
 
     results = []
     for i, sample in enumerate(samples, 1):
@@ -819,10 +963,11 @@ async def main() -> int:
     if not args.no_write:
         REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
         REPORT_PATH.write_text(
-            render_report(results, summary, args.judge_provider), encoding="utf-8"
+            render_report(results, summary, judge_provider, judge_model),
+            encoding="utf-8",
         )
         print(f"Đã ghi báo cáo: {REPORT_PATH}")
-        run_path = write_run(results, summary, args.judge_provider)
+        run_path = write_run(results, summary, judge_provider, judge_model)
         print(f"Đã lưu lần chạy: {run_path}")
 
     if baseline is not None:

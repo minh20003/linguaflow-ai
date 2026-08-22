@@ -245,6 +245,16 @@ async def _translate_message(
         conversation_type, recipients_by_bucket = await _recipients_by_bucket(
             session, snapshot["conversation_id"]
         )
+        # Read in the same session block as the buckets. The prompt needs the
+        # *relationship* between sender and reader, and one standing per person
+        # is only half of it — without this a message from one junior to another
+        # was rendered as if the reader were junior to the sender (ADR-23).
+        sender_profile = await session.scalar(
+            select(ParticipantProfile.honorific_profile).where(
+                ParticipantProfile.conversation_id == snapshot["conversation_id"],
+                ParticipantProfile.user_id == snapshot["sender_id"],
+            )
+        )
 
     if not recipients_by_bucket:
         return
@@ -261,6 +271,7 @@ async def _translate_message(
                 snapshot=snapshot,
                 target_language=language,
                 honorific_profile=honorific_profile,
+                sender_honorific_profile=sender_profile or "",
                 user_ids=user_ids,
                 publisher=publisher,
                 session_factory=session_factory,
@@ -374,6 +385,7 @@ async def _translate_into(
     snapshot: Mapping[str, Any],
     target_language: str,
     honorific_profile: str,
+    sender_honorific_profile: str,
     user_ids: list[str],
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
@@ -453,6 +465,7 @@ async def _translate_into(
             # Carried now so the graph, the persisted row and the measurement
             # row all describe the same bucket from this point on.
             "honorific_profile": honorific_profile,
+            "sender_honorific_profile": sender_honorific_profile,
         }
 
         try:

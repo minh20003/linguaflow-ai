@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, update
 
-from src.core.security import get_password_hash
+from src.core.security import get_password_hash, verify_password
 from src.database.models import PendingRegistration, RefreshSession, User
 from src.services.email import EMAIL_TEMPLATES, _memory_sender
 
