@@ -47,6 +47,16 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
    | `UPLOAD_DIR` | `/app/data/uploads` |
    | `LLM_PROVIDER` | `groq` |
    | `GROQ_API_KEY` | khoá của bạn |
+   | `EMAIL_PROVIDER` | `smtp` |
+   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | thông tin máy chủ gửi thư |
+
+   **Năm biến SMTP là bắt buộc, không phải tuỳ chọn.** `Settings` từ chối khởi tạo
+   khi `APP_ENV=production` mà `EMAIL_PROVIDER` vẫn là `memory` hoặc `console`, hoặc
+   là `smtp` nhưng thiếu một trong bốn giá trị còn lại — container sẽ lặp vô hạn
+   *trước khi* uvicorn kịp chạy. Bảng này trước đây bỏ sót chúng trong khi §5.1 lại
+   ghi là bắt buộc, và hai chỗ nói ngược nhau thì chỗ người ta làm theo là chỗ có
+   các bước. Không có SMTP thì mã OTP không gửi được, tức **không ai đăng ký được
+   tài khoản mới** dù mọi thứ khác đã chạy.
 
    Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `BRAINTRUST_API_KEY`
    để bật tracing (hoặc `OBSERVABILITY_PROVIDER=langfuse` cùng `LANGFUSE_*`), `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
