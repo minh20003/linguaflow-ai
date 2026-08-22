@@ -89,8 +89,13 @@ class AgentState(TypedDict, total=False):
     original_text: str
     source_language: str          # ISO 639-1; giá trị tạm khi vào, detect sẽ ghi đè
     target_language: str          # Lấy từ users.preferred_language của người nhận
-    honorific_profile: str        # senior | peer | junior | client — nửa còn lại
-                                  # của khoá fan-out, xem §4.4 quy tắc 2
+    honorific_profile: str        # senior | peer | junior | client — vị thế của
+                                  # NGƯỜI ĐỌC, nửa còn lại của khoá fan-out,
+                                  # xem §4.4 quy tắc 2
+    sender_honorific_profile: str # Cùng bốn giá trị, nhưng là vị thế của NGƯỜI
+                                  # GỬI. Rỗng = chưa suy luận. Prompt cần cả hai
+                                  # vì xưng hô là quan hệ, không phải thuộc tính
+                                  # của một người — xem ghi chú ngay dưới
     domain: str                   # Lĩnh vực hội thoại, do node customize điền từ
     audience: str                 # conversation_profiles. Rỗng = chưa suy luận,
                                   # khi đó prompt bỏ hẳn mục Audience (§5 ghi chú 15)
@@ -110,6 +115,12 @@ class AgentState(TypedDict, total=False):
     error: str
     telemetry: dict               # Chỉ phục vụ đo lường — xem cảnh báo bên dưới
 ```
+
+**Vì sao cần cả hai vị thế.** Cách xưng hô là một **quan hệ giữa hai người**, còn `participant_profiles` lại lưu **một** vị thế cho mỗi thành viên trong hội thoại. Hai thứ đó chỉ trùng nhau khi người gửi tình cờ đứng ở đỉnh thang. Trong nhóm ba người A `senior`, B `junior`, C `junior`: khi B nhắn, C vẫn nằm ở bucket `junior` và prompt vẫn phát biểu "người đọc ở vai dưới người gửi", trong khi B và C ngang hàng. Nói cách khác, cách xưng hô C nhìn thấy được suy ra từ thang vị thế của cả hội thoại — mà thang đó chủ yếu do quan hệ A–B dựng nên — chứ không phải từ quan hệ B–C. Đây là lỗi đã ghi ở ADR-23.
+
+`sender_honorific_profile` chữa đúng chỗ đó và **không đụng tới khoá fan-out**: trong phạm vi một tin nhắn, người gửi là cố định, nên mọi người đọc có cùng vị thế tuyệt đối cũng có cùng quan hệ với người gửi. Số bucket vì thế **không đổi**, số lượt gọi LLM **không đổi**, và `translation_results.honorific_profile` vẫn lưu vị thế tuyệt đối của người đọc nên **đường đọc của client không phải sửa gì** (§4.4, §5 ghi chú 6). Trường mới chỉ đi vào prompt, không đi vào cơ sở dữ liệu và không ra sự kiện WebSocket nào.
+
+Rỗng là trạng thái thật, không phải thiếu sót: mọi hội thoại đều ở trạng thái đó cho tới khi có đủ tin nhắn để suy luận (ADR-24). Khi rỗng, prompt lùi về đúng hành vi trước khi có trường này — phát biểu vị thế người đọc một mình — thay vì bịa ra một quan hệ.
 
 **`telemetry` nằm ngoài hợp đồng.** Trường này *thuộc* hợp đồng, nhưng **các khoá bên trong thì không**. Node ghi vào đó những gì đo được (tầng nhận diện đã dùng, số lượt gọi LLM, token, thời gian từng bước, mã lý do fallback), `record_attempt` đọc ra và ghi xuống bảng `translation_attempts`. Không thành phần nào khác được phụ thuộc vào khoá cụ thể trong đây, và không sự kiện WebSocket hay REST response nào được trả nó ra.
 
@@ -458,6 +469,23 @@ hội thoại (`docs/NewFeature.md` sơ đồ 2), và cách giữ điều đó t
 **không có chỗ nào đặt những thứ ấy vào**. Trong hai con số, `distinct_user_count` mới là
 con số để phán xét: năm lần sửa của một người là sở thích cá nhân, hai lần của hai người là
 một quy ước đang hình thành (ADR-28).
+
+**`GlossaryProposalDTO` mang thêm hai trường về trạng thái hiện có của glossary (22/08):**
+`similar_entries` là danh sách các mục **đã có** cùng thuật ngữ nguồn và cùng cặp ngôn ngữ —
+mỗi mục gồm `id`, `source_term`, `target_term`, `domain`, `audience`, `status` — và
+`conflicts_with_active` là `true` khi trong số đó có một mục **đang `active` với bản dịch
+khác**. Hai trường này trả lời đúng hai câu người duyệt cần: *đã có bao nhiêu cụm giống*, và
+*bản dịch hiện tại đã dùng đúng chưa*. Nếu `conflicts_with_active` là `true` thì máy vẫn
+đang dịch thuật ngữ này **đúng theo glossary hiện hành**, và đề xuất là yêu cầu **đổi** câu
+trả lời chứ không phải bổ sung một câu còn thiếu — hai quyết định khác hẳn nhau mà hàng đợi
+trước đây hiển thị y như nhau. Không có trường nào ở đây rò nội dung hội thoại: tất cả đều
+đọc từ chính bảng `glossary_entries`.
+
+**Đối sánh bằng thuật ngữ đã chuẩn hoá, không bằng embedding.** Đây là lựa chọn có số liệu
+chứ không phải cho nhanh: đo trên chính bộ thuật ngữ của dự án, model embedding khả dụng
+chấm một biến thể đúng và một từ không liên quan lệch nhau **0.002** (ADR-26), nên một ngưỡng
+tương đồng ở đây chỉ làm màn hình người duyệt đầy nhiễu tự tin. Đối sánh chuẩn hoá hẹp hơn
+nhưng **đúng**, và một màn hình sinh ra để ngăn một lần duyệt sai thì cần đúng.
 
 **Duyệt được phép sửa đề xuất ngay lúc duyệt.** Câu trả lời của miner đến từ một model đọc
 các đoạn trích ẩn danh; người duyệt mới là người biết đội mình thật sự nói thế nào. Bắt họ
