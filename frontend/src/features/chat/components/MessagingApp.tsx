@@ -430,7 +430,7 @@ const RATING_DOWN = 1;
 type TranslationEditFormProps = {
   message: ChatMessage;
   lang: LanguageCode;
-  onSaveEdit: (message: ChatMessage, editedText: string) => Promise<boolean>;
+  onSaveEdit: (message: ChatMessage, editedText: string, consentToShare: boolean) => Promise<boolean>;
   onClose: () => void;
 };
 
@@ -449,6 +449,11 @@ type TranslationEditFormProps = {
 function TranslationEditForm({ message, lang, onSaveEdit, onClose }: TranslationEditFormProps) {
   const saved = message.myEdit?.editedText ?? "";
   const [draft, setDraft] = useState(saved);
+  // Starts unticked every time the panel opens, including for someone who
+  // ticked it on their last correction. Consent is given for a wording, not
+  // switched on for an account, and a box that remembers would collect it for
+  // sentences its owner never considered.
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -458,7 +463,7 @@ function TranslationEditForm({ message, lang, onSaveEdit, onClose }: Translation
     if (!editedText || saving) return;
     setError("");
     setSaving(true);
-    const stored = await onSaveEdit(message, editedText);
+    const stored = await onSaveEdit(message, editedText, consent);
     setSaving(false);
     if (stored) onClose();
     else setError(uiText(lang, "chat.saveEditFailed"));
@@ -481,6 +486,19 @@ function TranslationEditForm({ message, lang, onSaveEdit, onClose }: Translation
         rows={2}
         autoFocus
       />
+      {/* The one thing on this panel that leaves the account, so it is opt-in
+          and says what it opts into. Without it nothing reaches the term miner
+          and the review queue stays empty — but a box that defaults to on would
+          be collecting consent rather than asking for it. */}
+      <label className={styles.consentRow}>
+        <input
+          type="checkbox"
+          checked={consent}
+          onChange={(event) => setConsent(event.target.checked)}
+        />
+        <span>{uiText(lang, "chat.shareCorrection")}</span>
+      </label>
+      <p className={styles.correctionHint}>{uiText(lang, "chat.shareCorrectionHint")}</p>
       {message.myEdit && (
         <p className={styles.correctionHint}>
           {formatUiText(lang, "chat.savedAt", { time: messageTime(message.myEdit.editedAt, lang) })}
@@ -514,7 +532,7 @@ type MessageClusterProps = {
   /** F-05: rate a received translation, or suggest a better one. */
   onRate: (message: ChatMessage, rating: number) => Promise<boolean>;
   /** F-05 (§3.10): store this account's own wording, private to them. */
-  onSaveEdit: (message: ChatMessage, editedText: string) => Promise<boolean>;
+  onSaveEdit: (message: ChatMessage, editedText: string, consentToShare: boolean) => Promise<boolean>;
   onForward: (message: ChatMessage) => void;
   onDownload: (message: ChatMessage) => void;
   /** Message id to its displayed text, for resolving reply quotes. */
@@ -1357,10 +1375,14 @@ export default function MessagingApp() {
    * nothing to `feedbacks.correction` any more — that column is legacy, read
    * from history so old suggestions still show, never written to again.
    */
-  const saveTranslationEdit = useCallback(async (message: ChatMessage, editedText: string) => {
+  const saveTranslationEdit = useCallback(async (
+    message: ChatMessage,
+    editedText: string,
+    consentToShare: boolean,
+  ) => {
     if (!message.translationId) return false;
     try {
-      const stored = await submitTranslationEdit(message.translationId, editedText);
+      const stored = await submitTranslationEdit(message.translationId, editedText, consentToShare);
       updateActiveThread((thread) => thread.map((existing) =>
         existing.id === message.id
           ? {

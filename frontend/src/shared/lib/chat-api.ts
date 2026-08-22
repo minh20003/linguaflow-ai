@@ -285,6 +285,16 @@ export function submitTranslationFeedback(
 export function submitTranslationEdit(
   translationId: string,
   editedText: string,
+  /**
+   * Whether this wording may be counted towards a shared glossary term.
+   *
+   * Defaults to false and must be asked for outright, never inferred. The edit
+   * itself stays private to its author whatever this says (ADR-19); consent
+   * only unlocks a narrower derived row — the phrase, the replacement, and a
+   * few anonymised words around them — and that row is the sole thing the term
+   * miner is allowed to read (docs/CONTRACT.md §3.10).
+   */
+  consentToShare = false,
   token?: string,
 ): Promise<
   TranslationEditSummary & {
@@ -297,7 +307,10 @@ export function submitTranslationEdit(
   return request(
     `/translations/${encodeURIComponent(translationId)}/edits`,
     token,
-    { method: "POST", body: JSON.stringify({ edited_text: editedText }) },
+    {
+      method: "POST",
+      body: JSON.stringify({ edited_text: editedText, consent_to_share: consentToShare }),
+    },
   );
 }
 
