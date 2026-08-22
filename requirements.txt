@@ -37,10 +37,12 @@ pgvector>=0.3.0
 
 # Sinh vector nhung (ADR-25). Gemini va OpenAI dung lai langchain-google-genai
 # va langchain-openai da khai bao o khoi AI/LangChain ben tren, khong can them
-# gi. Chi EMBEDDING_PROVIDER=local moi can hai goi duoi day, va chung keo theo
-# torch (~500MB) nen de comment: bo comment khi that su chon chay cuc bo.
-# langchain-huggingface>=0.1.0
-# sentence-transformers>=3.0.0
+# gi. Hai goi duoi day phuc vu EMBEDDING_PROVIDER=local, nay la tang du phong
+# khi provider hosted het quota (EMBEDDING_FALLBACK_PROVIDER). Chung keo theo
+# torch (~500MB) vao image — do la cai gia da chon de mot han muc can khong lam
+# dut dich vu; bo dong nay neu trien khai chap nhan mat khop ngu nghia luc do.
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0

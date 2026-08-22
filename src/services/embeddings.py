@@ -34,10 +34,12 @@ DEFAULT_MODELS: dict[str, str] = {
     # requested explicitly below rather than accepted.
     "gemini": "models/gemini-embedding-001",
     "openai": "text-embedding-3-small",
-    # MiniLM-L12-v2 sat here and returns 384 dimensions, which the
-    # `vector(768)` columns reject — the same shape of mistake as the two
-    # above, and the reason `local` had never actually run.
-    "local": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+    # LaBSE, because it is the only local model measured to do semantic work:
+    # 4 of 8 term variants at zero false positives, against 1 for e5 and 3 for
+    # MiniLM — and e5's single hit means it is a surface matcher, not a semantic
+    # one. MiniLM-L12-v2 sat here first and returns 384 dimensions, which the
+    # `vector(768)` columns reject outright, so `local` had never once run.
+    "local": "sentence-transformers/LaBSE",
 }
 
 # Which settings field carries each provider's key, and so — since

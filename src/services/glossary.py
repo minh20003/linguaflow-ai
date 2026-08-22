@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from difflib import SequenceMatcher
 from typing import Any
 
 from sqlalchemy import select
@@ -155,61 +154,6 @@ def _to_terms(best: dict[str, tuple[int, Any]]) -> tuple[GlossaryTerm, ...]:
     return tuple(terms[:MAX_TERMS_PER_MESSAGE])
 
 
-# How close a word has to be to a term before it counts as the same word typed
-# badly — and set high because the two distributions overlap.
-#
-# Measured on this project's terms: real typos score 0.833 to 0.933
-# ("stagign", "deadlien", "reveiw"), but so do real words that are not the term
-# — "headline" against "deadline" is 0.875 and "stating" against "staging" is
-# 0.857. There is no line that keeps every typo and refuses every near word, so
-# this one sits above both of those and catches only the typos nothing else
-# could plausibly be: a doubled or dropped letter.
-#
-# That gives up transpositions and adjacent-key slips, and gives them up on
-# purpose. A glossary term is *forced* into the translation by the prompt, so
-# reading "headline" as "deadline" changes what the message says, while a missed
-# typo leaves the sentence as the model would have translated it anyway.
-#
-# An embedding model does not rescue those cases; it is the wrong instrument for
-# them. Measured on the same words, string distance clears every dropped or
-# doubled letter, while LaBSE clears 2 of 12 typos and e5 4 of 12 — and both
-# rank the *confusable real word* above the typo. The reason is mechanical: a
-# typo is not a word, so the tokenizer shatters it into fragments and its vector
-# drifts away from the term, whereas two real words that look alike are often
-# genuinely related in meaning ("headline"/"deadline", "stating"/"staging") and
-# sit close together. Embeddings answer "is this about the same thing", which is
-# the opposite of the question a typo asks.
-#
-# Nor does a better string metric help. Damerau-Levenshtein counts a
-# transposition as one edit and would catch "reveiw" — but "headline" and
-# "deadline" are also one edit apart, so the coverage arrives with exactly the
-# error it was meant to avoid. No surface measure separates a misspelling of a
-# word from a different word that is spelled almost the same; only a dictionary
-# would, and this project has none.
-FUZZY_MATCH_RATIO = 0.90
-
-FUZZY_MIN_LENGTH = 5
-
-
-def _fuzzy_matches(normalized_text: str, needle: str) -> bool:
-    """Whether some word in the message is this term typed wrongly.
-
-    Costs nothing and needs no model, which is the point: it covers the case an
-    embedding cannot — a reader who mistyped a term — and it keeps working when
-    every embedding provider is out of quota. On the same pairs, string distance
-    caught every typo while the best *local* embedding model added nothing
-    semantic beyond them, and Mistral's hosted model caught fewer (ADR-26).
-    """
-    if len(needle) < FUZZY_MIN_LENGTH:
-        return False
-    for word in normalized_text.split():
-        if len(word) < FUZZY_MIN_LENGTH:
-            continue
-        if SequenceMatcher(None, word, needle).ratio() >= FUZZY_MATCH_RATIO:
-            return True
-    return False
-
-
 async def lookup_terms(
     session: AsyncSession,
     *,
@@ -274,16 +218,21 @@ async def lookup_terms(
         if current is None or rank + bonus > current[0]:
             best[key] = (rank + bonus, entry)
 
+    # Two stages, not three. A fuzzy stage for mistyped terms was built and
+    # then removed: no surface measure separates a misspelt word from a
+    # different word spelt almost the same — "headline" and "deadline" are one
+    # edit apart — and embeddings are worse at it than string distance, because
+    # a typo is not a word and its vector drifts away from the term while two
+    # similar real words sit close together. Both measured; both recorded in
+    # ADR-26. A mistyped term is therefore left to the translating model, which
+    # reads around a slip the way a person does, instead of to a rule that
+    # would force the wrong term in whenever it guessed wrong.
     for entry in candidates:
         if contains_term(normalized_text, entry.source_term_normalized):
             # An exact hit outranks any semantic one, whatever their scopes: the
             # message literally contains this term.
             offer(entry, bonus=10)
-        elif _fuzzy_matches(normalized_text, entry.source_term_normalized):
-            # A typo of the term. Ranked between exact and semantic: it is the
-            # same word, so it beats a match by meaning, but a message that
-            # spells the term correctly should still win over one that does not.
-            offer(entry, bonus=5)
+
 
     if settings.semantic_glossary_enabled:
         await _add_semantic_matches(
