@@ -41,6 +41,7 @@ from src.schemas.glossary import (
     GlossaryEntryResponse,
     GlossaryProposalResponse,
     GlossaryRejectionRequest,
+    GlossarySimilarEntry,
 )
 from src.services.embeddings import embed, embedding_model_name
 from src.services.glossary import normalize_term
@@ -93,6 +94,65 @@ def _require_pending(proposal: GlossaryProposal) -> None:
         )
 
 
+async def _similar_entries(
+    db: AsyncSession, proposal: GlossaryProposal
+) -> tuple[list[GlossarySimilarEntry], bool]:
+    """What the glossary already says about this proposal's source term.
+
+    Matched on the normalised source term and the language pair, not on
+    embeddings. That is a deliberate choice rather than a shortcut: measured on
+    this project's own terms, the available embedding models score a true
+    variant and an unrelated word within 0.002 of each other, so a similarity
+    threshold here would fill a reviewer's screen with confident noise (ADR-26).
+    Normalised equality is narrower and it is *right*, which is what a screen
+    that exists to prevent a wrong approval needs.
+
+    Returns:
+        The entries found, and whether any of them is active with a different
+        target — the case where the machine is already translating this term to
+        somebody's satisfaction and the proposal is asking to overturn it.
+    """
+    rows = (
+        await db.scalars(
+            select(GlossaryEntry).where(
+                GlossaryEntry.source_term_normalized == proposal.source_term_normalized,
+                GlossaryEntry.source_language == proposal.source_language,
+                GlossaryEntry.target_language == proposal.target_language,
+            )
+        )
+    ).all()
+
+    conflicts = any(
+        entry.status == "active" and entry.target_term != proposal.target_term
+        for entry in rows
+    )
+    return [GlossarySimilarEntry.model_validate(entry) for entry in rows], conflicts
+
+
+async def _proposal_response(
+    db: AsyncSession, proposal: GlossaryProposal
+) -> GlossaryProposalResponse:
+    """Render one proposal with the evidence a reviewer decides on.
+
+    Both endpoints that return a proposal go through here. They used to build
+    the response separately from `model_fields`, which meant adding a field to
+    the DTO silently broke whichever copy was not edited — it did, the first
+    time this grew.
+    """
+    similar, conflicts = await _similar_entries(db, proposal)
+    carried = {
+        field
+        for field in GlossaryProposalResponse.model_fields
+        if field not in ("citations", "similar_entries", "conflicts_with_active")
+    }
+    return GlossaryProposalResponse(
+        **{field: getattr(proposal, field) for field in carried},
+        citations=await _citations(db, proposal.id),
+        similar_entries=similar,
+        conflicts_with_active=conflicts,
+    )
+
+
 @router.get(
     "/admin/glossary/proposals",
     response_model=list[GlossaryProposalResponse],
@@ -127,17 +187,7 @@ async def list_glossary_proposals(
         )
     ).all()
 
-    return [
-        GlossaryProposalResponse(
-            **{
-                field: getattr(proposal, field)
-                for field in GlossaryProposalResponse.model_fields
-                if field != "citations"
-            },
-            citations=await _citations(db, proposal.id),
-        )
-        for proposal in proposals
-    ]
+    return [await _proposal_response(db, proposal) for proposal in proposals]
 
 
 @router.post(
@@ -237,14 +287,7 @@ async def reject_glossary_proposal(
     await db.commit()
     await db.refresh(proposal)
 
-    return GlossaryProposalResponse(
-        **{
-            field: getattr(proposal, field)
-            for field in GlossaryProposalResponse.model_fields
-            if field != "citations"
-        },
-        citations=await _citations(db, proposal.id),
-    )
+    return await _proposal_response(db, proposal)
 
 
 @router.get("/admin/glossary", response_model=list[GlossaryEntryResponse])

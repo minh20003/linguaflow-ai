@@ -174,9 +174,14 @@ async def test_the_other_language_pairs_entries_are_not_considered(test_db):
 
 
 @pytest.mark.asyncio
-async def test_semantic_matching_is_off_unless_it_is_switched_on(test_db, monkeypatch):
-    """Default off, like the secondary translator: it adds an embedding call to
-    the request path, and NFR-01 is the tightest figure in the project."""
+async def test_the_flag_decides_whether_a_lookup_embeds_anything(test_db, monkeypatch):
+    """The flag has to gate the embedding call itself, not just its result.
+
+    It is what stands between a lookup that costs nothing and one that adds a
+    network round trip to the request path, and NFR-01 is the tightest figure in
+    the project. Asserted in both directions rather than against the current
+    default, so this keeps testing the gate after somebody changes which way the
+    default points — as somebody did (ADR-26)."""
     called: list[str] = []
 
     async def spy(text, *, settings=None):
@@ -187,9 +192,23 @@ async def test_semantic_matching_is_off_unless_it_is_switched_on(test_db, monkey
     test_db.add(entry("staging environment", "moi truong staging"))
     await test_db.commit()
 
-    await terms_for(test_db, "how is stg looking")
-
+    await lookup_terms(
+        test_db,
+        text="how is stg looking",
+        source_language="en",
+        target_language="vi",
+        settings=settings(semantic_glossary_enabled=False),
+    )
     assert called == []
+
+    await lookup_terms(
+        test_db,
+        text="how is stg looking",
+        source_language="en",
+        target_language="vi",
+        settings=settings(semantic_glossary_enabled=True),
+    )
+    assert called == ["how is stg looking"]
 
 
 @pytest.mark.asyncio
