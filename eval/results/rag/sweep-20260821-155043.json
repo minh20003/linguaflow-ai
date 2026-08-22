@@ -1,0 +1,71 @@
+{
+  "run_id": "20260821-155043",
+  "started_at": "2026-08-21T15:50:43.101711+00:00",
+  "agent_context_size": 5,
+  "rag_top_k": 3,
+  "scenarios": [
+    "import-done",
+    "plan-approved",
+    "reviewer-replied",
+    "invoice-sent",
+    "server-restarted",
+    "design-signed-off",
+    "bug-assigned",
+    "contract-deadline",
+    "training-data"
+  ],
+  "rows": [
+    {
+      "embedding": "local:sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+      "strategy": "message",
+      "scenarios": 9,
+      "hit_rate": 0.111,
+      "mrr": 0.087,
+      "mean_rank": 20.89,
+      "candidates": 34.0,
+      "query_ms": 0.0,
+      "embed_ms_per_message": 251.0,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+      "strategy": "message_plus_previous",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.069,
+      "mean_rank": 18.56,
+      "candidates": 34.0,
+      "query_ms": 199.1,
+      "embed_ms_per_message": 251.0,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+      "strategy": "message_plus_recent",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.074,
+      "mean_rank": 17.78,
+      "candidates": 34.0,
+      "query_ms": 282.5,
+      "embed_ms_per_message": 251.0,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+      "strategy": "recent_only",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.069,
+      "mean_rank": 18.56,
+      "candidates": 34.0,
+      "query_ms": 200.6,
+      "embed_ms_per_message": 251.0,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    }
+  ]
+}

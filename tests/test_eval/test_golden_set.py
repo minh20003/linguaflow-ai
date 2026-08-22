@@ -145,3 +145,67 @@ def test_the_honorific_samples_cover_more_than_one_language(samples):
     assert len(rows) >= 3
     assert len({s["target_language"] for s in rows}) >= 2
     assert len({s["honorific_profile"] for s in rows}) >= 2
+
+
+def _borrowed_from(history_line: str, translation: str) -> str:
+    """What the translation appears to have taken from this history line.
+
+    Two rules rather than one, because the check has to work for both writing
+    systems in this set. Where the line has spaces, whole words of four
+    characters or more are compared: Vietnamese shares so many short letter
+    runs between unrelated words that a character test flags `anh nhận` against
+    `rảnh nhé`. Where it has none, as in Japanese, there are no word boundaries
+    to split on, so a run of three characters is the signal instead.
+
+    Returns the borrowed fragment, or "" when there is nothing shared.
+    """
+    if " " in history_line.strip():
+        for word in history_line.split():
+            cleaned = word.strip(":,.?!").lower()
+            if len(cleaned) >= 4 and cleaned in translation.lower():
+                return cleaned
+        return ""
+
+    for size in range(len(history_line), 2, -1):
+        for start in range(len(history_line) - size + 1):
+            run = history_line[start : start + size]
+            if run in translation:
+                return run
+    return ""
+
+
+def test_the_context_bleed_samples_put_the_bait_in_the_history_only(samples):
+    """The category only measures anything if the thing that must not appear
+    appears in the context and nowhere in the message being translated."""
+    rows = [s for s in samples if s["category"] == "context_bleed"]
+
+    assert len(rows) >= 2
+    assert len({s["target_language"] for s in rows}) >= 2
+    for sample in rows:
+        assert sample["context_messages"], sample["id"]
+        assert sample["context_level"] == "rich", sample["id"]
+        # Nothing the history says may legitimately belong in the answer, or a
+        # leak would be indistinguishable from a correct translation. Measured
+        # as a shared run of characters rather than shared words, because
+        # Japanese writes no spaces for a word check to split on.
+        for line in sample["context_messages"]:
+            borrowed = _borrowed_from(line, sample["expected_translation"])
+            assert not borrowed, f"{sample['id']} shares {borrowed!r} with its history"
+
+
+def test_one_honorific_sample_offers_a_relationship_that_is_not_the_readers(samples):
+    """A pair of address forms between two other speakers is the trap: borrowing
+    it renders the reader into a relationship they are not part of (ADR-23)."""
+    bystander = [
+        s
+        for s in samples
+        if s["category"] == "honorific_recipient"
+        and s.get("honorific_profile") == "peer"
+        and s["context_messages"]
+    ]
+
+    assert bystander, "no sample offers a bystander relationship to borrow"
+    for sample in bystander:
+        history = " ".join(sample["context_messages"])
+        assert "anh" in history and "em" in history, sample["id"]
+        assert "anh" not in sample["expected_translation"].split(), sample["id"]
