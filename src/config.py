@@ -23,6 +23,13 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
 )
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
 
+# The embedding model `glossary_similarity_threshold` was calibrated against.
+# A cosine threshold is a property of an embedding space, not of a task: the
+# same 0.60 that separates true variants from unrelated words here matches
+# everything on another model. Named once so the warning below and the comment
+# on the field cannot drift apart.
+CALIBRATED_EMBEDDING_MODEL = "models/gemini-embedding-001"
+
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
@@ -52,7 +59,7 @@ class Settings(BaseSettings):
     cors_origin_regex: str = ""
 
     # LLM
-    llm_provider: Literal["groq", "deepseek", "gemini", "openai"] = "groq"
+    llm_provider: Literal["groq", "deepseek", "gemini", "openai", "mistral"] = "groq"
     llm_model: str = ""  # Empty = use the provider default (see services/llm.py)
     # Translation is not a creative task — a low temperature keeps the model on
     # the format rules in TRANSLATE_SYSTEM_PROMPT instead of paraphrasing.
@@ -62,11 +69,22 @@ class Settings(BaseSettings):
     # the model explaining itself, which validate_output rejects anyway.
     llm_max_tokens: int = Field(default=1024, ge=64, le=8192)
 
+    # Who scores the evaluation runs, and with which model. Both empty means
+    # "the same provider that did the translating", which the report then flags
+    # as self-judging (ADR-17). They live in configuration rather than only as
+    # command-line flags because the judge is what a score is comparable
+    # against: two runs judged by different models are not the same measurement,
+    # and a flag typed differently on two days is the easiest way to end up with
+    # exactly that without noticing.
+    llm_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    judge_model: str = ""  # Empty = the judge provider's default model
+
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
     deepseek_api_key: str = ""
     google_api_key: str = ""
     openai_api_key: str = ""
+    mistral_api_key: str = ""
 
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
@@ -90,15 +108,31 @@ class Settings(BaseSettings):
     # different schemas.
     embedding_model: str = ""
 
-    # Both default off, following `fallback_translator_enabled`. Each adds an
-    # embedding call to the request path, and NFR-01 is already the tightest
-    # figure in the project — turn them on against measurements, not hopes.
-    semantic_glossary_enabled: bool = False
+    # Each adds an embedding call to the request path, and NFR-01 is the
+    # tightest figure in the project, so both were turned on against
+    # measurements rather than hopes — and only one of them earned it.
+    # Semantic glossary matching is on; semantic *context* retrieval is not.
+    # They were measured separately and the answers differ: retrieval could not
+    # find the line that mattered often enough to pay for, while term matching
+    # separates cleanly on the model named below (ADR-26, ADR-27).
+    semantic_glossary_enabled: bool = True
     rag_context_enabled: bool = False
-    # Cosine similarity a glossary term must reach to be injected without an
-    # exact match. Conservative on purpose: a wrongly matched term is *forced*
-    # into the translation, which is worse than missing one.
-    glossary_similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    # Cosine a glossary term must reach to be injected without an exact match.
+    #
+    # **This number is meaningless without the model it was calibrated on.**
+    # Measured against `gemini-embedding-001` comparing a term with the whole
+    # message, which is what `_add_semantic_matches` does: true variants scored
+    # 0.586-0.695, unrelated words 0.477-0.531. 0.60 clears every unrelated word
+    # by a margin and gives up the weakest true match on purpose — a term below
+    # the line is simply absent from the glossary and the model translates it
+    # itself, which is the safe direction. A wrongly matched term is *forced*
+    # into the output by the prompt.
+    #
+    # The same number means nothing elsewhere. On `multilingual-e5-base` every
+    # pair, true and false alike, scores 0.83 +/- 0.01, so 0.60 would match
+    # everything and 0.82 would match at random. Changing EMBEDDING_MODEL means
+    # re-measuring this, and `_warn_uncalibrated_threshold` says so out loud.
+    glossary_similarity_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     rag_top_k: int = Field(default=3, ge=1, le=10)
 
     # Secondary translation provider tried when the LLM path fails (ADR-07).
@@ -223,6 +257,33 @@ class Settings(BaseSettings):
                     f"{generate}"
                 )
         return v
+
+    @model_validator(mode="after")
+    def _warn_uncalibrated_threshold(self) -> "Settings":
+        """Say so when the similarity threshold was measured on another model.
+
+        Not an error, because a team may well have re-measured and set both
+        deliberately, and refusing to boot over a tuning constant would be
+        worse than the mistake. But silence here is the expensive outcome: a
+        threshold carried across embedding spaces does not fail, it matches the
+        wrong terms and forces them into translations, and nothing downstream
+        would ever say why.
+        """
+        if self.semantic_glossary_enabled:
+            model = self.embedding_model or (
+                CALIBRATED_EMBEDDING_MODEL if self.embedding_provider == "gemini" else ""
+            )
+            if model != CALIBRATED_EMBEDDING_MODEL:
+                logging.getLogger(__name__).warning(
+                    "GLOSSARY_SIMILARITY_THRESHOLD=%.2f was calibrated on %s, but "
+                    "EMBEDDING_MODEL is %r. A cosine threshold does not carry between "
+                    "embedding models — re-measure it or turn SEMANTIC_GLOSSARY_ENABLED "
+                    "off.",
+                    self.glossary_similarity_threshold,
+                    CALIBRATED_EMBEDDING_MODEL,
+                    model or f"(mặc định của {self.embedding_provider})",
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_production_and_email_config(self) -> "Settings":
