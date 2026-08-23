@@ -217,13 +217,26 @@ class UserResponse(BaseModel):
     preferred_language: str
     interface_language: str
     created_at: datetime
+    # Not exposed in API responses — read from ORM object via from_attributes,
+    # then excluded from JSON output. Declared here so Pydantic can extract it
+    # from the User row for use in the model_validator below.
+    google_sub: str | None = Field(default=None, exclude=True)
+    password_hash: str | None = Field(default=None, exclude=True)
+    # Derived: True when google_sub is set on the account.
+    google_linked: bool = False
+    # Derived: True when the user has a non-null password_hash set.
+    has_password: bool = True
 
     @model_validator(mode="after")
-    def fill_legacy_profile_names(self) -> "UserResponse":
-        """Keep profiles usable for accounts created before name fields existed."""
+    def fill_legacy_fields(self) -> "UserResponse":
+        """Fill profile name gaps and compute derived auth state."""
         self.username, self.display_name = fallback_profile_names(
             self.email, self.username, self.display_name
         )
+        # google_sub and password_hash are read from the ORM object via from_attributes,
+        # then google_linked and has_password are derived so callers never see internal fields.
+        self.google_linked = bool(self.google_sub)
+        self.has_password = bool(self.password_hash and len(self.password_hash) > 0)
         return self
 
 
@@ -274,3 +287,43 @@ class UpdateInterfaceLanguageRequest(BaseModel):
     def validate_interface_language(cls, v: str) -> str:
         """Validate that the language code is supported."""
         return normalize_language(v)
+
+
+# ----------------------------------------------------------------------
+# Google Sign-In schemas (Batch G)
+# ----------------------------------------------------------------------
+
+
+class GoogleLoginRequest(BaseModel):
+    """Request schema for logging in with a Google ID token.
+
+    The credential is a JWT issued by Google after the user authenticates
+    with the GIS library in the browser. The server verifies it using
+    google-auth (not by calling Google's /tokeninfo endpoint).
+    """
+
+    credential: str = Field(
+        ...,
+        min_length=1,
+        description="Google ID token (JWT) from the GIS library",
+    )
+
+
+class GoogleLinkResponse(BaseModel):
+    """Response after linking or unlinking a Google account."""
+
+    google_linked: bool
+    message: str
+
+
+class GoogleErrorResponse(BaseModel):
+    """Error response when Google Sign-In fails."""
+
+    detail: str = Field(
+        ...,
+        examples=[
+            "Google token verification failed",
+            "This Google account is already linked to another user",
+            "This email is already linked to a different Google account.",
+        ],
+    )

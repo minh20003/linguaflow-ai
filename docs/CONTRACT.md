@@ -142,6 +142,9 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `PUT` | `/auth/me/language` | `{"preferred_language": str}` | `UserDTO` | Đã hiện thực |
 | `PUT` | `/auth/me/interface-language` | `{"interface_language": str}` | `UserDTO`, xem §1.2 | Đã hiện thực |
 | `GET` | `/languages` | — | `[str]` | Đã hiện thực |
+| `POST` | `/auth/google/login` | `{"credential": str}` | `AuthResponse` | Đã hiện thực |
+| `POST` | `/auth/me/google/link` | `{"credential": str}` | `GoogleLinkResponse` | Đã hiện thực |
+| `DELETE` | `/auth/me/google/link` | — | `GoogleLinkResponse` | Đã hiện thực |
 | `GET` | `/users?q=` | — | `[UserDTO]`, xem §3.1 | Đã hiện thực |
 | `POST` | `/conversations` | `{"type": "direct" \| "group", "member_ids": [uuid], "title": str \| null}` | `ConversationDTO`, `201` khi tạo mới và `200` khi dùng lại — xem §3.5 | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/messages?limit=&before=` | — | `[MessageDTO]` — mảng trần, xem ghi chú §3.2 | Đã hiện thực |
@@ -175,6 +178,8 @@ Tương ứng lớp `UserResponse` trong `src/schemas/auth.py`.
   "role": "member",
   "preferred_language": "vi",
   "interface_language": "vi",
+  "google_linked": false,
+  "has_password": true,
   "created_at": "2026-08-10T09:00:00Z"
 }
 ```
@@ -183,11 +188,57 @@ Trường `interface_language` (§1.2) **không bao giờ null**: tài khoản t
 
 Hai trường `username` và `display_name` **không bao giờ null trong phản hồi**: tài khoản tạo trước khi có hai trường này được lấp bằng phần trước dấu `@` của email, nên client luôn có thứ để hiển thị.
 
+Trường `google_linked` (`bool`) biểu thị trạng thái tài khoản đã liên kết Google (`google_sub` tồn tại) hay chưa. Trường định danh nội bộ `google_sub` **không bao giờ** xuất hiện trong phản hồi API để bảo vệ quyền riêng tư người dùng.
+
+Trường `has_password` (`bool`) biểu thị tài khoản có mật khẩu thiết lập hay không (`true` nếu có mật khẩu, `false` nếu là tài khoản tạo thuần qua Google chưa đặt mật khẩu). Trường mật khẩu băm `password_hash` **không bao giờ** xuất hiện trong phản hồi API.
+
 **Tìm người dùng — `GET /users?q=`.** Tham số `q` tối thiểu 2 ký tự, khớp **tiền tố, không phân biệt hoa thường** trên `email`, `username` và `display_name`; riêng `display_name` khớp tiền tố của **bất kỳ từ nào** (gõ `an` tìm ra `Nguyễn An`). Trả về tối đa 20 kết quả, sắp xếp theo `email`, và **không bao giờ chứa chính người gọi**. Không tìm thấy ai là mảng rỗng chứ không phải `404` — `404` sẽ lẫn với lỗi sai đường dẫn.
 
 Khớp tiền tố chứ không phải khớp giữa chuỗi: tìm giữa chuỗi biến endpoint này thành công cụ quét danh bạ (gõ `a` ra gần như mọi tài khoản). Endpoint yêu cầu đăng nhập, nhưng người đã đăng nhập vẫn dò được sự tồn tại của một địa chỉ — chấp nhận ở giai đoạn này vì chưa có giới hạn tần suất; xem `docs/DEPLOY.md`.
 
-### 3.2. MessageDTO
+### 3.2. Google Authentication Provider
+
+**GoogleLinkResponse**
+
+```json
+{
+  "google_linked": true,
+  "message": "Google account linked successfully."
+}
+```
+
+**Quy tắc định danh và xác thực Google (Batch G):**
+
+Google hoạt động như một nhà cung cấp xác thực đầy đủ (Full Authentication Provider) kết hợp cả đăng nhập và tạo tài khoản mới:
+
+1. **Đăng nhập và Đăng ký qua Google (`POST /auth/google/login`):**
+   * Token Google phải vượt qua kiểm tra chữ ký server-side, đúng audience (`GOOGLE_OAUTH_CLIENT_ID`), đúng issuer, chưa hết hạn, và **bắt buộc `email_verified == true`**.
+   * **Phân giải định danh (Identity Resolution):**
+     * **Trường hợp 1 (`google_sub` trùng khớp):** Đăng nhập ngay vào tài khoản tương ứng, trả về `AuthResponse`.
+     * **Trường hợp 2 (Chưa khớp `google_sub` nhưng trùng `email` đã xác thực):**
+       * Nếu tài khoản hiện có chưa liên kết Google (`google_sub` là `NULL`): Tự động liên kết `google_sub`, bảo toàn nguyên vẹn `password_hash` và toàn bộ dữ liệu tài khoản, đăng nhập thành công.
+       * Nếu tài khoản hiện có đã liên kết với một tài khoản Google khác: Trả về `409 Conflict` (ngăn chặn việc tự động đổi liên kết).
+     * **Trường hợp 3 (Chưa có `google_sub` và chưa có `email`):**
+       * Tự động tạo tài khoản Google-native mới: `email = verified_email`, `google_sub = token.sub`, `password_hash = NULL`, `role = member`, ngôn ngữ mặc định `en`.
+       * Đăng nhập thành công và trả về `AuthResponse` ngay lập tức.
+   * **Token không hợp lệ hoặc `email_verified == false`:** Trả về `401 Unauthorized`.
+
+2. **Liên kết tài khoản từ Cài đặt (`POST /auth/me/google/link`):**
+   * Cho phép người dùng đã đăng nhập liên kết tài khoản Google một cách tường minh (hỗ trợ cả trường hợp email Google khác với email LinguaFlow).
+   * Yêu cầu xác thực (`Authorization: Bearer <token>`).
+   * Trả về `409 Conflict` nếu tài khoản hiện tại đã liên kết hoặc `google_sub` đã bị tài khoản khác sử dụng.
+   * Trả về `200 OK` với `{"google_linked": true, "message": "Google account linked successfully."}` khi thành công.
+
+3. **Hủy liên kết tài khoản (`DELETE /auth/me/google/link`):**
+   * Yêu cầu xác thực (`Authorization: Bearer <token>`).
+   * **Bảo vệ tài khoản:** Nếu tài khoản là Google-native (`password_hash` là `NULL`), hệ thống từ chối hủy liên kết và trả về `409 Conflict` (`"Cannot unlink Google account without a password. Please set a password first."`) để tránh làm người dùng mất phương thức đăng nhập duy nhất.
+   * Nếu tài khoản đã có mật khẩu: Xóa `google_sub`, trả về `200 OK` với `{"google_linked": false, "message": "Google account unlinked successfully."}`.
+   * Idempotent: Nếu tài khoản chưa từng liên kết Google, luôn trả về `200 OK` với `google_linked: false`.
+
+4. **Đăng nhập bằng mật khẩu đối với tài khoản Google-native:**
+   * Tài khoản có `password_hash = NULL` khi thử đăng nhập bằng email/mật khẩu tại `POST /auth/login` sẽ luôn nhận phản hồi chuẩn `401 Unauthorized` (`"Invalid email or password"`), không tiết lộ loại tài khoản và không gây lỗi crash.
+
+### 3.3. MessageDTO
 
 ```json
 {
@@ -563,7 +614,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 
 | Bảng | Các trường |
 |---|---|
-| `users` | `id`, `email`, `password_hash`, `role`, `preferred_language`, `interface_language`, `created_at` |
+| `users` | `id`, `email`, `username`, `display_name`, `password_hash`, `google_sub`, `role`, `preferred_language`, `interface_language`, `created_at` |
 | `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
 | `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
 | `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at`, `edited_at`, `deleted_at` |

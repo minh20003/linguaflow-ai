@@ -119,7 +119,7 @@ export function requestPasswordReset(email: string): Promise<{ message: string; 
 
 export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
   return requestAuthSession(
-    "/api/v1/auth/google",
+    "/api/v1/auth/google/login",
     { method: "POST", body: JSON.stringify({ credential, remember }) },
     "Unable to sign in with Google. Please try again.",
   );
