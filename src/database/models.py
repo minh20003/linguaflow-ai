@@ -1194,3 +1194,136 @@ class MessageEmbedding(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Action Proposal Domain (B-04, B-05, B-08, B-10)
+# ---------------------------------------------------------------------------
+
+ACTION_PROPOSAL_TYPES = ("task", "appointment")
+ACTION_PROPOSAL_STATUSES = ("needs_clarification", "pending_confirmation", "confirmed", "rejected", "stale")
+ACTION_PROPOSAL_SOURCE_MODES = ("on_demand", "proactive")
+
+
+class ActionProposal(Base):
+    """An AI-proposed action extracted from a message awaiting human confirmation (B-04/B-05)."""
+
+    __tablename__ = "action_proposals"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("action_type", ACTION_PROPOSAL_TYPES),
+            name="ck_action_proposals_action_type",
+        ),
+        CheckConstraint(
+            _in_clause("status", ACTION_PROPOSAL_STATUSES),
+            name="ck_action_proposals_status",
+        ),
+        CheckConstraint(_in_clause("source_mode", ACTION_PROPOSAL_SOURCE_MODES), name="ck_action_proposals_source_mode"),
+        CheckConstraint("confidence_score >= 0 AND confidence_score <= 1", name="ck_action_proposals_confidence"),
+        CheckConstraint("clarification_rounds >= 0", name="ck_action_proposals_clarification_rounds"),
+        Index("ix_action_proposals_conversation_id", "conversation_id"),
+        Index("ix_action_proposals_source_message_id", "source_message_id"),
+        Index("ix_action_proposals_owner_status", "owner_user_id", "status"),
+        Index("ix_action_proposals_status", "status"),
+        UniqueConstraint("idempotency_key", name="uq_action_proposals_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_message_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    source_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="on_demand")
+    action_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending_confirmation",
+    )
+    title: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+    details: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_time_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scheduled_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    confidence_score: Mapped[float] = mapped_column(
+        nullable=False,
+        default=1.0,
+    )
+    clarification_prompt: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    clarification_question: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    missing_fields: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default="[]")
+    clarification_rounds: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    confirmed_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    stale_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<ActionProposal(id={self.id}, type={self.action_type}, status={self.status}, title={self.title})>"

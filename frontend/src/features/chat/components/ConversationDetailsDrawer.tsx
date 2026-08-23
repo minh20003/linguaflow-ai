@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Conversation, LanguageCode, MessageAttachment, User } from '../types';
-import { interactionText, tx } from '../i18n';
+import { interactionText, settingText, tx } from '../i18n';
 import {
   X,
   Bell,
@@ -133,7 +133,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
         {conversation.recipient && (
           <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB] text-xs font-semibold rounded-full">
             <Globe className="w-3.5 h-3.5" />
-            <span>{tx(language, 'Native Language')}: {conversation.recipient.nativeLanguage.toUpperCase()}</span>
+            <span>{settingText(language, 'Preferred Language')}: {conversation.recipient.nativeLanguage.toUpperCase()}</span>
           </div>
         )}
 

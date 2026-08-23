@@ -1,13 +1,13 @@
 """add group roles and soft delete
 
 Revision ID: a91f6d87c201
-Revises: e51a72f4b903, ef06ca79ef49
+Revises: a1b2c3d4e5f6
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "a91f6d87c201"
-down_revision = ("e51a72f4b903", "ef06ca79ef49")
+down_revision = "a1b2c3d4e5f6"
 branch_labels = None
 depends_on = None
 

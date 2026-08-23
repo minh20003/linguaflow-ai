@@ -92,9 +92,9 @@ class LoginRequest(BaseModel):
 
 
 class GoogleLoginRequest(BaseModel):
-    """Google Identity Services credential sent by the browser."""
+    """Google Identity Services credential sent by the browser (Batch G)."""
 
-    credential: str = Field(..., min_length=20, max_length=8192)
+    credential: str = Field(..., min_length=1, max_length=8192, description="Google ID token (JWT) from the GIS library")
     remember: bool = True
 
 
@@ -292,21 +292,6 @@ class UpdateInterfaceLanguageRequest(BaseModel):
 # ----------------------------------------------------------------------
 # Google Sign-In schemas (Batch G)
 # ----------------------------------------------------------------------
-
-
-class GoogleLoginRequest(BaseModel):
-    """Request schema for logging in with a Google ID token.
-
-    The credential is a JWT issued by Google after the user authenticates
-    with the GIS library in the browser. The server verifies it using
-    google-auth (not by calling Google's /tokeninfo endpoint).
-    """
-
-    credential: str = Field(
-        ...,
-        min_length=1,
-        description="Google ID token (JWT) from the GIS library",
-    )
 
 
 class GoogleLinkResponse(BaseModel):
