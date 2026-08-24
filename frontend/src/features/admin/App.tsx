@@ -7,6 +7,7 @@ import { GlossaryView } from './components/glossary/GlossaryView';
 import { SuggestionsView } from './components/suggestions/SuggestionsView';
 import { LiveChatView } from './components/chat/LiveChatView';
 import { ToastContainer, ToastMessage } from './components/Toast';
+import { API_BASE } from '../../config/env';
 import {
   AdminTab,
   TimeRangeFilter,
@@ -31,7 +32,7 @@ type ApiUser = { email:string; display_name?:string | null; username?:string | n
 type AdminTheme = 'light' | 'dark';
 type AdminInterfaceLanguage = 'vi' | 'en';
 
-const apiBase = () => process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+const apiBase = () => API_BASE;
 
 async function adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = window.localStorage.getItem('access_token') ?? window.sessionStorage.getItem('access_token');
