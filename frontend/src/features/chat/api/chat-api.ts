@@ -140,8 +140,9 @@ export function toChatUser(user: ApiUser | AuthUser): User {
     username: user.username || user.email.split("@", 1)[0],
     avatar: avatar(user.display_name || user.username || user.email),
     nativeLanguage: toLanguageCode(user.preferred_language),
+    onlineStatus: "offline",
     bio: "bio" in user ? user.bio ?? undefined : undefined,
-    role: "group_role" in user ? user.group_role : ("role" in user ? user.role : undefined),
+    role: "group_role" in user ? (user.group_role as "admin" | "member" | undefined) : ("role" in user ? (user.role as "admin" | "member" | undefined) : undefined),
   };
 }
 

@@ -27,7 +27,6 @@ interface ChatViewProps {
   onDeleteMessage?: (messageId: string) => void;
   onToggleMute: (conversationId: string) => void;
   onTogglePin: (conversationId: string) => void;
-  onLeaveGroup: (conversationId: string) => void;
   onBlockContact: (conversationId: string) => void;
   onSearchMessages: (query: string) => Promise<ConversationSearchResult[]>;
   onOpenNewChat: () => void;
@@ -66,7 +65,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onDeleteMessage,
   onToggleMute,
   onTogglePin,
-  onLeaveGroup,
   onBlockContact,
   onSearchMessages,
   onOpenNewChat,
@@ -202,7 +200,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
         language={language}
         attachments={attachments}
         onDownloadAttachment={onDownloadAttachment}
-        onLeaveGroup={onLeaveGroup}
         onDeleteGroup={onDeleteGroup}
         currentUserId={currentUser.id}
         availableUsers={availableUsers}

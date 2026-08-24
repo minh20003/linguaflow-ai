@@ -799,6 +799,7 @@ export const AppShell: React.FC = () => {
         onRetryTranslation={(messageId) => void requestTranslationRetry(messageId)}
         onRateTranslation={rateTranslation}
         onEditTranslation={editTranslation}
+        onForward={setForwardingMessage}
         onSaveMessage={(messageId) => void toggleSavedMessage(messageId)}
         onDeleteMessage={(id) => void deleteOwnMessage(id)}
         onToggleMute={toggleMute}
