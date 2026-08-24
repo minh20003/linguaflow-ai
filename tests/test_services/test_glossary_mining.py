@@ -87,6 +87,20 @@ def test_a_snippet_carries_no_identifiers():
     assert "user interface" in snippet
 
 
+def test_an_empty_phrase_previews_the_start_of_the_text_instead_of_a_match():
+    """`original_snippet` calls `build_snippet` with no phrase, since the
+    machine's phrase is in the target language and will not appear in the
+    sender's own wording. Nothing should be found to centre on, so the window
+    falls back to the first few anonymised words."""
+    snippet = build_snippet(
+        "Hi john@example.com deploy len staging truoc 5 gio nhe", ""
+    )
+
+    assert "john@example.com" not in snippet
+    assert snippet.startswith("Hi [email] deploy")
+    assert snippet.endswith(" …")
+
+
 # --- the clustering, which runs offline --------------------------------------
 
 

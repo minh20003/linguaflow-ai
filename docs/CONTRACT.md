@@ -310,10 +310,20 @@ Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không b�
   "fallback_rate": 0.0547,
   "detect_methods": {"langdetect": 100, "llm": 28},
   "fallback_reasons": {"llm_error": 6, "wrong_language": 2},
-  "models_served": {"llama-3.3-70b-versatile": 104, "(none)": 24},
+  "models_served": {"llama-3.3-70b-versatile": 104},
+  "model_usage": {
+    "llama-3.3-70b-versatile": {
+      "count": 104, "input_tokens": 24800, "output_tokens": 1960,
+      "input_price_per_million_usd": 0.59, "output_price_per_million_usd": 0.79,
+      "cost_usd": 0.0161
+    }
+  },
+  "total_cost_usd": 0.0161,
+  "cost_usd_partial": false,
   "language_pairs": {"vi->en": {"count": 60, "p50_ms": 780, "p95_ms": 1430}},
   "input_tokens": 24800,
   "output_tokens": 1960,
+  "total_ms_mean": 895,
   "total_ms_p50": 810,
   "total_ms_p95": 1520
 }
@@ -321,7 +331,15 @@ Tổng hợp bảng `translation_attempts` (NFR-03). Tham số `days` không b�
 
 Endpoint **chỉ dành cho quản trị viên**: nội dung không chứa văn bản tin nhắn và không có dữ liệu theo từng người dùng, nhưng có lộ lưu lượng toàn hệ thống và mức tiêu thụ token. Chỉ tài khoản có `role == "admin"` được đọc; thành viên nhận `403 Forbidden`.
 
-`fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10.
+`fallback_rate` là `(secondary + original) / total_attempts`, tính trên **toàn bộ** lượt thử — xem §5 ghi chú 10. `total_attempts`, `outcomes` và `fallback_rate` vì thế vẫn tính cả `passthrough`: đó chính là mẫu số ADR-16 tồn tại để bảo toàn.
+
+**`language_pairs` và `total_ms_p50`/`total_ms_p95` thì không, theo ngôn ngữ chứ không theo `outcome` (24/08).** Một dòng có ngôn ngữ đọc trùng ngôn ngữ của tin nhắn không phải là một bản dịch, bất kể dòng đó cuối cùng ghi `outcome` gì. `passthrough` là đường thường gặp nhất — rẽ nhánh trước `build_context`, không model nào, không API dự phòng nào từng chạy — nhưng một bucket cùng ngôn ngữ lỡ `timeout` hay `error` trước khi kịp rẽ nhánh cũng vô nghĩa y hệt: cả hai đều sẽ ra một dòng `"vi->vi"` và một loạt `total_ms` gần 0 kéo tụt độ trễ tổng cho việc không ai thử làm, nên phép loại dựa trên **so sánh hai ngôn ngữ**, không dựa trên `outcome == "passthrough"`. Một `timeout`/`error` giữa hai ngôn ngữ thật (`en->vi` chẳng hạn) không bị loại: có thử và có tốn thời gian thật trước khi hỏng.
+
+**`models_served` bỏ luôn ô `"(none)"` (24/08).** Bất kỳ dòng nào không ghi được tên model — dù cùng ngôn ngữ hay khác ngôn ngữ, dù `outcome` gì — thì không có gì để tính vào chỉ số này, vì nó vốn trả lời "model nào đã phục vụ", không phải "có bao nhiêu lượt thử". Một `timeout` giữa `en->vi` do đó vẫn có mặt trong `language_pairs` (thời gian đã tốn là thật) nhưng không góp mặt trong `models_served` (không ai biết model nào đang chạy dở).
+
+**`model_usage`, `total_cost_usd` và `cost_usd_partial` (thêm 24/08).** Đọc `src/services/llm_pricing.py` — bảng đơn giá **gõ tay, không lấy trực tiếp từ nhà cung cấp**, nên là con số tham khảo chứ không phải hoá đơn; đọc lại docstring của module đó trước khi trích dẫn con số này với ai định dựa vào nó. Mỗi mục trong `model_usage` gồm số lượt, tổng token vào/ra, và `cost_usd` — **`null` khi model đó chưa có đơn giá trong bảng**, cố tình không mặc định về 0, vì một model không có giá thì khác hẳn một model miễn phí. `total_cost_usd` chỉ cộng những model **có** giá; `cost_usd_partial = true` khi có ít nhất một model bị bỏ ngoài tổng đó, để client nói "tối thiểu ngần này" thay vì ngụ ý con số đã đầy đủ.
+
+**`total_ms_mean` đứng cạnh `total_ms_p50` (thêm 24/08).** Hai con số khác nhau và dễ lẫn: `total_ms_mean` là trung bình cộng — cộng hết chia số lượt, dễ bị vài lượt bất thường kéo lệch. `total_ms_p50` là **trung vị** — lượt đứng chính giữa khi xếp theo thời gian, một nửa nhanh hơn và một nửa **chậm hơn** nó, **không phải** trung bình của nửa nhanh nhất. Hai số này trùng nhau khi độ trễ phân bố đối xứng và tách xa nhau ngay khi có vài lượt bất thường rất chậm — hiện cả hai là cách duy nhất để thấy sự tách đó thay vì âm thầm chọn một trong hai.
 
 ### 3.5. ConversationDTO
 
@@ -454,7 +472,7 @@ Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại ch�
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
 
-**`consent_to_share` (thêm 20/08, đổi cách hỏi 24/08).** Trường vẫn nằm nguyên trong thân yêu cầu và server vẫn xử đúng cả hai giá trị — `false` là trạng thái có thật, và một client khác vẫn gửi được. Đổi là ở chỗ **hỏi thế nào**: giao diện chat không còn ô tích riêng mà đặt ngay dưới ô soạn một câu nói rõ rằng gửi góp ý đồng nghĩa với đồng ý chia sẻ tin nhắn này để cải thiện hệ thống, và gửi kèm `true`. Lý do là số liệu chứ không phải tiện tay: gần như không ai tích ô đó, nên miner gần như không nhận được gì và hàng đợi duyệt trống — một cơ chế đồng ý không ai dùng thì không bảo vệ được ai mà cũng chẳng dạy được điều gì. Câu thông báo vì thế phải đứng **trước** nút gửi, lúc quyết định còn mở. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
+**`consent_to_share` (thêm 20/08, đổi cách hỏi 24/08).** Trường vẫn nằm nguyên trong thân yêu cầu và server vẫn xử đúng cả hai giá trị — `false` là trạng thái có thật, và một client khác vẫn gửi được. Đổi là ở chỗ **hỏi thế nào**: giao diện chat không còn ô tích riêng mà đặt ngay dưới ô soạn một câu nói rõ rằng gửi góp ý đồng nghĩa với đồng ý chia sẻ tin nhắn này để cải thiện hệ thống, và gửi kèm `true`. Lý do là số liệu chứ không phải tiện tay: gần như không ai tích ô đó, nên miner gần như không nhận được gì và hàng đợi duyệt trống — một cơ chế đồng ý không ai dùng thì không bảo vệ được ai mà cũng chẳng dạy được điều gì. Câu thông báo vì thế phải đứng **trước** nút gửi, lúc quyết định còn mở. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, vài từ xung quanh cụm đó trong bản dịch của máy, và vài từ đầu câu người gửi thực sự viết (`original_snippet`, thêm 24/08) — tất cả đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
 
 **Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
 
@@ -602,7 +620,6 @@ ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn
   "votes": {
     "up": 12,
     "down": 3,
-    "neutral": 1,
     "total": 16,
     "up_rate": 0.75,
     "ratings": {"5": 12, "3": 1, "1": 3}
@@ -615,6 +632,7 @@ ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn
       "target_language": "vi",
       "domain": "engineering",
       "audience": "internal",
+      "original_snippet": "Can you deploy to the staging …",
       "anonymized_snippet": "… deploy lên staging environment trước …",
       "observed_at": "2026-08-24T09:04:00Z"
     }
@@ -625,9 +643,12 @@ ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn
 ```
 
 **`votes` là histogram của `feedbacks.rating`.** Giao diện chỉ gửi 5 cho ngón cái lên và 1 cho
-ngón cái xuống, nên hai ô đó được gọi tên; mọi giá trị khác vào `neutral` chứ không bị bỏ, và
-`ratings` giữ nguyên histogram 1–5 để một giá trị lạ hiện ra thay vì lẫn vào một ô nào đó mà
-không ai biết giao diện đã đổi. `up_rate` làm tròn 4 chữ số, bằng 0 khi chưa có lượt nào.
+ngón cái xuống, nên **chỉ hai ô đó được gọi tên**. Không có ô `neutral` (bỏ 24/08): giao diện
+không có lựa chọn thứ ba nào để bấm, nên một con số luôn bằng 0 hiện trên màn hình chỉ khiến
+người đọc tưởng đó là một ý kiến có thật. Mọi giá trị ngoài 5 và 1 vẫn đếm được trong
+`ratings` — histogram 1–5 nguyên vẹn — và đó chính là cách một thay đổi của giao diện tự lộ ra.
+`total` là tổng mọi lượt đánh giá nên có thể lớn hơn `up + down`. `up_rate` làm tròn 4 chữ số,
+bằng 0 khi chưa có lượt nào.
 
 **`shared_corrections` chỉ gồm các dòng `correction_log` có `consent_to_share = true`,** mới
 nhất trước, cắt theo `limit`. Mỗi dòng đúng bằng những cột miner đọc, và đó chính là điểm của
@@ -637,9 +658,20 @@ màn hình này: trước khi có nó, đầu ra nhìn thấy được của c�
 
 **Ranh giới đọc giống hệt §3.12:** không người gửi, không `conversation_id`, không
 `message_id`, và **không** câu chữ của một tin nhắn mà người viết không đồng ý chia sẻ.
-`anonymized_snippet` là văn bản duy nhất phái sinh từ tin nhắn xuất hiện ở đây, đã bỏ tên
-riêng và các con số ngay lúc ghi, và nó cần có vì một cặp thuật ngữ không kèm ngữ cảnh dùng
-thì không phán xét được.
+`anonymized_snippet` và `original_snippet` là hai văn bản phái sinh từ tin nhắn xuất hiện ở
+đây — đã bỏ tên riêng và các con số ngay lúc ghi — và cần có cả hai vì một cặp thuật ngữ
+không kèm ngữ cảnh dùng thì không phán xét được.
+
+**`original_snippet` là bổ sung 24/08, mở rộng ranh giới trên một bậc so với khi §3.13 mới
+viết.** `anonymized_snippet` trích từ *bản dịch của máy* (`target_language`) quanh cụm từ bị
+sửa; `original_snippet` là vài từ đầu của *câu người gửi thực sự viết* (`source_language`),
+cùng cách ẩn danh nhưng không có cụm nào để căn giữa — máy dịch xong mới sinh ra thuật ngữ bị
+sửa, và thuật ngữ đó thuộc ngôn ngữ đích nên không tìm thấy trong câu nguồn. Không có trường
+này thì màn hình chỉ cho quản trị viên thấy một nửa cuộc trao đổi: cụm máy dịch sai và cụm
+người đọc sửa lại, nhưng chưa từng thấy người gửi ban đầu viết gì. Đây là phần mở rộng của
+ADR-28 (`ARCHITECTURE.md`) chứ không phải một thay đổi âm thầm nằm ngoài nó — ADR-28 mô tả
+"vài từ xung quanh" mà không nói rõ trích từ phía nào của bản dịch; bổ sung này ghi rõ có hai
+phía, không phải một.
 
 **`withheld_total` là số dòng `correction_log` mà người viết không đồng ý chia sẻ** — một con
 số, không kèm gì khác. Nó tồn tại để việc "đang bị bỏ ra ngoài" nhìn thấy được, thay vì trông
@@ -745,7 +777,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `glossary_entries` | `id`, `source_term`, `source_term_normalized`, `target_term`, `source_language`, `target_language`, `domain`, `audience`, `keep_verbatim`, `status`, `approved_by`, `embedding`, `embedding_model`, `created_at`, `updated_at` |
 | `glossary_proposals` | `id`, `source_term`, `source_term_normalized`, `target_term`, `source_language`, `target_language`, `domain`, `audience`, `keep_verbatim`, `status`, `occurrence_count`, `distinct_user_count`, `rationale`, `reviewed_by`, `reviewed_at`, `reject_reason`, `embedding`, `embedding_model`, `created_at` |
 | `glossary_proposal_citations` | `id`, `proposal_id`, `anonymized_snippet`, `observed_at` |
-| `correction_log` | `id`, `source_phrase`, `corrected_target`, `source_language`, `target_language`, `domain`, `audience`, `user_id`, `translation_id`, `consent_to_share`, `anonymized_snippet`, `embedding`, `embedding_model`, `observed_at` |
+| `correction_log` | `id`, `source_phrase`, `corrected_target`, `source_language`, `target_language`, `domain`, `audience`, `user_id`, `translation_id`, `consent_to_share`, `original_snippet`, `anonymized_snippet`, `embedding`, `embedding_model`, `observed_at` |
 | `message_embeddings` | `id`, `message_id`, `conversation_id`, `embedding`, `embedding_model`, `created_at` |
 
 **Ghi chú:**

@@ -120,13 +120,40 @@
 
 .hint:last-child { margin-bottom: 0; }
 
-/* Wide content scrolls inside its own box rather than pushing the page sideways. */
-.tableScroll { overflow-x: auto; }
+/* Scrolls sideways again: each column below is pinned to a `width` in pixels,
+   generous enough that its own header never truncates, and those pinned
+   widths can add up to more than a narrow container has room for. `.table`
+   is left at its natural (summed) width rather than stretched to `100%`, so
+   this wrapper is where the overflow actually goes instead of squeezing every
+   column down to fit. */
+.tableScroll { width: 100%; overflow-x: auto; }
 
+/* A table long enough to be worth capping — the glossary's list of terms, the
+   feedback tab's list of shared corrections — stops growing the page after
+   about twenty rows and scrolls within itself instead. The header stays
+   pinned so a reader who has scrolled still knows which column is which. */
+.tableScrollTall {
+  max-height: 42rem;
+  overflow-y: auto;
+}
+
+.tableScrollTall thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-card);
+}
+
+/* Fixed rather than content-driven: every `<th>` below carries its own pinned
+   `width`, so a long value in one row cannot widen its column and misalign
+   every other row — the ellipsis on `.table td` is what absorbs a value
+   longer than that pinned width, with `title` there to read the rest.
+   Smaller than the rest of the page's body text, deliberately: this is a data
+   grid meant to be scanned in bulk, not read line by line. */
 .table {
-  width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
-  font-size: var(--fs-small);
+  font-size: var(--fs-micro);
 }
 
 .table th,
@@ -135,6 +162,22 @@
   border-bottom: 1px solid var(--rule);
   text-align: start;
   vertical-align: top;
+  /* Every cell stays one line, cut short with an ellipsis rather than wrapping
+     or spilling into the next column — a fixed-width column has nowhere for
+     overflowing text to go. `title` on the cell (set per table) is what lets a
+     reader who needs the rest get it, on hover, without the row growing. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The handful of places that must still wrap: a confirmation sentence, and
+   any form a row switches into while it is being edited. */
+.confirmQuestion,
+.table td form {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
 }
 
 .table th {
@@ -147,9 +190,14 @@
 
 .table tbody tr:last-child td { border-bottom: none; }
 
+/* No `font-size` of its own: inside a table it must match every other cell in
+   the row exactly (`.table th`/`.table td` set the size), and outside one
+   (the review queue's list of similar entries) it already sits inside
+   `.citations`, which sets the same size on its own. A cell that looked
+   larger here because it happened to carry this class, while an identically
+   important neighbour did not, was the inconsistency to remove. */
 .term {
   font-family: var(--font-mono);
-  font-size: var(--fs-small);
 }
 
 .arrow { color: var(--ink-muted); padding-inline: var(--s-1); }
@@ -167,7 +215,6 @@
   white-space: nowrap;
 }
 
-.badgeVerbatim { background: var(--primary-light); color: var(--primary); }
 .badgeRetired { background: var(--surface-sunken); color: var(--ink-muted); }
 /* In force right now. Green rather than the neutral grey of a retired term:
    the status column is scanned down, and the two states have to differ at a
@@ -396,8 +443,10 @@
 
 .unit { color: var(--ink-muted); font-size: var(--fs-micro); }
 
-/* The language pair a shared correction was made in, under the phrase itself:
-   the same phrase corrected into two languages is two different facts. */
+/* The one language a shared correction concerns, under the phrase itself: both
+   sides of the correction are already in `target_language`, so naming it
+   answers what a reader of this row asks — which glossary this belongs to.
+   The full pair is one fact more than that; it lives in the context toggle. */
 .pairNote {
   display: block;
   margin-top: 2px;
@@ -407,12 +456,27 @@
   font-weight: 400;
 }
 
-/* The anonymised fragment. Capped so one long line cannot set the width of the
-   whole table, and left in the body face because it is prose, not a term. */
+/* The anonymised fragment: one line, cut short by the column's own fixed
+   width (`.table td` already handles the ellipsis), with an icon button next
+   to it that opens the full text in a dialog rather than growing the row. */
+.snippetRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Needs its own width here: `.iconAction` normally sits among row-height
+   buttons, but this one sits beside text that is free to shrink. */
+.snippetRow .iconAction { flex: none; }
+
 .snippet {
-  max-width: 26rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink-secondary);
   font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The question asked before something is deleted for good, in the row next to
@@ -467,3 +531,116 @@
   align-items: center;
   gap: var(--s-2);
 }
+
+/* A row's own action, as an icon rather than a word: the status column already
+   says "active" or "retired" for every row, so a text button next to it would
+   repeat that sentence in a longer form. `aria-label` and `title` carry the
+   word a sighted mouse user skips past. Square rather than the pill shape of
+   `.action`, since there is no label to give it width. */
+.iconAction {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--r-2);
+  color: var(--ink-secondary);
+  transition: background var(--dur-hover), color var(--dur-hover);
+}
+
+.iconAction:hover:not(:disabled) { background: var(--surface-label); color: var(--ink); }
+.iconAction:disabled { color: var(--ink-disabled); cursor: not-allowed; }
+
+.iconActionDanger { color: var(--danger); }
+.iconActionDanger:hover:not(:disabled) { background: var(--danger-weak); color: var(--danger); }
+
+/* ─── The correction-context dialog ─── */
+
+/* Same construction as the chat screen's dialogs (MessagingApp.module.css
+   `.modalBackdrop`/`.groupModal`): a fixed, centred overlay so a table row's
+   context can be read in full without the row itself ever growing past one
+   line. Its own rule here rather than a shared import, because CSS Modules
+   scope per file and duplicating four declarations costs less than adding a
+   cross-module dependency between two otherwise unrelated screens. */
+.modalBackdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+  background: rgb(17 40 64 / 42%);
+}
+
+.contextModal {
+  width: min(480px, 100%);
+  padding: var(--s-5);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+  box-shadow: 0 18px 48px rgb(28 56 84 / 22%);
+}
+
+.contextModal header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+
+.contextModal h2 {
+  color: var(--ink);
+  font-size: var(--fs-lead);
+  font-weight: 650;
+}
+
+.contextModal header button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--r-2);
+  color: var(--ink-secondary);
+}
+
+.contextModal header button:hover { background: var(--surface-sunken); }
+
+.contextLabel {
+  margin-bottom: var(--s-1);
+  color: var(--ink-muted);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.contextPair {
+  margin-bottom: var(--s-4);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.contextSnippet {
+  margin-bottom: var(--s-4);
+  color: var(--ink-secondary);
+  font-size: var(--fs-body);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+.contextSnippet:last-child { margin-bottom: 0; }
+
+/* Stands in for `.contextSnippet` when a correction predates this column —
+   muted and not italic, so it reads as a note about the row rather than as
+   the row's own (empty) content. */
+.contextSnippetEmpty {
+  margin-bottom: var(--s-4);
+  color: var(--ink-muted);
+  font-size: var(--fs-small);
+}
+
+.contextSnippetEmpty:last-child { margin-bottom: 0; }

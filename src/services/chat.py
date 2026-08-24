@@ -900,7 +900,7 @@ class ChatService:
         user_id: str,
         translation_id: str,
         edited_text: str,
-    ) -> tuple[TranslationEdit, TranslationResult]:
+    ) -> tuple[TranslationEdit, TranslationResult, Message]:
         """Store one account's wording for a translation (docs/CONTRACT.md §3.10).
 
         Appends rather than replaces, unlike `submit_translation_feedback`
@@ -913,8 +913,10 @@ class ChatService:
             edited_text: The wording this account proposes.
 
         Returns:
-            The stored edit and the translation it belongs to, so the caller can
-            answer with the target language without a second query.
+            The stored edit, the translation it belongs to, and the message it
+            translates — the caller needs the target language from the second
+            and, with consent, the original wording from the third, and both
+            are already in hand here rather than worth a second query.
 
         Raises:
             TranslationNotFoundError: No translation carries that id.
@@ -950,7 +952,7 @@ class ChatService:
         self._db.add(edit)
         await self._db.commit()
         await self._db.refresh(edit)
-        return edit, translation
+        return edit, translation, message
 
     async def latest_translation_edits(
         self,

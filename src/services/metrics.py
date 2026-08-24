@@ -87,6 +87,21 @@ class LanguagePairStats:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelUsageStats:
+    """One model's share of the traffic in `models_served`, with its tokens.
+
+    Split from `models_served` (which stays `dict[str, int]` for
+    `scripts/report_metrics.py`, unchanged) rather than replacing it, so the
+    admin stats screen can turn these into a cost estimate without every
+    existing reader of `models_served` needing to learn a new shape.
+    """
+
+    count: int
+    input_tokens: int
+    output_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
 class AttemptSummary:
     """Everything the metrics report and the stats endpoint show.
 
@@ -100,9 +115,19 @@ class AttemptSummary:
     detect_methods: dict[str, int] = field(default_factory=dict)
     fallback_reasons: dict[str, int] = field(default_factory=dict)
     models_served: dict[str, int] = field(default_factory=dict)
+    model_usage: dict[str, ModelUsageStats] = field(default_factory=dict)
     language_pairs: dict[str, LanguagePairStats] = field(default_factory=dict)
     input_tokens: int = 0
     output_tokens: int = 0
+    # The plain arithmetic mean, alongside the percentiles below. A mean is
+    # what most readers of a latency figure expect "the average" to mean, and
+    # it is easy to confuse with `total_ms_p50` — which is the *median*, the
+    # middle attempt once every duration is sorted, not the mean of the fast
+    # half. The two agree when durations are symmetric and diverge sharply
+    # when a handful of slow outliers drag the mean up without moving the
+    # median at all; showing both is what makes that visible instead of
+    # picking one silently.
+    total_ms_mean: float = 0.0
     total_ms_p50: float = 0.0
     total_ms_p95: float = 0.0
 
@@ -127,6 +152,30 @@ async def summarize_attempts(
     question whichever standing they were translated at; splitting the key would
     turn one headline latency figure into four thinner samples. The consequence
     to keep in mind when reading it: `count` counts buckets, not messages.
+
+    Every outcome — including the four no-translation exits `passthrough`,
+    `timeout`, `error` and `empty` — counts in `total`, `outcomes` and
+    `fallback_rate`. That denominator is the entire reason
+    `translation_attempts` records all four rather than only the three that
+    reach `translation_results` (ADR-16).
+
+    `language_pairs` and `models_served` are narrower than that. A row whose
+    reading language already matched the message's own language is not a
+    translation, whatever outcome it ended up recorded under — passthrough is
+    the ordinary way there (routed before `build_context`, so no model and no
+    fallback API ever ran: `src/agents/graph.py` `route_after_detect`,
+    `src/agents/nodes/translation.py` `passthrough`), but a same-language
+    bucket that timed out or errored before reaching that routing decision is
+    exactly as uninformative — either way it would put a `"vi->vi"` row in
+    `language_pairs`. Those rows, and their near-zero durations, are left out
+    of `language_pairs` and `total_ms_p50`/`total_ms_p95` on that test, not on
+    `outcome`. `models_served` goes one step further: any row with no captured
+    model name is left out of it, same-language or not, because a row nobody
+    can name the model for has nothing to contribute to "which model served
+    this" — that is what an uninformative `"(none)"` bucket was standing in
+    for. It stays in `language_pairs` when it was a genuine attempt at a real
+    pair, since the time spent is still real even when the model behind it is
+    not known.
 
     Args:
         session: An open database session.
@@ -159,6 +208,8 @@ async def summarize_attempts(
     detect_methods: Counter[str] = Counter()
     fallback_reasons: Counter[str] = Counter()
     models_served: Counter[str] = Counter()
+    model_input_tokens: Counter[str] = Counter()
+    model_output_tokens: Counter[str] = Counter()
     durations_by_pair: dict[str, list[int]] = {}
     all_durations: list[int] = []
     input_tokens = 0
@@ -169,7 +220,6 @@ async def summarize_attempts(
         detect_methods[row.detect_method or "(none)"] += 1
         if row.fallback_reason:
             fallback_reasons[row.fallback_reason] += 1
-        models_served[row.model_served or "(none)"] += 1
         input_tokens += row.input_tokens
         output_tokens += row.output_tokens
 
@@ -177,6 +227,23 @@ async def summarize_attempts(
         # performed from; the declared one is a guess from the sender's profile
         # and is wrong exactly when detection was worth running.
         source = row.source_language_detected or row.source_language_declared
+
+        # Everything below this line describes translation work that actually
+        # happened. A row whose reading language already matched its own is
+        # not that, regardless of which outcome it was recorded under — see
+        # the docstring above for why that check is on the languages and not
+        # on `outcome == "passthrough"`.
+        if source == row.target_language:
+            continue
+
+        # No captured model name means nothing here can say which model this
+        # is evidence for, so it is not evidence for any of them — a `"(none)"`
+        # bucket would only have restated that as a bucket.
+        if row.model_served:
+            models_served[row.model_served] += 1
+            model_input_tokens[row.model_served] += row.input_tokens
+            model_output_tokens[row.model_served] += row.output_tokens
+
         pair = f"{source}->{row.target_language}"
         durations_by_pair.setdefault(pair, []).append(row.total_ms)
         all_durations.append(row.total_ms)
@@ -190,6 +257,14 @@ async def summarize_attempts(
         detect_methods=dict(detect_methods.most_common()),
         fallback_reasons=dict(fallback_reasons.most_common()),
         models_served=dict(models_served.most_common()),
+        model_usage={
+            model: ModelUsageStats(
+                count=count,
+                input_tokens=model_input_tokens[model],
+                output_tokens=model_output_tokens[model],
+            )
+            for model, count in models_served.most_common()
+        },
         language_pairs={
             pair: LanguagePairStats(
                 count=len(durations),
@@ -200,6 +275,7 @@ async def summarize_attempts(
         },
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        total_ms_mean=statistics.mean(all_durations) if all_durations else 0.0,
         total_ms_p50=percentile(all_durations, 50),
         total_ms_p95=percentile(all_durations, 95),
     )

@@ -2,9 +2,9 @@
 
 Two things are guarded. The gate, because `users.role == "admin"` is the whole
 authorization model and a missing dependency looks like working code. And the
-boundary: an administrator may see counts and the anonymised fragment prepared
-at edit time, and nothing else — a correction whose author withheld consent
-must be countable but never readable.
+boundary: an administrator may see counts and the two anonymised fragments
+prepared at edit time, and nothing else — a correction whose author withheld
+consent must be countable but never readable.
 
 Fixtures live in this file rather than tests/conftest.py, which is shared
 across all feature areas.
@@ -63,6 +63,7 @@ def _correction(user_id: str, *, consent: bool, phrase: str, minutes: int = 0):
         user_id=user_id,
         consent_to_share=consent,
         anonymized_snippet=f"… {phrase} …",
+        original_snippet="Can you deploy to the staging environment",
         observed_at=datetime.now(UTC) - timedelta(minutes=minutes),
     )
 
@@ -76,11 +77,13 @@ async def test_a_member_cannot_read_the_feedback_overview(client, test_user_head
 
 
 @pytest.mark.asyncio
-async def test_votes_are_tallied_into_up_down_and_neutral(
+async def test_a_rating_the_interface_never_sends_is_still_visible_in_the_histogram(
     client, test_db, test_admin_headers, test_user, test_user_two, conversation_factory
 ):
-    """The interface sends 5 and 1; anything else has to land somewhere visible
-    rather than being dropped on the way to the screen."""
+    """The interface sends 5 and 1, and those are the two named buckets. A 3 is
+    not given a bucket of its own — there is no third answer to offer — but it
+    has to stay countable, because a value outside the two is how a change in
+    the interface would announce itself."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     first = await _translation(test_db, conversation.id, test_user_two.id)
     second = await _translation(test_db, conversation.id, test_user_two.id)
@@ -94,7 +97,8 @@ async def test_votes_are_tallied_into_up_down_and_neutral(
 
     assert response.status_code == 200
     votes = response.json()["votes"]
-    assert (votes["up"], votes["down"], votes["neutral"]) == (1, 1, 1)
+    assert (votes["up"], votes["down"]) == (1, 1)
+    assert "neutral" not in votes
     assert votes["total"] == 3
     assert votes["up_rate"] == pytest.approx(1 / 3, abs=1e-4)
     assert votes["ratings"] == {"5": 1, "3": 1, "1": 1}
@@ -143,9 +147,14 @@ async def test_a_shared_correction_carries_no_author_or_conversation(
         "target_language",
         "domain",
         "audience",
+        "original_snippet",
         "anonymized_snippet",
         "observed_at",
     }
+    # `original_snippet` is what the sender actually wrote, in whichever
+    # language that was — the other side of the translation the correction
+    # came from, which `anonymized_snippet` alone never showed.
+    assert row["original_snippet"] == "Can you deploy to the staging environment"
     assert test_user.id not in response_text(body)
 
 

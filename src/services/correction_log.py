@@ -3,8 +3,9 @@
 `translation_edits` stays what ADR-19 made it: append-only and private to its
 author. Mining it directly would quietly revoke that promise, so this module
 writes a separate, narrower record — what the machine wrote, what the human
-wrote instead, and a few words of context with identifiers stripped — and only
-when the author agreed to share it.
+wrote instead, a few words of context around it with identifiers stripped, and
+the same kind of anonymised preview of the sender's own original wording — and
+only when the author agreed to share it.
 
 The extraction is by rule rather than by a model. It runs while the edit is
 being saved, where an API call has no business being, and a wrong extraction
@@ -103,6 +104,14 @@ def build_snippet(text: str, phrase: str) -> str:
     content (docs/NewFeature.md, diagram 2), so what they get is this: a window
     of `SNIPPET_CONTEXT_WORDS` words either side, no names, no addresses, no
     links, no long digit runs, and nothing saying who wrote it.
+
+    An empty `phrase` is valid and not a special case needing its own
+    function: `original_snippet` calls this with one, since `machine_phrase`
+    is in `target_language` and would never be found in the sender's own
+    wording anyway. `start` then stays 0 and the window becomes the first
+    `SNIPPET_CONTEXT_WORDS` words of `text`, anonymised the same way — a
+    preview rather than a window around a match, which is the right shape for
+    a text nothing here is centring on.
     """
     cleaned = _URL.sub("[link]", text or "")
     cleaned = _EMAIL.sub("[email]", cleaned)
@@ -128,6 +137,7 @@ def schedule_correction_record(
     *,
     machine_text: str,
     human_text: str,
+    original_text: str,
     source_language: str,
     target_language: str,
     domain: str,
@@ -161,6 +171,11 @@ def schedule_correction_record(
             machine_phrase=machine_phrase,
             human_phrase=human_phrase,
             snippet=build_snippet(machine_text, machine_phrase),
+            # No phrase to centre this one on: `machine_phrase` is in
+            # `target_language` and will not appear in the sender's own
+            # wording, so this is a plain anonymised preview of how the
+            # message started rather than a window around a match (24/08).
+            original_snippet=build_snippet(original_text, ""),
             source_language=source_language,
             target_language=target_language,
             domain=domain,
@@ -180,6 +195,7 @@ async def _store(
     machine_phrase: str,
     human_phrase: str,
     snippet: str,
+    original_snippet: str,
     source_language: str,
     target_language: str,
     domain: str,
@@ -211,6 +227,7 @@ async def _store(
                     translation_id=translation_id,
                     consent_to_share=True,
                     anonymized_snippet=snippet,
+                    original_snippet=original_snippet,
                     embedding=vector,
                     embedding_model=vector_model,
                 )
