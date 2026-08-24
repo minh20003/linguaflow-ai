@@ -218,3 +218,20 @@ export function restoreGlossaryEntry(entryId: string): Promise<GlossaryEntry> {
     method: "POST",
   });
 }
+
+/**
+ * Remove a retired entry from the glossary for good.
+ *
+ * The one thing `retireGlossaryEntry` cannot do, and deliberately narrow: the
+ * server refuses this for an active entry with a 409, because an entry in use
+ * has shaped translations people may still be reading and the row is the only
+ * explanation for their wording. What is left is the case retirement reads
+ * wrong for — a term typed in by mistake, which explains nothing because it
+ * never shaped anything anybody saw, and whose scope stays taken by the
+ * uniqueness rule until the row is gone.
+ */
+export function deleteGlossaryEntry(entryId: string): Promise<GlossaryEntry> {
+  return request(`/admin/glossary/${encodeURIComponent(entryId)}/permanent`, {
+    method: "DELETE",
+  });
+}

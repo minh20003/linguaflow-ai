@@ -169,6 +169,10 @@
 
 .badgeVerbatim { background: var(--primary-light); color: var(--primary); }
 .badgeRetired { background: var(--surface-sunken); color: var(--ink-muted); }
+/* In force right now. Green rather than the neutral grey of a retired term:
+   the status column is scanned down, and the two states have to differ at a
+   glance as well as in wording. */
+.badgeActive { background: var(--success-weak); color: var(--success); }
 
 /* ─── The review queue ─── */
 
@@ -328,6 +332,95 @@
   color: var(--ink-muted);
   font-size: var(--fs-small);
   text-align: center;
+}
+
+/* ─── Headline figures ─── */
+
+/* Numbers of different kinds — a count, a proportion, a duration — read as one
+   undifferentiated list when they are stacked as table rows. A tile gives each
+   its own weight, and the grid puts as many on a line as fit rather than
+   forcing a column count that would break on a narrow screen. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s-3);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-3);
+  background: var(--surface-insert);
+}
+
+.tileLabel {
+  color: var(--ink-muted);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Tabular figures so the digits line up between one tile and the next. */
+.tileValue {
+  color: var(--ink);
+  font-size: var(--fs-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.tileValueWarn { color: var(--danger); }
+.tileValueGood { color: var(--success); }
+
+/* The unit belongs to the figure but is not part of it, so it is smaller and
+   quieter rather than being folded into the number itself. */
+.tileUnit {
+  margin-inline-start: var(--s-1);
+  color: var(--ink-muted);
+  font-size: var(--fs-small);
+  font-weight: 600;
+}
+
+/* Figures in a column are compared down, not read across, so they align to the
+   end and share the tabular width. */
+.numeric,
+.numericHead {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.unit { color: var(--ink-muted); font-size: var(--fs-micro); }
+
+/* The language pair a shared correction was made in, under the phrase itself:
+   the same phrase corrected into two languages is two different facts. */
+.pairNote {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-muted);
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+}
+
+/* The anonymised fragment. Capped so one long line cannot set the width of the
+   whole table, and left in the body face because it is prose, not a term. */
+.snippet {
+  max-width: 26rem;
+  color: var(--ink-secondary);
+  font-style: italic;
+}
+
+/* The question asked before something is deleted for good, in the row next to
+   the buttons that answer it. */
+.confirmQuestion {
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 600;
 }
 
 @media (max-width: 680px) {

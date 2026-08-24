@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   approveGlossaryProposal,
   createGlossaryEntry,
+  deleteGlossaryEntry,
   fetchGlossaryEntries,
   fetchGlossaryProposals,
   rejectGlossaryProposal,
@@ -347,17 +348,25 @@ type EntryRowProps = {
 /**
  * One entry in force, and the three things that can happen to it.
  *
- * Retirement and restoration are a pair rather than a delete: nothing is ever
- * removed, because a translation delivered last month was shaped by whatever
- * was active then, so the row is the only explanation for wording somebody may
- * still be reading. Editing exists so a typo in an approved term does not have
- * to be fixed by retiring it and adding a near-identical row — which would
- * leave two rows, permanently, for a reader to compare.
+ * Retirement and restoration are a pair rather than a delete: a translation
+ * delivered last month was shaped by whatever was active then, so the row is
+ * the only explanation for wording somebody may still be reading. Editing
+ * exists so a typo in an approved term does not have to be fixed by retiring it
+ * and adding a near-identical row — which would leave two rows, permanently,
+ * for a reader to compare.
+ *
+ * Deleting is the exception, and it is why the two states offer different
+ * buttons: a retired term that never shaped anything explains nothing, and
+ * while its row exists it keeps holding the scope against a corrected version
+ * of itself. It is asked about twice before it happens.
  */
 function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
   const t = useUiText();
   const language = useInterfaceLanguage();
   const [editing, setEditing] = useState(false);
+  // Two steps for the one action that cannot be undone. The row is where the
+  // question is asked, so the term being deleted stays on screen while it is.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [draft, change, setDraft] = useTermDraft({
     sourceTerm: entry.source_term,
@@ -378,6 +387,7 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
     try {
       await action();
       setEditing(false);
+      setConfirmingDelete(false);
       onChanged(notice);
     } catch (caught) {
       onFailed(messageKeyFor(caught));
@@ -417,7 +427,7 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
   if (editing) {
     return (
       <tr>
-        <td colSpan={6}>
+        <td colSpan={7}>
           <form onSubmit={save}>
             <TermFields idPrefix={`entry-${entry.id}`} draft={draft} change={change} disabled={busy} />
             <div className={styles.actions}>
@@ -438,6 +448,8 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
     );
   }
 
+  const retired = entry.status === "retired";
+
   return (
     <tr>
       <td className={styles.term}>
@@ -447,35 +459,79 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
       <td className={styles.term}>{entry.target_term}</td>
       <td>{entry.domain || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
       <td>{entry.audience || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
+      {/* Whether this term is binding translations right now, in its own column
+          rather than as a badge among the buttons. Every row answers it, and a
+          column is where a reader looks for an answer every row gives. */}
+      <td>
+        <span className={`${styles.badge} ${retired ? styles.badgeRetired : styles.badgeActive}`}>
+          {t(retired ? "glossary.entries.retiredBadge" : "glossary.entries.activeBadge")}
+        </span>
+      </td>
       <td>{when.format(new Date(entry.created_at))}</td>
       <td>
-        <div className={styles.rowActions}>
-          <button type="button" className={styles.action} onClick={() => setEditing(true)} disabled={busy}>
-            {t("glossary.entries.edit")}
-          </button>
-          {entry.status === "retired" ? (
-            <>
-              <span className={`${styles.badge} ${styles.badgeRetired}`}>{t("glossary.entries.retiredBadge")}</span>
-              <button
-                type="button"
-                className={styles.action}
-                onClick={() => run(() => restoreGlossaryEntry(entry.id), "glossary.restored")}
-                disabled={busy}
-              >
-                {t("glossary.entries.restore")}
-              </button>
-            </>
-          ) : (
+        {confirmingDelete ? (
+          /* Asked in the row rather than in a browser dialog: the question is
+             about this term, so it should be readable next to it, and the
+             answer that destroys something is never the one already focused. */
+          <div className={styles.rowActions}>
+            <span className={styles.confirmQuestion}>{t("glossary.entries.deleteConfirm")}</span>
             <button
               type="button"
               className={`${styles.action} ${styles.actionDanger}`}
-              onClick={() => run(() => retireGlossaryEntry(entry.id), "glossary.retired")}
+              onClick={() => run(() => deleteGlossaryEntry(entry.id), "glossary.deleted")}
               disabled={busy}
             >
-              {t("glossary.entries.retire")}
+              {t("glossary.entries.deleteConfirmYes")}
             </button>
-          )}
-        </div>
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => setConfirmingDelete(false)}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        ) : (
+          <div className={styles.rowActions}>
+            <button type="button" className={styles.action} onClick={() => setEditing(true)} disabled={busy}>
+              {t("glossary.entries.edit")}
+            </button>
+            {retired ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.action}
+                  onClick={() => run(() => restoreGlossaryEntry(entry.id), "glossary.restored")}
+                  disabled={busy}
+                >
+                  {t("glossary.entries.restore")}
+                </button>
+                {/* Offered only here, and the server agrees: deleting an active
+                    entry is refused with a 409, because a term in use is the
+                    only explanation for wording somebody may still be reading.
+                    What is left is the term typed in by mistake. */}
+                <button
+                  type="button"
+                  className={`${styles.action} ${styles.actionDanger}`}
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy}
+                >
+                  {t("glossary.entries.delete")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={`${styles.action} ${styles.actionDanger}`}
+                onClick={() => run(() => retireGlossaryEntry(entry.id), "glossary.retired")}
+                disabled={busy}
+              >
+                {t("glossary.entries.retire")}
+              </button>
+            )}
+          </div>
+        )}
       </td>
     </tr>
   );
@@ -530,6 +586,11 @@ export default function GlossaryPanel() {
   const afterDecision = useCallback((key: UiTextKey) => {
     setNotice(key);
     setError("");
+    // Retiring a term while the list is filtered to active ones would make the
+    // row vanish at the moment it changed state, which reads as a deletion —
+    // the one thing retirement is not. Show retired terms from here on, so what
+    // happened stays on screen with its status and its way back.
+    if (key === "glossary.retired") setIncludeRetired(true);
     reload();
   }, [reload]);
 
@@ -598,6 +659,7 @@ export default function GlossaryPanel() {
                   <th scope="col">{t("glossary.field.targetTerm")}</th>
                   <th scope="col">{t("glossary.field.domain")}</th>
                   <th scope="col">{t("glossary.field.audience")}</th>
+                  <th scope="col">{t("glossary.entries.status")}</th>
                   <th scope="col">{t("glossary.entries.added")}</th>
                   <th scope="col">{t("glossary.entries.actions")}</th>
                 </tr>

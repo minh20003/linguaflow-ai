@@ -1,4 +1,4 @@
-"""Administrative view of the glossary and its review queue.
+"""Administrative view of the glossary, its review queue, and reader feedback.
 
 A separate router rather than another block in `routes.py`, for the reason
 `metrics.py` gives: several branches edit that file at once, and a new module
@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,10 +29,17 @@ from src.core.deps import get_admin_user
 from src.database import get_db
 from src.database.models import (
     GLOSSARY_PROPOSAL_STATUSES,
+    CorrectionLog,
+    Feedback,
     GlossaryEntry,
     GlossaryProposal,
     GlossaryProposalCitation,
     User,
+)
+from src.schemas.feedback import (
+    FeedbackOverviewResponse,
+    FeedbackVoteSummary,
+    SharedCorrection,
 )
 from src.schemas.glossary import (
     GlossaryApprovalRequest,
@@ -467,6 +474,117 @@ async def retire_glossary_entry(
     await db.commit()
     await db.refresh(entry)
     return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.delete(
+    "/admin/glossary/{entry_id}/permanent",
+    response_model=GlossaryEntryResponse,
+)
+async def delete_glossary_entry(
+    entry_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Remove a retired entry from the table for good.
+
+    Retirement, not deletion, is still the way a term stops being used: a
+    translation delivered last month was shaped by whatever was active then,
+    and the row is the only explanation for wording somebody may still be
+    reading. This exists for the other case — a term typed in by mistake, which
+    explains nothing because it never shaped anything anyone saw.
+
+    Only a retired entry can be deleted, which is what keeps the two apart. An
+    active entry is in use by definition, so the answer to "delete this" is
+    always "retire it first and see".
+
+    The response is the row as it was, because after this call there is nowhere
+    left to look it up.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    if entry.status != "retired":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a retired entry can be deleted. Retire it first.",
+        )
+
+    # Read the response before the row goes, not after.
+    response = GlossaryEntryResponse.model_validate(entry)
+    await db.delete(entry)
+    await db.commit()
+    return response
+
+
+@router.get("/admin/feedback", response_model=FeedbackOverviewResponse)
+async def read_feedback_overview(
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE),
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> FeedbackOverviewResponse:
+    """What readers said about the translations, in the two forms it arrives in.
+
+    Votes are a histogram over `feedbacks.rating`; the interface sends 5 for a
+    thumb up and 1 for a thumb down, so those two buckets are named and
+    anything else counts as neutral rather than being dropped.
+
+    Corrections come from `correction_log`, consented rows only, and carry the
+    anonymised snippet the recorder prepared at edit time — never the reader's
+    own wording of a message, and never who wrote it. Without this screen the
+    only visible output of the whole correction pipeline was a proposal, which
+    appears once several people have independently agreed; everything below
+    that threshold was invisible, including the case where nothing is arriving
+    at all.
+    """
+    counts = (
+        await db.execute(
+            select(Feedback.rating, func.count()).group_by(Feedback.rating)
+        )
+    ).all()
+    ratings = {int(rating): int(count) for rating, count in counts}
+    up = ratings.get(5, 0)
+    down = ratings.get(1, 0)
+    total = sum(ratings.values())
+    votes = FeedbackVoteSummary(
+        up=up,
+        down=down,
+        neutral=total - up - down,
+        total=total,
+        up_rate=round(up / total, 4) if total else 0.0,
+        ratings=ratings,
+    )
+
+    shared_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(True))
+        )
+        or 0
+    )
+    withheld_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(False))
+        )
+        or 0
+    )
+
+    rows = (
+        await db.scalars(
+            select(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(True))
+            .order_by(CorrectionLog.observed_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return FeedbackOverviewResponse(
+        votes=votes,
+        shared_corrections=[SharedCorrection.model_validate(row) for row in rows],
+        shared_total=shared_total,
+        withheld_total=withheld_total,
+    )
 
 
 def _now():

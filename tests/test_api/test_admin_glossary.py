@@ -455,3 +455,104 @@ async def test_a_member_cannot_restore_an_entry(client, test_db, test_user_heade
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_delete_an_entry_permanently(client, test_user_headers):
+    response = await client.delete(
+        "/api/v1/admin/glossary/does-not-matter/permanent", headers=test_user_headers
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_active_entry_cannot_be_deleted_permanently(
+    client, test_db, test_admin_headers
+):
+    """Retirement stays the way a term in use is stopped. An entry that is
+    active has shaped translations people may still be reading, so the answer
+    to "delete this" is "retire it first and see"."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "canary",
+            "target_term": "ban thu nghiem",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+
+    response = await client.delete(
+        f"/api/v1/admin/glossary/{created.json()['id']}/permanent",
+        headers=test_admin_headers,
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_retired_entry_permanently_removes_the_row(
+    client, test_db, test_admin_headers
+):
+    """The case retirement does not cover: a term typed in by mistake explains
+    nothing, because it never shaped anything anybody saw."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "tpyo",
+            "target_term": "loi go",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+    entry_id = created.json()["id"]
+    await client.delete(f"/api/v1/admin/glossary/{entry_id}", headers=test_admin_headers)
+
+    response = await client.delete(
+        f"/api/v1/admin/glossary/{entry_id}/permanent", headers=test_admin_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source_term"] == "tpyo"
+
+    gone = await test_db.scalar(
+        select(GlossaryEntry).where(GlossaryEntry.id == entry_id)
+    )
+    assert gone is None
+
+    listed = await client.get(
+        "/api/v1/admin/glossary?include_retired=true", headers=test_admin_headers
+    )
+    assert listed.json() == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_term_can_be_added_again_after_a_permanent_delete(
+    client, test_db, test_admin_headers
+):
+    """The point of deleting rather than retiring: the scope is free again.
+    A retired row still holds the unique constraint, so re-adding the corrected
+    term would answer 409 without this."""
+    payload = {
+        "source_term": "rollout",
+        "target_term": "trien khai dan",
+        "source_language": "en",
+        "target_language": "vi",
+    }
+    first = await client.post(
+        "/api/v1/admin/glossary", headers=test_admin_headers, json=payload
+    )
+    entry_id = first.json()["id"]
+    await client.delete(f"/api/v1/admin/glossary/{entry_id}", headers=test_admin_headers)
+    await client.delete(
+        f"/api/v1/admin/glossary/{entry_id}/permanent", headers=test_admin_headers
+    )
+
+    again = await client.post(
+        "/api/v1/admin/glossary", headers=test_admin_headers, json=payload
+    )
+
+    assert again.status_code == 201

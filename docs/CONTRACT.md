@@ -176,6 +176,8 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `PATCH` | `/admin/glossary/{entry_id}` | `{"source_term"?, "target_term"?, "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, §3.12 | Đã hiện thực |
 | `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
 | `POST` | `/admin/glossary/{entry_id}/restore` | — | `GlossaryEntryDTO` với `status = "active"`, §3.12 | Đã hiện thực |
+| `DELETE` | `/admin/glossary/{entry_id}/permanent` | — | `GlossaryEntryDTO` của dòng vừa bị xoá, `409` nếu mục còn `active` — §3.12 | Đã hiện thực |
+| `GET` | `/admin/feedback?limit=` | — | `FeedbackOverviewDTO`, §3.13 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -452,7 +454,7 @@ Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại ch�
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
 
-**`consent_to_share` (thêm 20/08).** Mặc định `false`, và phải được hỏi tường minh chứ không suy đoán. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
+**`consent_to_share` (thêm 20/08, đổi cách hỏi 24/08).** Trường vẫn nằm nguyên trong thân yêu cầu và server vẫn xử đúng cả hai giá trị — `false` là trạng thái có thật, và một client khác vẫn gửi được. Đổi là ở chỗ **hỏi thế nào**: giao diện chat không còn ô tích riêng mà đặt ngay dưới ô soạn một câu nói rõ rằng gửi góp ý đồng nghĩa với đồng ý chia sẻ tin nhắn này để cải thiện hệ thống, và gửi kèm `true`. Lý do là số liệu chứ không phải tiện tay: gần như không ai tích ô đó, nên miner gần như không nhận được gì và hàng đợi duyệt trống — một cơ chế đồng ý không ai dùng thì không bảo vệ được ai mà cũng chẳng dạy được điều gì. Câu thông báo vì thế phải đứng **trước** nút gửi, lúc quyết định còn mở. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
 
 **Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
 
@@ -510,7 +512,7 @@ Quy trình đăng ký tài khoản được bảo vệ qua 2 bước bằng mã 
 
 ### 3.12. Glossary và hàng đợi duyệt (chỉ quản trị viên)
 
-Sáu endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
+Mọi endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
 nhận `403 Forbidden`. Gác đặt trên **từng** endpoint chứ không dựa vào tiền tố đường dẫn:
 `users.role` so với chuỗi `"admin"` là toàn bộ mô hình phân quyền của dự án (§5 ghi chú 1),
 không có middleware nào đứng sau, nên một dependency bị quên trông y hệt mã đang chạy đúng.
@@ -566,6 +568,16 @@ thuật ngữ đặt ra — là **lặp lại đúng thuật ngữ nguồn**. M�
 ô bản dịch khi ô "giữ nguyên" được tích: trước 22/08 biểu mẫu vẫn đòi một bản dịch mà nó sắp
 bỏ qua, và không có gì trên màn hình nói ra điều đó.
 
+**`DELETE /admin/glossary/{id}/permanent` xoá thật, và chỉ xoá được mục đã nghỉ hưu (24/08).**
+Server trả `409 Conflict` cho một mục còn `active`: mục đang có hiệu lực thì theo định nghĩa
+là đang định hình bản dịch, nên câu trả lời cho "xoá cái này" luôn là "cho nghỉ hưu trước đã
+rồi xem". Phần còn lại mới là việc endpoint này làm: một thuật ngữ gõ nhầm chưa từng định
+hình gì thì cũng không giải thích được gì, mà dòng của nó vẫn giữ chỗ trong ràng buộc duy
+nhất `(source_term, source_language, target_language, domain, audience)` — thêm lại bản đã
+sửa sẽ nhận `409` chừng nào dòng cũ còn đó. Phản hồi là dòng **trước khi** bị xoá, vì sau lời
+gọi này không còn chỗ nào tra lại. Hai bước hỏi trên giao diện quản trị là một phần của thiết
+kế chứ không phải trang trí: đây là thao tác duy nhất trong màn hình không hoàn tác được.
+
 **`POST /admin/glossary/{id}/restore` là chiều ngược lại của việc nghỉ hưu (22/08).** Vì
 không có gì bị xoá nên khôi phục chỉ là đổi `status` về `active`: mục giữ nguyên `id`,
 embedding và ngày được duyệt lần đầu, thay vì được tạo lại thành một dòng thứ hai mà người
@@ -579,6 +591,60 @@ Khi `source_term` đổi, server **tính lại embedding** — không có vector
 nghĩa vẫn khớp theo cách viết cũ, im lặng, và triệu chứng duy nhất là một thuật ngữ bỗng
 không còn được tìm thấy. Sửa được là cần thiết vì phương án còn lại tệ hơn: sửa một lỗi gõ
 bằng cách cho mục cũ nghỉ hưu rồi thêm một mục gần giống sẽ để lại hai dòng vĩnh viễn.
+
+### 3.13. Tổng quan góp ý của người đọc (chỉ quản trị viên, 24/08)
+
+`GET /admin/feedback?limit=` trả về **một** phản hồi cho cả tab góp ý, thay vì ba endpoint:
+ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn hình có ba vòng quay chờ.
+
+```json
+{
+  "votes": {
+    "up": 12,
+    "down": 3,
+    "neutral": 1,
+    "total": 16,
+    "up_rate": 0.75,
+    "ratings": {"5": 12, "3": 1, "1": 3}
+  },
+  "shared_corrections": [
+    {
+      "source_phrase": "staging environment",
+      "corrected_target": "môi trường staging",
+      "source_language": "en",
+      "target_language": "vi",
+      "domain": "engineering",
+      "audience": "internal",
+      "anonymized_snippet": "… deploy lên staging environment trước …",
+      "observed_at": "2026-08-24T09:04:00Z"
+    }
+  ],
+  "shared_total": 41,
+  "withheld_total": 7
+}
+```
+
+**`votes` là histogram của `feedbacks.rating`.** Giao diện chỉ gửi 5 cho ngón cái lên và 1 cho
+ngón cái xuống, nên hai ô đó được gọi tên; mọi giá trị khác vào `neutral` chứ không bị bỏ, và
+`ratings` giữ nguyên histogram 1–5 để một giá trị lạ hiện ra thay vì lẫn vào một ô nào đó mà
+không ai biết giao diện đã đổi. `up_rate` làm tròn 4 chữ số, bằng 0 khi chưa có lượt nào.
+
+**`shared_corrections` chỉ gồm các dòng `correction_log` có `consent_to_share = true`,** mới
+nhất trước, cắt theo `limit`. Mỗi dòng đúng bằng những cột miner đọc, và đó chính là điểm của
+màn hình này: trước khi có nó, đầu ra nhìn thấy được của cả đường ống góp ý chỉ là một đề xuất
+— thứ chỉ xuất hiện khi đã có vài người độc lập sửa giống nhau — nên mọi thứ dưới ngưỡng ấy
+đều vô hình, kể cả trường hợp không có gì đang chảy về.
+
+**Ranh giới đọc giống hệt §3.12:** không người gửi, không `conversation_id`, không
+`message_id`, và **không** câu chữ của một tin nhắn mà người viết không đồng ý chia sẻ.
+`anonymized_snippet` là văn bản duy nhất phái sinh từ tin nhắn xuất hiện ở đây, đã bỏ tên
+riêng và các con số ngay lúc ghi, và nó cần có vì một cặp thuật ngữ không kèm ngữ cảnh dùng
+thì không phán xét được.
+
+**`withheld_total` là số dòng `correction_log` mà người viết không đồng ý chia sẻ** — một con
+số, không kèm gì khác. Nó tồn tại để việc "đang bị bỏ ra ngoài" nhìn thấy được, thay vì trông
+như chưa từng có. `shared_total` là tổng số dòng đã đồng ý chia sẻ, khác với độ dài mảng ở
+trên khi `limit` cắt bớt.
 
 ## 4. WebSocket Protocol
 
