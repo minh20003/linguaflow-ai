@@ -1,6 +1,6 @@
 # LinguaChat Frontend Design Contract
 
-Version: 2.0 · Owner: Frontend team · Scope: `frontend/src`
+Version: 2.0 · Owner: Frontend team · Scope: `frontend-v1/src`
 
 This document is binding for UI implementation and review. Product requirements
 override it; record any conflict in `DESIGN_DECISION.md`.

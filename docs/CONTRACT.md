@@ -60,7 +60,7 @@ Hai trường khác nhau ở thời điểm có hiệu lực, và đây là đi�
 
 **Giao diện phải có đủ nhãn cho toàn bộ ngôn ngữ hệ thống hỗ trợ** — tức cả 14 mã trong `SUPPORTED_LANGUAGES` (`src/schemas/auth.py`), cùng danh sách mà `GET /languages` trả về. Không có ngôn ngữ hạng hai: đã cho chọn trong ô ngôn ngữ thì phải có nhãn.
 
-Cơ chế lùi về `en` cho từng nhãn còn thiếu (quy tắc `altLabel` sẵn có ở `frontend/src/shared/lib/i18n.ts`) vẫn giữ, nhưng từ nay nó là **lưới an toàn cho lúc thêm nhãn mới**, không phải cách làm bình thường: thêm một nhãn vào giao diện mà chưa dịch thì người dùng `ar` thấy đúng dòng đó bằng tiếng Anh chứ không thấy chuỗi khoá hay màn hình trắng.
+Cơ chế lùi về `en` cho từng nhãn còn thiếu (quy tắc `altLabel` sẵn có ở `frontend-v1/src/shared/lib/i18n.ts`) vẫn giữ, nhưng từ nay nó là **lưới an toàn cho lúc thêm nhãn mới**, không phải cách làm bình thường: thêm một nhãn vào giao diện mà chưa dịch thì người dùng `ar` thấy đúng dòng đó bằng tiếng Anh chứ không thấy chuỗi khoá hay màn hình trắng.
 
 ### 1.3. Ngôn ngữ trước khi đăng nhập
 

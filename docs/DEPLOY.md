@@ -10,7 +10,7 @@ Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-
 | Backend + Agent | Railway, dựng từ `Dockerfile` | **Đúng 1 bản sao**, không autoscale |
 | Cơ sở dữ liệu | PostgreSQL (plugin của Railway) | Supabase thay được, xem §6 |
 | Tệp đính kèm | Volume gắn vào `/app/data` của container backend | Không có object storage |
-| Frontend | Vercel, thư mục gốc `frontend/` | Biến môi trường nhúng lúc build |
+| Frontend | Vercel, thư mục gốc `frontend-v1/` (v1 — chờ chuyển sang frontend mới của `develop_v2`) | Biến môi trường nhúng lúc build |
 
 > **Chỉ được chạy một bản sao.** `ConnectionManager` giữ danh sách socket trong bộ
 > nhớ tiến trình. Bản sao thứ hai sẽ nhận một nửa số kết nối và **âm thầm đánh rơi**
@@ -75,7 +75,7 @@ là phục vụ trên một cơ sở dữ liệu sai hình dạng.
 
 ## 3. Frontend trên Vercel
 
-1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend`.
+1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend-v1`.
 2. Environment Variables: `NEXT_PUBLIC_API_URL = https://<backend>.up.railway.app`
    (không có dấu `/` ở cuối).
 3. Deploy. Sau đó quay lại Railway đặt `CORS_ORIGINS` đúng bằng tên miền Vercel
@@ -89,7 +89,7 @@ chỉ cũ. Địa chỉ WebSocket suy ra từ chính biến này (`https` → `w
 
 ```bash
 docker compose up --build      # backend + PostgreSQL, giống production
-cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
+cd frontend-v1 && npm run dev  # giao diện, trỏ vào localhost:8000
 ```
 
 Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy backend ở ngoài container:

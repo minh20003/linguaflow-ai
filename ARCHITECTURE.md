@@ -256,7 +256,7 @@ Quy trình chi tiết, biến môi trường và cách khắc phục sự cố: 
 | Thành phần | Nền tảng |
 |---|---|
 | Backend và Agent | Docker container trên Railway, **1 bản sao duy nhất** (ADR-18) |
-| Frontend | Vercel (thư mục gốc `frontend/`) |
+| Frontend | Vercel (thư mục gốc `frontend-v1/`, chờ chuyển sang frontend mới của `develop_v2`) |
 | Cơ sở dữ liệu | PostgreSQL của Railway; Supabase thay thế được mà không sửa mã |
 | Tệp đính kèm | Volume gắn vào `/app/data` của container backend |
 | Schema | Alembic, chạy trong `CMD` trước `uvicorn` (ADR-06) |

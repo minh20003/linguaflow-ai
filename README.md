@@ -84,8 +84,8 @@ source .venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 
-# Frontend setup
-cd frontend
+# Frontend setup (v1 — pending port into develop_v2's newer frontend)
+cd frontend-v1
 npm install
 cd ..
 ```
@@ -143,7 +143,7 @@ Backend runs at: http://localhost:8000
 ### Terminal 2 — Frontend
 
 ```bash
-cd frontend
+cd frontend-v1
 npm run dev
 ```
 
@@ -168,7 +168,7 @@ make test
 make lint
 
 # Frontend
-cd frontend
+cd frontend-v1
 npm run lint
 npm run build
 cd ..
@@ -194,7 +194,7 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 
 ```
 .
-├── frontend/              # Next.js frontend
+├── frontend-v1/            # Next.js frontend (v1 — pending port into develop_v2's frontend)
 │   └── package.json
 ├── src/
 │   ├── agents/           # LangGraph translation agent
@@ -222,7 +222,7 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment instructions.
 
 Summary:
-- **Frontend**: Vercel (root directory: `frontend/`)
+- **Frontend**: Vercel (root directory: `frontend-v1/`)
 - **Backend**: Railway with Docker
 - **Database**: Railway PostgreSQL
 - **Observability**: Braintrust (optional, default) or Langfuse
