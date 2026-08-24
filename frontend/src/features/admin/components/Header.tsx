@@ -31,6 +31,8 @@ export const Header: React.FC<HeaderProps> = ({
     switch (currentTab) {
       case 'analytics':
         return vi ? 'Trung tâm quản trị' : 'Admin center';
+      case 'feedback':
+        return vi ? 'Phản hồi bản dịch' : 'Translation feedback';
       case 'glossary':
         return vi ? 'Quản lý thuật ngữ' : 'Glossary management';
       case 'suggestions':

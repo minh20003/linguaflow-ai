@@ -8,17 +8,17 @@ Every endpoint here is gated on `get_admin_user`. The gate is the whole
 authorization model — `users.role` compared to the string `"admin"` — so it has
 to be on each one rather than assumed from the path prefix.
 
-What an administrator can see is bounded by design, not by omission. A proposal
-carries a term pair, two counts, and a few anonymised fragments; it does not
-carry who wrote them, which conversation they came from, or anything around
-them. The rule it serves is that administrators do not read user content
-(docs/NewFeature.md, diagram 2), and the queries below are the place that rule
-is either kept or quietly lost.
+What an administrator can see is bounded by design, not by omission. Glossary
+records contain anonymised snippets only. The feedback review queue is an
+explicit quality-control exception: it carries an original, machine translation
+and reader correction, but never the sender, reader, conversation or message
+identifier that could join it back to a chat.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -34,10 +34,14 @@ from src.database.models import (
     GlossaryEntry,
     GlossaryProposal,
     GlossaryProposalCitation,
+    Message,
+    TranslationEdit,
+    TranslationResult,
     User,
 )
 from src.schemas.feedback import (
     FeedbackOverviewResponse,
+    FeedbackReviewEntry,
     FeedbackVoteSummary,
     SharedCorrection,
 )
@@ -521,7 +525,7 @@ async def read_feedback_overview(
     db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_admin_user),
 ) -> FeedbackOverviewResponse:
-    """What readers said about the translations, in the two forms it arrives in.
+    """What readers said about translations, including an anonymous review queue.
 
     Votes are a histogram over `feedbacks.rating`; the interface sends 5 for a
     thumb up and 1 for a thumb down, so those two buckets are named. Anything
@@ -529,14 +533,14 @@ async def read_feedback_overview(
     own: there is no third answer to offer, and a "neither" count that is
     always zero reads as an opinion nobody holds.
 
-    Corrections come from `correction_log`, consented rows only, and carry the
-    two anonymised snippets the recorder prepared at edit time — one from the
-    machine's rendering, one from the sender's original wording — never the
-    reader's own wording of a message, and never who wrote it. Without this screen the
-    only visible output of the whole correction pipeline was a proposal, which
-    appears once several people have independently agreed; everything below
-    that threshold was invisible, including the case where nothing is arriving
-    at all.
+    `review_entries` combines the raw feedback row and append-only wording
+    edits. It intentionally omits every identity and conversation field while
+    retaining the three texts an administrator needs to judge a translation:
+    source, machine rendering and the reader's replacement wording.
+
+    The existing `shared_corrections` remains the opt-in, anonymised feed used
+    by glossary mining. It is not replaced by the review queue: the two serve
+    different purposes and have different retention/privacy constraints.
     """
     counts = (
         await db.execute(
@@ -581,8 +585,63 @@ async def read_feedback_overview(
         )
     ).all()
 
+    feedback_rows = (
+        await db.execute(
+            select(Feedback, TranslationResult, Message)
+            .join(TranslationResult, Feedback.translation_id == TranslationResult.id)
+            .join(Message, TranslationResult.message_id == Message.id)
+            .order_by(Feedback.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    edit_rows = (
+        await db.execute(
+            select(TranslationEdit, TranslationResult, Message)
+            .join(TranslationResult, TranslationEdit.translation_id == TranslationResult.id)
+            .join(Message, TranslationResult.message_id == Message.id)
+            .order_by(TranslationEdit.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    review_entries = [
+        FeedbackReviewEntry(
+            entry_type="vote",
+            original_text=message.original_text,
+            translated_text=translation.translated_text,
+            source_language=message.source_language,
+            target_language=translation.target_language,
+            model=translation.model,
+            vote="up" if feedback.rating == 5 else "down" if feedback.rating == 1 else "other",
+            rating=feedback.rating,
+            user_correction=feedback.correction,
+            created_at=feedback.created_at,
+        )
+        for feedback, translation, message in feedback_rows
+    ]
+    review_entries.extend(
+        FeedbackReviewEntry(
+            entry_type="edit",
+            original_text=message.original_text,
+            translated_text=translation.translated_text,
+            source_language=message.source_language,
+            target_language=translation.target_language,
+            model=translation.model,
+            user_correction=edit.edited_text,
+            created_at=edit.created_at,
+        )
+        for edit, translation, message in edit_rows
+    )
+
+    def review_entry_time(entry: FeedbackReviewEntry) -> datetime:
+        """Normalise SQLite's naive server defaults before chronological sorting."""
+        return entry.created_at.replace(tzinfo=UTC) if entry.created_at.tzinfo is None else entry.created_at
+
+    review_entries.sort(key=review_entry_time, reverse=True)
+
     return FeedbackOverviewResponse(
         votes=votes,
+        review_entries=review_entries[:limit],
         shared_corrections=[SharedCorrection.model_validate(row) for row in rows],
         shared_total=shared_total,
         withheld_total=withheld_total,

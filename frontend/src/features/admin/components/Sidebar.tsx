@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart3, BookOpen, Check, Globe, Languages, Lightbulb, LogOut, Moon, Settings, Sun, User as UserIcon, X } from 'lucide-react';
+import { BarChart3, BookOpen, Check, Globe, Languages, Lightbulb, LogOut, Moon, Settings, Sun, ThumbsUp, User as UserIcon, X } from 'lucide-react';
 import { AdminTab } from '../types';
 
 interface SidebarProps {
@@ -7,6 +7,7 @@ interface SidebarProps {
   onTabChange: (tab: AdminTab) => void;
   pendingSuggestionsCount: number;
   totalTermsCount: number;
+  feedbackTotalCount: number;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
   interfaceLanguage: 'vi' | 'en';
@@ -20,7 +21,7 @@ interface SidebarProps {
 
 type SettingsSection = 'language' | 'profile' | 'appearance';
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendingSuggestionsCount, totalTermsCount, interfaceLanguage, theme, onInterfaceLanguageChange, onThemeChange, adminName, adminEmail, adminRole }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendingSuggestionsCount, totalTermsCount, feedbackTotalCount, interfaceLanguage, theme, onInterfaceLanguageChange, onThemeChange, adminName, adminEmail, adminRole }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
@@ -28,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendi
   const initials = adminName.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase() || 'AD';
   const navItems = [
     { id: 'analytics' as AdminTab, label: isVietnamese ? 'Thống kê' : 'Analytics', icon: BarChart3, badge: null },
+    { id: 'feedback' as AdminTab, label: isVietnamese ? 'Phản hồi' : 'Feedback', icon: ThumbsUp, badge: feedbackTotalCount || null },
     { id: 'glossary' as AdminTab, label: isVietnamese ? 'Thuật ngữ' : 'Glossary', icon: BookOpen, badge: totalTermsCount || null },
     { id: 'suggestions' as AdminTab, label: isVietnamese ? 'Đề xuất' : 'Suggestions', icon: Lightbulb, badge: pendingSuggestionsCount || null },
   ];

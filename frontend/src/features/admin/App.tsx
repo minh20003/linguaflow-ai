@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { FeedbackView } from './components/feedback/FeedbackView';
 import { GlossaryView } from './components/glossary/GlossaryView';
 import { SuggestionsView } from './components/suggestions/SuggestionsView';
 import { LiveChatView } from './components/chat/LiveChatView';
@@ -18,6 +19,7 @@ import {
   MetricCardData,
   LanguagePairStat,
   ModelUsageStat,
+  FeedbackOverview,
 } from './types';
 
 type ApiPair = { count: number; p50_ms: number; p95_ms: number; avg_input_tokens: number; avg_output_tokens: number };
@@ -54,6 +56,7 @@ export default function App() {
   const [languagePairs, setLanguagePairs] = useState<LanguagePairStat[]>([]);
   const [aiModels, setAiModels] = useState<ModelUsageStat[]>([]);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
+  const [feedbackOverview, setFeedbackOverview] = useState<FeedbackOverview | null>(null);
   const [terms, setTerms] = useState<TermItem[]>([]);
   const [suggestions, setSuggestions] = useState<TranslationSuggestion[]>([]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -80,6 +83,7 @@ export default function App() {
     setLanguagePairs([]);
     setAiModels([]);
     setRequestLogs([]);
+    setFeedbackOverview(null);
     setTerms([]);
     setSuggestions([]);
   }, []);
@@ -104,12 +108,13 @@ export default function App() {
     const statsPath = days ? `/stats?days=${days}` : '/stats';
 
     try {
-      const [stats, attempts, glossary, queue, profile] = await Promise.all([
+      const [stats, attempts, glossary, queue, profile, feedback] = await Promise.all([
         get<ApiStats>(statsPath),
         get<ApiAttempt[]>(`/stats/attempts${days ? `?days=${days}&limit=20` : '?limit=20'}`),
         get<ApiGlossaryEntry[]>('/admin/glossary'),
         get<ApiProposal[]>('/admin/glossary/proposals?status=pending'),
         get<ApiUser>('/auth/me'),
+        get<FeedbackOverview>('/admin/feedback?limit=100'),
       ]);
 
         setAdminProfile({
@@ -203,6 +208,7 @@ export default function App() {
           domain: proposal.domain,
           autoAddToGlossary: !proposal.keep_verbatim,
         })));
+        setFeedbackOverview(feedback);
     } catch {
       clearServerData();
       setToasts([{ id: 'admin-api-error', message: 'Không thể đồng bộ dữ liệu quản trị từ máy chủ', type: 'error' }]);
@@ -417,6 +423,7 @@ export default function App() {
         onTabChange={setCurrentTab}
         pendingSuggestionsCount={pendingSuggestionsCount}
         totalTermsCount={totalTermsCount}
+        feedbackTotalCount={feedbackOverview?.votes.total ?? 0}
         interfaceLanguage={adminLanguage}
         theme={adminTheme}
         onInterfaceLanguageChange={setAdminLanguage}
@@ -453,6 +460,14 @@ export default function App() {
               requestLogs={requestLogs}
               timeRange={timeRange}
               onOpenLiveChat={() => setCurrentTab('chat')}
+            />
+          )}
+
+          {currentTab === 'feedback' && (
+            <FeedbackView
+              overview={feedbackOverview}
+              isLoading={isRefreshing}
+              interfaceLanguage={adminLanguage}
             />
           )}
 

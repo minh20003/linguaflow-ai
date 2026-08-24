@@ -561,7 +561,7 @@ export const AppShell: React.FC = () => {
           ? { ...message, translation: { ...message.translation, editedText: result.edited_text } }
           : message),
       ])));
-      addToast("Translation suggestion saved", "Your correction is private to your account.", "success");
+      addToast("Translation suggestion saved", "Saved for translation-quality review.", "success");
     } catch (error) {
       addToast("Could not save suggestion", error instanceof Error ? error.message : undefined, "warning");
     }

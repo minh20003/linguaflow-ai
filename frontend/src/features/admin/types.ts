@@ -110,6 +110,34 @@ export interface TranslationSuggestion {
   autoAddToGlossary?: boolean;
 }
 
-export type AdminTab = 'analytics' | 'glossary' | 'suggestions' | 'chat';
+export type AdminTab = 'analytics' | 'feedback' | 'glossary' | 'suggestions' | 'chat';
 
 export type TimeRangeFilter = '24h' | '7d' | '30d' | 'all';
+
+export interface FeedbackVoteSummary {
+  up: number;
+  down: number;
+  total: number;
+  up_rate: number;
+  ratings: Record<string, number>;
+}
+
+export interface FeedbackReviewEntry {
+  entry_type: 'vote' | 'edit';
+  original_text: string;
+  translated_text: string;
+  source_language: string;
+  target_language: string;
+  model: string;
+  vote: 'up' | 'down' | 'other' | null;
+  rating: number | null;
+  user_correction: string | null;
+  created_at: string;
+}
+
+export interface FeedbackOverview {
+  votes: FeedbackVoteSummary;
+  review_entries: FeedbackReviewEntry[];
+  shared_total: number;
+  withheld_total: number;
+}
