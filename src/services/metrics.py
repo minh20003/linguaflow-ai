@@ -38,6 +38,12 @@ MODEL_TOKEN_PRICES_USD: dict[str, tuple[float, float]] = {
 }
 
 
+def _normalize_language_code(value: str | None) -> str:
+    """Return a stable base code so ``vi``, ``VI`` and ``vi-VN`` group alike."""
+    normalized = (value or "unknown").strip().lower().replace("_", "-")
+    return normalized.split("-", 1)[0]
+
+
 def estimate_model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
     """Estimate token cost for a known served model, including dated snapshots."""
     normalized = (model or "").lower()
@@ -176,8 +182,8 @@ async def summarize_attempts(
     to keep in mind when reading it: `count` counts buckets, not messages.
 
     Every outcome — including the four no-translation exits `passthrough`,
-    `timeout`, `error` and `empty` — counts in `total`, `outcomes` and
-    `fallback_rate`. That denominator is the entire reason
+    `timeout`, `error` and `empty` — counts in the operational `total`,
+    `outcomes` and `fallback_rate`. That denominator is the entire reason
     `translation_attempts` records all four rather than only the three that
     reach `translation_results` (ADR-16).
 
@@ -191,7 +197,10 @@ async def summarize_attempts(
     exactly as uninformative — either way it would put a `"vi->vi"` row in
     `language_pairs`. Those rows, and their near-zero durations, are left out
     of `language_pairs` and `total_ms_p50`/`total_ms_p95` on that test, not on
-    `outcome`. `models_served` goes one step further: any row with no captured
+    `outcome`. Timeout rows are also excluded from pair/model/latency success
+    statistics: a timeout is an operational attempt, not a completed
+    translation that should be labelled successful or failed for a language
+    pair. `models_served` goes one step further: any row with no captured
     model name is left out of it, same-language or not, because a row nobody
     can name the model for has nothing to contribute to "which model served
     this" — that is what an uninformative `"(none)"` bucket was standing in
@@ -257,13 +266,21 @@ async def summarize_attempts(
         # performed from; the declared one is a guess from the sender's profile
         # and is wrong exactly when detection was worth running.
         source = row.source_language_detected or row.source_language_declared
+        normalized_source = _normalize_language_code(source)
+        normalized_target = _normalize_language_code(row.target_language)
 
         # Everything below this line describes translation work that actually
         # happened. A row whose reading language already matched its own is
         # not that, regardless of which outcome it was recorded under — see
         # the docstring above for why that check is on the languages and not
         # on `outcome == "passthrough"`.
-        if source == row.target_language:
+        if normalized_source == normalized_target:
+            continue
+
+        # A timeout did not produce a translation result. Keep it in the
+        # operational totals above, but do not turn it into a language-pair
+        # success/failure row or let it distort completed-translation latency.
+        if row.outcome == "timeout":
             continue
 
         # No captured model name means nothing here can say which model this
@@ -274,7 +291,7 @@ async def summarize_attempts(
             model_input_tokens[row.model_served] += row.input_tokens
             model_output_tokens[row.model_served] += row.output_tokens
 
-        pair = f"{source}->{row.target_language}"
+        pair = f"{normalized_source}->{normalized_target}"
         durations_by_pair.setdefault(pair, []).append(row.total_ms)
         input_tokens_by_pair.setdefault(pair, []).append(row.input_tokens)
         output_tokens_by_pair.setdefault(pair, []).append(row.output_tokens)

@@ -26,10 +26,28 @@ type ApiPair = { count: number; p50_ms: number; p95_ms: number; avg_input_tokens
 type ApiStats = { total_attempts: number; outcomes?: Record<string, number>; fallback_rate: number; input_tokens: number; output_tokens: number; estimated_cost_usd?: number; cost_coverage_rate?: number; total_ms_p50: number; total_ms_p95: number; models_served?: Record<string, number>; language_pairs?: Record<string, ApiPair> };
 type ApiAttempt = { id:string; created_at:string; source_language:string; target_language:string; model:string; outcome:string; fallback_reason:string; total_ms:number; input_tokens:number; output_tokens:number };
 type ApiGlossaryEntry = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; audience:string; keep_verbatim:boolean; status:string; created_at:string; updated_at:string };
-type ApiProposal = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; keep_verbatim:boolean; distinct_user_count:number; rationale:string; status:'pending'|'approved'|'rejected'; created_at:string };
+type ApiProposal = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; audience:string; keep_verbatim:boolean; distinct_user_count:number; rationale:string; reject_reason:string; status:'pending'|'approved'|'rejected'; created_at:string };
 type ApiUser = { email:string; display_name?:string | null; username?:string | null; role:string; interface_language?:string | null };
 type AdminTheme = 'light' | 'dark';
 type AdminInterfaceLanguage = 'vi' | 'en';
+
+const apiBase = () => process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
+
+async function adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = window.localStorage.getItem('access_token') ?? window.sessionStorage.getItem('access_token');
+  if (!token) throw new Error('admin_auth_required');
+
+  const response = await fetch(`${apiBase()}/api/v1${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  });
+  if (!response.ok) throw new Error(`admin_api_${response.status}`);
+  return response.json() as Promise<T>;
+}
 
 const METRIC_DEFINITIONS: MetricCardData[] = [
   { id: 'total_translations', title: 'Tổng số lần dịch', value: 0, unit: 'lượt', description: 'Tổng lượt yêu cầu dịch trong khoảng thời gian đã chọn', iconName: 'Languages' },
@@ -96,25 +114,19 @@ export default function App() {
     }
 
     setIsRefreshing(true);
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:8000';
-    const headers = { Authorization: `Bearer ${token}` };
-    const get = async <T,>(path: string): Promise<T> => {
-      const response = await fetch(`${apiBase}/api/v1${path}`, { headers });
-      if (!response.ok) throw new Error(`admin_api_${response.status}`);
-      return response.json() as Promise<T>;
-    };
-
     const days = timeRange === '24h' ? 1 : timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : null;
     const statsPath = days ? `/stats?days=${days}` : '/stats';
 
     try {
-      const [stats, attempts, glossary, queue, profile, feedback] = await Promise.all([
-        get<ApiStats>(statsPath),
-        get<ApiAttempt[]>(`/stats/attempts${days ? `?days=${days}&limit=20` : '?limit=20'}`),
-        get<ApiGlossaryEntry[]>('/admin/glossary'),
-        get<ApiProposal[]>('/admin/glossary/proposals?status=pending'),
-        get<ApiUser>('/auth/me'),
-        get<FeedbackOverview>('/admin/feedback?limit=100'),
+      const [stats, attempts, glossary, pending, approved, rejected, profile, feedback] = await Promise.all([
+        adminRequest<ApiStats>(statsPath),
+        adminRequest<ApiAttempt[]>(`/stats/attempts${days ? `?days=${days}&limit=20` : '?limit=20'}`),
+        adminRequest<ApiGlossaryEntry[]>('/admin/glossary?include_retired=true'),
+        adminRequest<ApiProposal[]>('/admin/glossary/proposals?status=pending'),
+        adminRequest<ApiProposal[]>('/admin/glossary/proposals?status=approved'),
+        adminRequest<ApiProposal[]>('/admin/glossary/proposals?status=rejected'),
+        adminRequest<ApiUser>('/auth/me'),
+        adminRequest<FeedbackOverview>('/admin/feedback?limit=100'),
       ]);
 
         setAdminProfile({
@@ -124,29 +136,40 @@ export default function App() {
         });
 
         setMetrics(METRIC_DEFINITIONS.map((metric) => {
+          const neutralAttempts = (stats.outcomes?.timeout ?? 0) + (stats.outcomes?.passthrough ?? 0);
+          const completedAttempts = Math.max(stats.total_attempts - neutralAttempts, 0);
+          const successfulAttempts = (stats.outcomes?.llm ?? 0) + (stats.outcomes?.primary ?? 0);
           const values: Record<string, string | number> = {
             total_translations: stats.total_attempts,
             fallback_rate: `${(stats.fallback_rate * 100).toFixed(2)}%`,
             input_tokens: stats.input_tokens,
             output_tokens: stats.output_tokens,
             estimated_ai_cost: (stats.estimated_cost_usd ?? 0).toFixed(4),
-            success_rate: `${(stats.total_attempts ? ((stats.outcomes?.llm ?? 0) / stats.total_attempts) * 100 : 0).toFixed(2)}%`,
+            success_rate: `${(completedAttempts ? (successfulAttempts / completedAttempts) * 100 : 0).toFixed(2)}%`,
             p50_latency: stats.total_ms_p50,
             p95_latency: stats.total_ms_p95,
           };
           return { ...metric, value: values[metric.id] ?? 0, change: undefined, badge: undefined };
         }));
         const total = Math.max(stats.total_attempts || 0, 1);
+        const pairTotal = Math.max(
+          Object.values(stats.language_pairs ?? {}).reduce((sum, pair) => sum + pair.count, 0),
+          1,
+        );
+        const neutralAttempts = (stats.outcomes?.timeout ?? 0) + (stats.outcomes?.passthrough ?? 0);
+        const completedAttempts = Math.max(stats.total_attempts - neutralAttempts, 0);
+        const successfulAttempts = (stats.outcomes?.llm ?? 0) + (stats.outcomes?.primary ?? 0);
+        const completedSuccessRate = completedAttempts ? (successfulAttempts / completedAttempts) * 100 : 0;
         setLanguagePairs(Object.entries(stats.language_pairs ?? {}).map(([pair, value]) => ({
           pair: pair as LanguagePair,
           count: value.count,
-          percentage: (value.count / total) * 100,
+          percentage: (value.count / pairTotal) * 100,
           p50: value.p50_ms,
           p95: value.p95_ms,
           avgInputTokens: value.avg_input_tokens,
           avgOutputTokens: value.avg_output_tokens,
-          successRate: 100 - stats.fallback_rate * 100,
-          fallbackRate: stats.fallback_rate * 100,
+          successRate: completedSuccessRate,
+          fallbackRate: 100 - completedSuccessRate,
         })));
         setAiModels(Object.entries(stats.models_served ?? {}).map(([name, servedCount], index) => ({
           id: `model-${index}`,
@@ -193,7 +216,7 @@ export default function App() {
           createdAt: entry.created_at,
           updatedAt: entry.updated_at,
         })));
-        setSuggestions(queue.map((proposal) => ({
+        setSuggestions([...pending, ...approved, ...rejected].map((proposal) => ({
           id: proposal.id,
           sourceText: proposal.source_term,
           currentAiTranslation: proposal.target_term,
@@ -207,6 +230,7 @@ export default function App() {
           submittedAt: proposal.created_at,
           domain: proposal.domain,
           autoAddToGlossary: !proposal.keep_verbatim,
+          reviewNotes: proposal.status === 'rejected' ? proposal.reject_reason : undefined,
         })));
         setFeedbackOverview(feedback);
     } catch {
@@ -240,94 +264,74 @@ export default function App() {
     void loadAdminData();
   };
 
-  // Glossary Handlers
-  const handleAddTerm = (newTermData: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => {
-    const now = new Date().toISOString().split('T')[0];
-    const newTerm: TermItem = {
-      ...newTermData,
-      id: `term-${Date.now()}`,
-      usageCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setTerms((prev) => [newTerm, ...prev]);
-  };
+  const glossaryPayload = (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> | TermItem) => ({
+    source_term: term.sourceTerm.trim(),
+    target_term: term.targetTerm.trim(),
+    source_language: term.sourceLang.toLowerCase(),
+    target_language: term.targetLang.toLowerCase(),
+    domain: term.category,
+    audience: (term.notes || '').trim().slice(0, 50),
+    keep_verbatim: term.isStrict,
+  });
 
-  const handleUpdateTerm = (id: string, updatedData: Partial<TermItem>) => {
-    setTerms((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...updatedData } : t))
-    );
-  };
-
-  const handleDeleteTerm = (id: string) => {
-    setTerms((prev) => prev.filter((t) => t.id !== id));
-  };
-
-  const handleBatchImportTerms = (
-    importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[]
-  ) => {
-    const now = new Date().toISOString().split('T')[0];
-    const newItems: TermItem[] = importedTerms.map((item, idx) => ({
-      ...item,
-      id: `term-imp-${Date.now()}-${idx}`,
-      usageCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    }));
-    setTerms((prev) => [...newItems, ...prev]);
-  };
-
-  // Suggestions Handlers
-  const handleApproveSuggestion = (id: string, reviewNotes?: string, addToGlossary = true) => {
-    const targetSug = suggestions.find((s) => s.id === id);
-    if (!targetSug) return;
-
-    setSuggestions((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              status: 'approved',
-              reviewedAt: new Date().toLocaleString(),
-              reviewedBy: 'Admin LinguaFlow',
-              reviewNotes: reviewNotes || 'Đã kiểm duyệt và chấp thuận cập nhật.',
-            }
-          : s
-      )
-    );
-
-    // If auto add to glossary
-    if (addToGlossary) {
-      // Create a sensible term pair
-      handleAddTerm({
-        sourceTerm: targetSug.sourceText.length > 40 ? targetSug.sourceText.slice(0, 40) + '...' : targetSug.sourceText,
-        targetTerm: targetSug.suggestedTranslation.length > 50 ? targetSug.suggestedTranslation.slice(0, 50) + '...' : targetSug.suggestedTranslation,
-        sourceLang: targetSug.sourceLang,
-        targetLang: targetSug.targetLang,
-        category: (targetSug.domain as TermCategory) || 'Công nghệ & AI',
-        priority: 'Bắt buộc (High)',
-        isStrict: false,
-        notes: `Tự động tạo từ đề xuất #${id} của ${targetSug.user}`,
-        status: 'active',
-        createdBy: targetSug.userEmail,
-      });
+  // Glossary mutations deliberately reload the server state. A glossary entry
+  // must be the backend's canonical row before the translation pipeline may
+  // use it; optimistic-only entries were lost on reload and never applied.
+  const handleAddTerm = async (newTermData: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => {
+    const entry = await adminRequest<ApiGlossaryEntry>('/admin/glossary', {
+      method: 'POST', body: JSON.stringify(glossaryPayload(newTermData)),
+    });
+    if (newTermData.status === 'inactive') {
+      await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${entry.id}`, { method: 'DELETE' });
     }
+    await loadAdminData();
   };
 
-  const handleRejectSuggestion = (id: string, reason?: string) => {
-    setSuggestions((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              status: 'rejected',
-              reviewedAt: new Date().toLocaleString(),
-              reviewedBy: 'Admin LinguaFlow',
-              reviewNotes: reason || 'Chưa phù hợp với quy chuẩn dịch hiện tại.',
-            }
-          : s
-      )
-    );
+  const handleUpdateTerm = async (id: string, updatedData: Partial<TermItem>) => {
+    const current = terms.find((term) => term.id === id);
+    if (!current) throw new Error('glossary_entry_not_found');
+    const next = { ...current, ...updatedData };
+    if (current.status !== next.status) {
+      await adminRequest<ApiGlossaryEntry>(
+        next.status === 'active' ? `/admin/glossary/${id}/restore` : `/admin/glossary/${id}`,
+        { method: next.status === 'active' ? 'POST' : 'DELETE' },
+      );
+    }
+    await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${id}`, {
+      method: 'PATCH', body: JSON.stringify(glossaryPayload(next)),
+    });
+    await loadAdminData();
+  };
+
+  const handleDeleteTerm = async (id: string) => {
+    await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${id}`, { method: 'DELETE' });
+    await loadAdminData();
+  };
+
+  const handleBatchImportTerms = async (
+    importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[],
+  ) => {
+    for (const term of importedTerms) await handleAddTerm(term);
+  };
+
+  // Approving a proposal is the one backend operation that atomically marks
+  // the proposal reviewed and creates the active glossary entry.
+  const handleApproveSuggestion = async (id: string) => {
+    const targetSug = suggestions.find((suggestion) => suggestion.id === id);
+    if (!targetSug) throw new Error('glossary_proposal_not_found');
+    await adminRequest<ApiGlossaryEntry>(`/admin/glossary/proposals/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ target_term: targetSug.suggestedTranslation, domain: targetSug.domain || '' }),
+    });
+    await loadAdminData();
+  };
+
+  const handleRejectSuggestion = async (id: string, reason?: string) => {
+    await adminRequest<ApiProposal>(`/admin/glossary/proposals/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason?.trim() || 'Chưa phù hợp với quy chuẩn dịch hiện tại.' }),
+    });
+    await loadAdminData();
   };
 
   const handleCreateSuggestionFromChat = (sugData: {
