@@ -524,12 +524,15 @@ async def read_feedback_overview(
     """What readers said about the translations, in the two forms it arrives in.
 
     Votes are a histogram over `feedbacks.rating`; the interface sends 5 for a
-    thumb up and 1 for a thumb down, so those two buckets are named and
-    anything else counts as neutral rather than being dropped.
+    thumb up and 1 for a thumb down, so those two buckets are named. Anything
+    else stays visible in `ratings` rather than being given a bucket of its
+    own: there is no third answer to offer, and a "neither" count that is
+    always zero reads as an opinion nobody holds.
 
     Corrections come from `correction_log`, consented rows only, and carry the
-    anonymised snippet the recorder prepared at edit time — never the reader's
-    own wording of a message, and never who wrote it. Without this screen the
+    two anonymised snippets the recorder prepared at edit time — one from the
+    machine's rendering, one from the sender's original wording — never the
+    reader's own wording of a message, and never who wrote it. Without this screen the
     only visible output of the whole correction pipeline was a proposal, which
     appears once several people have independently agreed; everything below
     that threshold was invisible, including the case where nothing is arriving
@@ -547,7 +550,6 @@ async def read_feedback_overview(
     votes = FeedbackVoteSummary(
         up=up,
         down=down,
-        neutral=total - up - down,
         total=total,
         up_rate=round(up / total, 4) if total else 0.0,
         ratings=ratings,

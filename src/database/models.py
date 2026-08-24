@@ -1138,6 +1138,13 @@ class CorrectionLog(Base):
     )
     # Prepared here, at the one moment the surrounding text is in hand, rather
     # than in the miner where it would need the conversation back again.
+    # Anonymised the same way as `anonymized_snippet` below (names, links and
+    # long digit runs stripped), but drawn from `Message.original_text` rather
+    # than the machine's rendering — the sender's own wording, in whichever
+    # language they wrote it, rather than the reader's reading language. An
+    # admin judging a proposed term otherwise sees only one side of the
+    # translation it came from (24/08).
+    original_snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
     anonymized_snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     embedding: Mapped[list[float] | None] = mapped_column(

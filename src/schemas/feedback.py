@@ -20,15 +20,17 @@ from pydantic import BaseModel, ConfigDict, Field
 class FeedbackVoteSummary(BaseModel):
     """How readers rated the translations they were shown.
 
+    Two named buckets, not three. The interface offers a thumb up and a thumb
+    down and nothing between them, so a "neither" count was always zero and
+    read on the screen as a third opinion nobody was holding.
+
     `ratings` is the raw 1-to-5 histogram the `feedbacks` table stores, kept
-    beside the three named buckets because the interface only ever sends 5, 3
-    and 1 and a value outside those would otherwise vanish into a bucket
-    without anyone noticing the interface had changed.
+    beside the two buckets so a value outside them stays visible instead of
+    vanishing — that is the signal that the interface has changed.
     """
 
     up: int = 0
     down: int = 0
-    neutral: int = 0
     total: int = 0
     # Share of votes that were positive, 0 when nobody has voted. Rounded to
     # four places: this is a proportion for a screen, not an accounting figure.
@@ -52,9 +54,12 @@ class SharedCorrection(BaseModel):
     target_language: str
     domain: str
     audience: str
-    # Prepared at edit time with names and numbers removed. It is the only
-    # message-derived text on this screen, and it exists because a term pair
-    # with no usage around it cannot be judged.
+    # Both prepared at edit time with names and numbers removed, and both are
+    # the only message-derived text on this screen — a term pair with no usage
+    # around it cannot be judged. `original_snippet` previews the sender's own
+    # wording (in `source_language`); `anonymized_snippet` is the window around
+    # the corrected phrase in the machine's rendering (in `target_language`).
+    original_snippet: str
     anonymized_snippet: str
     observed_at: datetime
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Archive, PencilLine, RotateCcw, Trash2 } from "lucide-react";
 import {
   approveGlossaryProposal,
   createGlossaryEntry,
@@ -226,7 +227,9 @@ function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
           {proposal.target_term}
         </span>
         <span className={styles.badge}>{pair}</span>
-        {proposal.keep_verbatim && <span className={`${styles.badge} ${styles.badgeVerbatim}`}>{t("glossary.verbatim")}</span>}
+        {/* No "kept as is" badge: the arrow above already shows source and
+            target side by side, and for a verbatim term they read as the same
+            word — the fact the badge would announce is already on screen. */}
       </div>
 
       {/* Two numbers, and the second is the one that decides. Five corrections
@@ -353,7 +356,8 @@ type EntryRowProps = {
  * the only explanation for wording somebody may still be reading. Editing
  * exists so a typo in an approved term does not have to be fixed by retiring it
  * and adding a near-identical row — which would leave two rows, permanently,
- * for a reader to compare.
+ * for a reader to compare. Offered only while active: a retired term shapes no
+ * translation, so there is nothing left for a correction to fix.
  *
  * Deleting is the exception, and it is why the two states offer different
  * buttons: a retired term that never shaped anything explains nothing, and
@@ -452,13 +456,13 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
 
   return (
     <tr>
-      <td className={styles.term}>
-        {entry.source_term}
-        {entry.keep_verbatim && <> <span className={`${styles.badge} ${styles.badgeVerbatim}`}>{t("glossary.verbatim")}</span></>}
-      </td>
-      <td className={styles.term}>{entry.target_term}</td>
-      <td>{entry.domain || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
-      <td>{entry.audience || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
+      {/* No "kept as is" badge here either: the next column already shows the
+          target term, and for a verbatim entry it reads identical to this
+          one — that identity is the fact the badge would otherwise announce. */}
+      <td className={styles.term} title={entry.source_term}>{entry.source_term}</td>
+      <td className={styles.term} title={entry.target_term}>{entry.target_term}</td>
+      <td title={entry.domain || undefined}>{entry.domain || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
+      <td title={entry.audience || undefined}>{entry.audience || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
       {/* Whether this term is binding translations right now, in its own column
           rather than as a badge among the buttons. Every row answers it, and a
           column is where a reader looks for an answer every row gives. */}
@@ -493,19 +497,36 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
             </button>
           </div>
         ) : (
+          /* Icons, not words, once a row settles into either state: the label
+             next to every one of these already says "active" or "retired", so
+             a text button repeated the same idea in a second, longer form. A
+             retired row keeps only Restore and Delete — editing something that
+             shapes no translation is the one action that stopped meaning
+             anything the moment it stopped being active. */
           <div className={styles.rowActions}>
-            <button type="button" className={styles.action} onClick={() => setEditing(true)} disabled={busy}>
-              {t("glossary.entries.edit")}
-            </button>
+            {!retired && (
+              <button
+                type="button"
+                className={styles.iconAction}
+                onClick={() => setEditing(true)}
+                disabled={busy}
+                aria-label={t("glossary.entries.edit")}
+                title={t("glossary.entries.edit")}
+              >
+                <PencilLine size={16} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+            )}
             {retired ? (
               <>
                 <button
                   type="button"
-                  className={styles.action}
+                  className={styles.iconAction}
                   onClick={() => run(() => restoreGlossaryEntry(entry.id), "glossary.restored")}
                   disabled={busy}
+                  aria-label={t("glossary.entries.restore")}
+                  title={t("glossary.entries.restore")}
                 >
-                  {t("glossary.entries.restore")}
+                  <RotateCcw size={16} strokeWidth={1.8} aria-hidden="true" />
                 </button>
                 {/* Offered only here, and the server agrees: deleting an active
                     entry is refused with a 409, because a term in use is the
@@ -513,21 +534,25 @@ function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
                     What is left is the term typed in by mistake. */}
                 <button
                   type="button"
-                  className={`${styles.action} ${styles.actionDanger}`}
+                  className={`${styles.iconAction} ${styles.iconActionDanger}`}
                   onClick={() => setConfirmingDelete(true)}
                   disabled={busy}
+                  aria-label={t("glossary.entries.delete")}
+                  title={t("glossary.entries.delete")}
                 >
-                  {t("glossary.entries.delete")}
+                  <Trash2 size={16} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               </>
             ) : (
               <button
                 type="button"
-                className={`${styles.action} ${styles.actionDanger}`}
+                className={`${styles.iconAction} ${styles.iconActionDanger}`}
                 onClick={() => run(() => retireGlossaryEntry(entry.id), "glossary.retired")}
                 disabled={busy}
+                aria-label={t("glossary.entries.retire")}
+                title={t("glossary.entries.retire")}
               >
-                {t("glossary.entries.retire")}
+                <Archive size={16} strokeWidth={1.8} aria-hidden="true" />
               </button>
             )}
           </div>
@@ -651,17 +676,21 @@ export default function GlossaryPanel() {
         </label>
 
         {entries.length ? (
-          <div className={styles.tableScroll}>
+          <div className={`${styles.tableScroll} ${styles.tableScrollTall}`}>
             <table className={styles.table}>
+              {/* Column widths pinned here rather than left to content: with
+                  `table-layout: fixed` this row is what the browser measures,
+                  and pinning it is what keeps every table on the page the same
+                  width regardless of how long a term or a date happens to be. */}
               <thead>
                 <tr>
-                  <th scope="col">{t("glossary.field.sourceTerm")}</th>
-                  <th scope="col">{t("glossary.field.targetTerm")}</th>
-                  <th scope="col">{t("glossary.field.domain")}</th>
-                  <th scope="col">{t("glossary.field.audience")}</th>
-                  <th scope="col">{t("glossary.entries.status")}</th>
-                  <th scope="col">{t("glossary.entries.added")}</th>
-                  <th scope="col">{t("glossary.entries.actions")}</th>
+                  <th scope="col" style={{ width: 170 }}>{t("glossary.field.sourceTerm")}</th>
+                  <th scope="col" style={{ width: 170 }}>{t("glossary.field.targetTerm")}</th>
+                  <th scope="col" style={{ width: 110 }}>{t("glossary.field.domain")}</th>
+                  <th scope="col" style={{ width: 110 }}>{t("glossary.field.audience")}</th>
+                  <th scope="col" style={{ width: 100 }}>{t("glossary.entries.status")}</th>
+                  <th scope="col" style={{ width: 110 }}>{t("glossary.entries.added")}</th>
+                  <th scope="col" style={{ width: 140 }}>{t("glossary.entries.actions")}</th>
                 </tr>
               </thead>
               <tbody>

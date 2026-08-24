@@ -15,20 +15,34 @@
 import { getStoredAccessToken } from "./auth-session";
 import { API_BASE } from "./constants";
 
-/** How readers rated the translations they were shown. */
+/**
+ * How readers rated the translations they were shown.
+ *
+ * Two named buckets, not three: the interface offers a thumb up and a thumb
+ * down and nothing between them, so a `neutral` count was always zero and read
+ * on the screen as a third opinion nobody was holding.
+ */
 export interface FeedbackVoteSummary {
   up: number;
   down: number;
-  neutral: number;
   total: number;
   /** Share of votes that were positive, 0 when nobody has voted. */
   up_rate: number;
-  /** The raw 1-to-5 histogram, kept so a rating outside the three named
-      buckets is visible rather than silently folded into `neutral`. */
+  /** The raw 1-to-5 histogram, kept so a rating outside the two named buckets
+      stays visible instead of vanishing — that is the signal that the
+      interface sending ratings has changed. */
   ratings: Record<string, number>;
 }
 
-/** One correction a reader allowed to be used for the shared glossary. */
+/**
+ * One correction a reader allowed to be used for the shared glossary.
+ *
+ * Two anonymised fragments, not one: `original_snippet` previews the
+ * sender's own wording in `source_language`, and `anonymized_snippet` is the
+ * window around the corrected phrase in the machine's rendering, in
+ * `target_language`. Neither is the reader's own wording of a message they
+ * did not consent to share.
+ */
 export interface SharedCorrection {
   source_phrase: string;
   corrected_target: string;
@@ -36,6 +50,7 @@ export interface SharedCorrection {
   target_language: string;
   domain: string;
   audience: string;
+  original_snippet: string;
   anonymized_snippet: string;
   observed_at: string;
 }
