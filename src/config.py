@@ -12,6 +12,7 @@ harness can run without a `.env` file.
 import logging
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -45,6 +46,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     public_frontend_origin: str = ""
     cors_origin_regex: str = ""
+    # Public browser address used in transactional-email links. This is kept
+    # separate from CORS because an API may accept several trusted origins,
+    # while a password-reset email must lead to exactly one canonical site.
+    frontend_url: str = "http://localhost:3000"
 
     # LLM
     llm_provider: Literal["groq", "deepseek", "gemini", "openai", "mistral"] = "groq"
@@ -220,6 +225,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_from_name: str = "LinguaFlow"
     smtp_use_tls: bool = True
+    smtp_timeout_seconds: int = Field(default=15, ge=3, le=60)
     email_provider: Literal["smtp", "console", "memory"] = "memory"
 
     # Google Sign-In (Batch G)
@@ -304,6 +310,15 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("frontend_url")
+    @classmethod
+    def validate_frontend_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("FRONTEND_URL must be an absolute http(s) URL")
+        return normalized
+
     @model_validator(mode="after")
     def _warn_unmeasured_embedding_model(self) -> "Settings":
         """Say so when semantic matching is on for a model nobody has measured.
@@ -336,6 +351,8 @@ class Settings(BaseSettings):
     def validate_production_and_email_config(self) -> "Settings":
         """Enforce production email safety and validate required SMTP fields."""
         if self.app_env == "production":
+            if urlparse(self.frontend_url).scheme != "https":
+                raise ValueError("FRONTEND_URL must use https in production")
             if self.email_provider in ("memory", "console"):
                 raise ValueError(
                     f"EMAIL_PROVIDER='{self.email_provider}' is not allowed in production. "

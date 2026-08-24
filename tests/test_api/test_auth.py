@@ -1,6 +1,7 @@
 """Tests for authentication API endpoints."""
 
 import re
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -98,12 +99,19 @@ async def test_password_reset_changes_password_and_revokes_sessions(client):
         },
     )
     old_refresh = registered.json()["refresh_token"]
+    _memory_sender.clear()
     forgot = await client.post(
         "/api/v1/auth/password/forgot", json={"email": "reset@example.com"}
     )
     assert forgot.status_code == 200
     reset_token = forgot.json()["reset_token"]
     assert reset_token
+    assert len(_memory_sender.sent_emails) == 1
+    reset_email = _memory_sender.sent_emails[0]
+    assert reset_email.to_email == "reset@example.com"
+    assert "http://localhost:3000/reset-password?" in reset_email.body_text
+    token_in_link = parse_qs(urlparse(re.search(r"https?://\S+", reset_email.body_text).group(0)).query)["token"][0]
+    assert token_in_link == reset_token
 
     reset = await client.post(
         "/api/v1/auth/password/reset",
@@ -127,11 +135,13 @@ async def test_password_reset_changes_password_and_revokes_sessions(client):
 
 @pytest.mark.asyncio
 async def test_forgot_password_does_not_reveal_unknown_email(client):
+    _memory_sender.clear()
     response = await client.post(
         "/api/v1/auth/password/forgot", json={"email": "missing@example.com"}
     )
     assert response.status_code == 200
     assert response.json()["reset_token"] is None
+    assert _memory_sender.sent_emails == []
 
 
 @pytest.mark.asyncio
