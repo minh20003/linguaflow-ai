@@ -11,14 +11,14 @@ import logging
 import time
 from typing import Any
 
-from src.agents.observability import build_runnable_config, get_langfuse_handler
+from src.agents.observability import build_runnable_config, get_trace_handler
 
 logger = logging.getLogger("src.intelligence")
 
 __all__ = [
     "LatencyTimer",
     "build_runnable_config",
-    "get_langfuse_handler",
+    "get_trace_handler",
     "log_intelligence_event",
 ]
 

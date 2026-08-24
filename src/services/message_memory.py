@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import Settings, get_settings
 from src.database import get_async_session_maker
 from src.database.models import MessageEmbedding
-from src.services.embeddings import embed, embedding_model_name
+from src.services.embeddings import embed_with_model
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +96,10 @@ async def _store(
     covers it.
     """
     try:
-        vector = await embed(text, settings=settings)
+        vector, model = await embed_with_model(text, settings=settings)
         if vector is None:
             return
 
-        model = embedding_model_name(settings)
         async with session_factory() as session:
             row = await session.scalar(
                 select(MessageEmbedding).where(

@@ -8,27 +8,34 @@ interface ApiMention {
   user_id?: string | null;
 }
 
-interface ApiUser {
+export interface ApiUser {
   id: string;
   email: string;
   username: string;
   display_name: string;
   preferred_language: string;
-  group_role?: "owner" | "admin" | "member";
+  interface_language?: string;
+  bio?: string | null;
+  role?: string;
+  group_role?: "owner" | "admin" | "member" | string;
 }
 
 export interface ApiConversation {
   id: string;
   type: "direct" | "group";
   title: string | null;
+  description?: string | null;
   member_ids: string[];
   members: ApiUser[];
   last_message: string | null;
   last_message_at: string | null;
   online_member_ids: string[];
   unread_count: number;
-  created_by: string;
-  description?: string | null;
+  created_by?: string;
+  is_pinned?: boolean;
+  pinned_at?: string | null;
+  created_at?: string;
+  is_muted?: boolean;
 }
 
 interface ApiTranslation {
@@ -55,6 +62,43 @@ export interface ApiMessage {
   attachment?: ApiAttachment | null;
   mentions?: ApiMention[];
   assistant_generated?: boolean;
+  is_saved?: boolean;
+  reactions?: ApiMessageReaction[];
+}
+
+export interface ApiMessageReaction {
+  emoji: string;
+  count: number;
+  user_ids: string[];
+}
+
+export interface ApiMessageSearchResult {
+  message: ApiMessage;
+  matched_in: "original" | "translation";
+  snippet: string;
+}
+
+export interface ApiMessageSearchResponse {
+  items: ApiMessageSearchResult[];
+  has_more: boolean;
+  next_before_created_at: string | null;
+  next_before_id: string | null;
+}
+
+export interface ApiSavedMessagesPage {
+  items: ApiMessage[];
+  has_more: boolean;
+  next_before_created_at?: string | null;
+  next_before_id?: string | null;
+}
+
+export interface ApiUserSettings {
+  auto_translate: boolean;
+  show_original_by_default: boolean;
+  translation_tone: "natural" | "formal" | "casual" | "friendly";
+  sound_enabled: boolean;
+  read_receipts: boolean;
+  ai_smart_assistance: boolean;
 }
 
 export interface ApiAttachment {
@@ -65,6 +109,20 @@ export interface ApiAttachment {
   size: number;
   created_at: string;
   download_url: string;
+}
+
+export interface ApiCall {
+  call_id: string;
+  conversation_id: string;
+  caller_id: string;
+  callee_id: string;
+  call_type: "voice" | "video";
+  status: "ringing" | "accepted" | "rejected" | "ended" | "missed" | "failed";
+  room_url: string | null;
+  join_token: string | null;
+  created_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
 }
 
 function avatar(seed: string): string {
@@ -79,7 +137,7 @@ function assistantAvatar(): string {
 }
 
 export function toLanguageCode(value: string): User["nativeLanguage"] {
-  const supported = ["en", "vi", "ja", "ko", "zh", "es", "fr", "de", "th", "id"];
+  const supported = ["en", "vi", "ja", "ko", "zh", "es", "fr", "de", "th", "id", "pt", "ru", "ar", "hi"];
   return (supported.includes(value) ? value : "en") as User["nativeLanguage"];
 }
 
@@ -97,7 +155,8 @@ export function toChatUser(user: ApiUser | AuthUser): User {
     avatar: avatar(user.display_name || user.username || user.email),
     nativeLanguage: toLanguageCode(user.preferred_language),
     onlineStatus: "offline",
-    role: "group_role" in user ? user.group_role : undefined,
+    bio: "bio" in user ? user.bio ?? undefined : undefined,
+    role: "group_role" in user ? (user.group_role as "admin" | "member" | undefined) : ("role" in user ? (user.role as "admin" | "member" | undefined) : undefined),
   };
 }
 
@@ -122,10 +181,35 @@ export function toConversation(item: ApiConversation, currentUserId: string): Co
     lastMessage: item.last_message || "No messages yet",
     lastMessageTime: time(item.last_message_at),
     unreadCount: item.unread_count,
+    isPinned: item.is_pinned ?? false,
+    pinnedAt: item.pinned_at ?? null,
+    createdAt: item.created_at ?? null,
+    isMuted: item.is_muted ?? false,
     description: item.description ?? undefined,
     createdBy: item.created_by,
-    currentUserRole: item.members.find((member) => member.id === currentUserId)?.group_role,
+    currentUserRole: item.members.find((member) => member.id === currentUserId)?.group_role as "owner" | "admin" | "member" | undefined,
   };
+}
+
+export function compareConversations(a: Conversation, b: Conversation): number {
+  const aPinned = Boolean(a.isPinned);
+  const bPinned = Boolean(b.isPinned);
+  if (aPinned !== bPinned) {
+    return aPinned ? -1 : 1;
+  }
+  if (aPinned && bPinned) {
+    const aPinnedAt = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+    const bPinnedAt = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+    if (aPinnedAt !== bPinnedAt) {
+      return bPinnedAt - aPinnedAt; // pinned_at DESC (newest pinned first)
+    }
+  }
+  const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+  const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+  if (aCreated !== bCreated) {
+    return bCreated - aCreated; // created_at DESC
+  }
+  return b.id.localeCompare(a.id);
 }
 
 export function toMessage(item: ApiMessage, users: Map<string, User>, preferredLanguage: string): Message {
@@ -160,6 +244,12 @@ export function toMessage(item: ApiMessage, users: Map<string, User>, preferredL
     attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
     mentions: item.mentions?.map((mention) => ({ type: mention.type, userId: mention.user_id ?? undefined })),
     isAssistant,
+    isSaved: item.is_saved ?? false,
+    reactions: item.reactions?.map((reaction) => ({
+      emoji: reaction.emoji,
+      count: reaction.count,
+      users: reaction.user_ids,
+    })),
   };
 }
 
@@ -177,11 +267,6 @@ export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
   };
 }
 
-/**
- * The API returns a reply ID rather than embedding the original message.
- * Resolve it from the conversation payload so reply previews still work after
- * a page refresh.
- */
 export function toMessages(items: ApiMessage[], users: Map<string, User>, preferredLanguage: string): Message[] {
   const originals = new Map(items.map((item) => [item.id, item]));
 
@@ -199,8 +284,6 @@ export function toMessages(items: ApiMessage[], users: Map<string, User>, prefer
       replyTo: {
         id: original.id,
         senderName: originalSender?.name || "Message",
-        // A quote should match the language this reader sees in the thread;
-        // otherwise the composer preview and the persisted reply disagree.
         content: original.deleted_at
           ? "This message was deleted"
           : translatedReply?.translated_text || original.original_text,
@@ -225,14 +308,92 @@ export function listUsers(token: string, query: string) { return request<ApiUser
 export function listConversations(token: string) { return request<ApiConversation[]>("/api/v1/conversations", token); }
 export function getAssistantConversation(token: string) { return request<ApiConversation>("/api/v1/assistant/conversation", token, { method: "POST" }); }
 export function getMessages(token: string, conversationId: string) { return request<ApiMessage[]>(`/api/v1/conversations/${conversationId}/messages`, token); }
+export function searchMessages(token: string, conversationId: string, query: string) {
+  return request<ApiMessageSearchResponse>(
+    `/api/v1/conversations/${conversationId}/messages/search?q=${encodeURIComponent(query)}`,
+    token,
+  );
+}
 export function listAttachments(token: string, conversationId: string) {
   return request<ApiAttachment[]>(`/api/v1/conversations/${conversationId}/attachments`, token);
 }
 export function createConversation(token: string, type: "direct" | "group", memberIds: string[], title?: string) {
   return request<ApiConversation>("/api/v1/conversations", token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, member_ids: memberIds, title }) });
 }
+export function updateConversationPreferences(
+  token: string,
+  conversationId: string,
+  changes: { is_pinned?: boolean; is_muted?: boolean },
+) {
+  return request<ApiConversation>(`/api/v1/conversations/${conversationId}/preferences`, token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+}
+export function leaveConversation(token: string, conversationId: string) {
+  return request<void>(`/api/v1/conversations/${conversationId}/leave`, token, { method: "POST" });
+}
+export function blockContact(token: string, userId: string) {
+  return request<void>(`/api/v1/users/${userId}/block`, token, { method: "PUT" });
+}
 export function markRead(token: string, conversationId: string) { return request<void>(`/api/v1/conversations/${conversationId}/read`, token, { method: "POST" }); }
 export function deleteMessage(token: string, conversationId: string, messageId: string) { return request<void>(`/api/v1/conversations/${conversationId}/messages/${messageId}`, token, { method: "DELETE" }); }
+export function saveMessage(token: string, conversationId: string, messageId: string) {
+  return request<{ message_id: string; is_saved: boolean }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/saved`, token, { method: "PUT" });
+}
+export function unsaveMessage(token: string, conversationId: string, messageId: string) {
+  return request<{ message_id: string; is_saved: boolean }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/saved`, token, { method: "DELETE" });
+}
+export function listSavedMessages(
+  token: string,
+  params?: {
+    limit?: number;
+    before_created_at?: string;
+    before_id?: string;
+  },
+) {
+  const search = new URLSearchParams();
+  if (params?.limit !== undefined) search.set("limit", String(params.limit));
+  if (params?.before_created_at) search.set("before_created_at", params.before_created_at);
+  if (params?.before_id) search.set("before_id", params.before_id);
+  const query = search.toString();
+  return request<ApiSavedMessagesPage>(`/api/v1/saved-messages${query ? `?${query}` : ""}`, token);
+}
+export function addReaction(token: string, conversationId: string, messageId: string, emoji: string) {
+  return request<{ message_id: string; reactions: ApiMessageReaction[] }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/reactions`, token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emoji }),
+  });
+}
+export function removeReaction(token: string, conversationId: string, messageId: string, emoji: string) {
+  return request<{ message_id: string; reactions: ApiMessageReaction[] }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/reactions`, token, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emoji }),
+  });
+}
+export function retryTranslation(token: string, conversationId: string, messageId: string) {
+  return request<{ message_id: string; status: "scheduled" }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/translate`, token, { method: "POST" });
+}
+export function getUserSettings(token: string) {
+  return request<ApiUserSettings>("/api/v1/auth/me/settings", token);
+}
+export function updateUserSettings(token: string, changes: Partial<ApiUserSettings>) {
+  return request<ApiUserSettings>("/api/v1/auth/me/settings", token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+}
+export function updateProfile(token: string, changes: { display_name?: string; bio?: string }) {
+  return request<AuthUser>("/api/v1/auth/me", token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+}
 export function addGroupMembers(token: string, conversationId: string, userIds: string[]) { return request<void>(`/api/v1/conversations/${conversationId}/members`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_ids: userIds }) }); }
 export function removeGroupMember(token: string, conversationId: string, userId: string) { return request<void>(`/api/v1/conversations/${conversationId}/members/${userId}`, token, { method: "DELETE" }); }
 export function updateGroupRole(token: string, conversationId: string, userId: string, role: "admin" | "member") { return request<void>(`/api/v1/conversations/${conversationId}/members/${userId}/role`, token, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }) }); }
@@ -275,4 +436,28 @@ export function submitTranslationEdit(token: string, translationId: string, edit
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ edited_text: editedText }),
   });
+}
+
+export function startCall(token: string, conversationId: string, callType: "voice" | "video") {
+  return request<ApiCall>(`/api/v1/conversations/${conversationId}/calls`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ call_type: callType }),
+  });
+}
+
+export function acceptCall(token: string, callId: string) {
+  return request<ApiCall>(`/api/v1/calls/${callId}/accept`, token, { method: "POST" });
+}
+
+export function joinCall(token: string, callId: string) {
+  return request<ApiCall>(`/api/v1/calls/${callId}/join`, token);
+}
+
+export function rejectCall(token: string, callId: string) {
+  return request<ApiCall>(`/api/v1/calls/${callId}/reject`, token, { method: "POST" });
+}
+
+export function endCall(token: string, callId: string) {
+  return request<ApiCall>(`/api/v1/calls/${callId}/end`, token, { method: "POST" });
 }

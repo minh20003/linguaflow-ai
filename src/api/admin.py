@@ -1,4 +1,4 @@
-"""Administrative view of the glossary and its review queue.
+"""Administrative view of the glossary, its review queue, and reader feedback.
 
 A separate router rather than another block in `routes.py`, for the reason
 `metrics.py` gives: several branches edit that file at once, and a new module
@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,20 +29,29 @@ from src.core.deps import get_admin_user
 from src.database import get_db
 from src.database.models import (
     GLOSSARY_PROPOSAL_STATUSES,
+    CorrectionLog,
+    Feedback,
     GlossaryEntry,
     GlossaryProposal,
     GlossaryProposalCitation,
     User,
+)
+from src.schemas.feedback import (
+    FeedbackOverviewResponse,
+    FeedbackVoteSummary,
+    SharedCorrection,
 )
 from src.schemas.glossary import (
     GlossaryApprovalRequest,
     GlossaryCitationSummary,
     GlossaryEntryRequest,
     GlossaryEntryResponse,
+    GlossaryEntryUpdateRequest,
     GlossaryProposalResponse,
     GlossaryRejectionRequest,
+    GlossarySimilarEntry,
 )
-from src.services.embeddings import embed, embedding_model_name
+from src.services.embeddings import embed_with_model
 from src.services.glossary import normalize_term
 
 logger = logging.getLogger(__name__)
@@ -93,6 +102,65 @@ def _require_pending(proposal: GlossaryProposal) -> None:
         )
 
 
+async def _similar_entries(
+    db: AsyncSession, proposal: GlossaryProposal
+) -> tuple[list[GlossarySimilarEntry], bool]:
+    """What the glossary already says about this proposal's source term.
+
+    Matched on the normalised source term and the language pair, not on
+    embeddings. That is a deliberate choice rather than a shortcut: measured on
+    this project's own terms, the available embedding models score a true
+    variant and an unrelated word within 0.002 of each other, so a similarity
+    threshold here would fill a reviewer's screen with confident noise (ADR-26).
+    Normalised equality is narrower and it is *right*, which is what a screen
+    that exists to prevent a wrong approval needs.
+
+    Returns:
+        The entries found, and whether any of them is active with a different
+        target — the case where the machine is already translating this term to
+        somebody's satisfaction and the proposal is asking to overturn it.
+    """
+    rows = (
+        await db.scalars(
+            select(GlossaryEntry).where(
+                GlossaryEntry.source_term_normalized == proposal.source_term_normalized,
+                GlossaryEntry.source_language == proposal.source_language,
+                GlossaryEntry.target_language == proposal.target_language,
+            )
+        )
+    ).all()
+
+    conflicts = any(
+        entry.status == "active" and entry.target_term != proposal.target_term
+        for entry in rows
+    )
+    return [GlossarySimilarEntry.model_validate(entry) for entry in rows], conflicts
+
+
+async def _proposal_response(
+    db: AsyncSession, proposal: GlossaryProposal
+) -> GlossaryProposalResponse:
+    """Render one proposal with the evidence a reviewer decides on.
+
+    Both endpoints that return a proposal go through here. They used to build
+    the response separately from `model_fields`, which meant adding a field to
+    the DTO silently broke whichever copy was not edited — it did, the first
+    time this grew.
+    """
+    similar, conflicts = await _similar_entries(db, proposal)
+    carried = {
+        field
+        for field in GlossaryProposalResponse.model_fields
+        if field not in ("citations", "similar_entries", "conflicts_with_active")
+    }
+    return GlossaryProposalResponse(
+        **{field: getattr(proposal, field) for field in carried},
+        citations=await _citations(db, proposal.id),
+        similar_entries=similar,
+        conflicts_with_active=conflicts,
+    )
+
+
 @router.get(
     "/admin/glossary/proposals",
     response_model=list[GlossaryProposalResponse],
@@ -127,17 +195,7 @@ async def list_glossary_proposals(
         )
     ).all()
 
-    return [
-        GlossaryProposalResponse(
-            **{
-                field: getattr(proposal, field)
-                for field in GlossaryProposalResponse.model_fields
-                if field != "citations"
-            },
-            citations=await _citations(db, proposal.id),
-        )
-        for proposal in proposals
-    ]
+    return [await _proposal_response(db, proposal) for proposal in proposals]
 
 
 @router.post(
@@ -173,7 +231,7 @@ async def approve_glossary_proposal(
         proposal.keep_verbatim if payload.keep_verbatim is None else payload.keep_verbatim
     )
 
-    vector = await embed(source_term)
+    vector, vector_model = await embed_with_model(source_term)
     entry = GlossaryEntry(
         source_term=source_term,
         source_term_normalized=normalize_term(source_term),
@@ -186,7 +244,7 @@ async def approve_glossary_proposal(
         status="active",
         approved_by=current_user.id,
         embedding=vector,
-        embedding_model=embedding_model_name() if vector else "",
+        embedding_model=vector_model,
     )
     db.add(entry)
 
@@ -237,14 +295,7 @@ async def reject_glossary_proposal(
     await db.commit()
     await db.refresh(proposal)
 
-    return GlossaryProposalResponse(
-        **{
-            field: getattr(proposal, field)
-            for field in GlossaryProposalResponse.model_fields
-            if field != "citations"
-        },
-        citations=await _citations(db, proposal.id),
-    )
+    return await _proposal_response(db, proposal)
 
 
 @router.get("/admin/glossary", response_model=list[GlossaryEntryResponse])
@@ -283,7 +334,7 @@ async def create_glossary_entry(
     it proposes anything, which is right for discovering a house style and
     useless for a term the team already knows it wants.
     """
-    vector = await embed(payload.source_term)
+    vector, vector_model = await embed_with_model(payload.source_term)
     entry = GlossaryEntry(
         source_term=payload.source_term,
         source_term_normalized=normalize_term(payload.source_term),
@@ -296,7 +347,7 @@ async def create_glossary_entry(
         status="active",
         approved_by=current_user.id,
         embedding=vector,
-        embedding_model=embedding_model_name() if vector else "",
+        embedding_model=vector_model,
     )
     db.add(entry)
     try:
@@ -308,6 +359,95 @@ async def create_glossary_entry(
             detail="A glossary entry for this term and scope already exists",
         ) from exc
 
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+async def _load_entry(db: AsyncSession, entry_id: str) -> GlossaryEntry:
+    """Fetch an entry or answer 404."""
+    entry = await db.scalar(select(GlossaryEntry).where(GlossaryEntry.id == entry_id))
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Glossary entry was not found",
+        )
+    return entry
+
+
+@router.patch(
+    "/admin/glossary/{entry_id}",
+    response_model=GlossaryEntryResponse,
+)
+async def update_glossary_entry(
+    entry_id: str,
+    payload: GlossaryEntryUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Correct an entry that is already in force.
+
+    Only the fields sent are changed; the language pair is not one of them,
+    because a term whose pair is wrong is a different entry rather than a
+    mistyped one, and the embedding and the unique constraint are both scoped
+    to the pair.
+
+    The source term is re-embedded when it changes, for the same reason
+    approval embeds in the first place: without a fresh vector the semantic
+    stage would go on matching the old wording, silently, and the only symptom
+    would be a term that stops being found.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    if payload.source_term is not None and payload.source_term != entry.source_term:
+        entry.source_term = payload.source_term
+        entry.source_term_normalized = normalize_term(payload.source_term)
+        entry.embedding, entry.embedding_model = await embed_with_model(
+            payload.source_term
+        )
+    if payload.target_term is not None:
+        entry.target_term = payload.target_term
+    if payload.domain is not None:
+        entry.domain = payload.domain
+    if payload.audience is not None:
+        entry.audience = payload.audience
+    if payload.keep_verbatim is not None:
+        entry.keep_verbatim = payload.keep_verbatim
+
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        # An edit can collide with an existing row the same way an insert can:
+        # the scope it is being moved to may already be taken.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A glossary entry for this term and scope already exists",
+        ) from exc
+
+    await db.refresh(entry)
+    return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.post(
+    "/admin/glossary/{entry_id}/restore",
+    response_model=GlossaryEntryResponse,
+)
+async def restore_glossary_entry(
+    entry_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Put a retired entry back into use.
+
+    The counterpart of retirement, and the reason retirement can be undone at
+    all: nothing was deleted, so restoring is a status change rather than a
+    re-creation — the entry keeps its id, its embedding and the date it was
+    first approved.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    entry.status = "active"
+    await db.commit()
     await db.refresh(entry)
     return GlossaryEntryResponse.model_validate(entry)
 
@@ -326,19 +466,127 @@ async def retire_glossary_entry(
     DELETE by verb, retirement by effect, and deliberately so: a translation
     delivered last month was shaped by this term, and removing the row would
     erase the only explanation for the wording a reader is looking at. Retiring
-    it stops it shaping anything new.
+    it stops it shaping anything new, and `POST .../restore` undoes it.
     """
-    entry = await db.scalar(select(GlossaryEntry).where(GlossaryEntry.id == entry_id))
-    if entry is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Glossary entry was not found",
-        )
+    entry = await _load_entry(db, entry_id)
 
     entry.status = "retired"
     await db.commit()
     await db.refresh(entry)
     return GlossaryEntryResponse.model_validate(entry)
+
+
+@router.delete(
+    "/admin/glossary/{entry_id}/permanent",
+    response_model=GlossaryEntryResponse,
+)
+async def delete_glossary_entry(
+    entry_id: str,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryEntryResponse:
+    """Remove a retired entry from the table for good.
+
+    Retirement, not deletion, is still the way a term stops being used: a
+    translation delivered last month was shaped by whatever was active then,
+    and the row is the only explanation for wording somebody may still be
+    reading. This exists for the other case — a term typed in by mistake, which
+    explains nothing because it never shaped anything anyone saw.
+
+    Only a retired entry can be deleted, which is what keeps the two apart. An
+    active entry is in use by definition, so the answer to "delete this" is
+    always "retire it first and see".
+
+    The response is the row as it was, because after this call there is nowhere
+    left to look it up.
+    """
+    entry = await _load_entry(db, entry_id)
+
+    if entry.status != "retired":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a retired entry can be deleted. Retire it first.",
+        )
+
+    # Read the response before the row goes, not after.
+    response = GlossaryEntryResponse.model_validate(entry)
+    await db.delete(entry)
+    await db.commit()
+    return response
+
+
+@router.get("/admin/feedback", response_model=FeedbackOverviewResponse)
+async def read_feedback_overview(
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE),
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> FeedbackOverviewResponse:
+    """What readers said about the translations, in the two forms it arrives in.
+
+    Votes are a histogram over `feedbacks.rating`; the interface sends 5 for a
+    thumb up and 1 for a thumb down, so those two buckets are named. Anything
+    else stays visible in `ratings` rather than being given a bucket of its
+    own: there is no third answer to offer, and a "neither" count that is
+    always zero reads as an opinion nobody holds.
+
+    Corrections come from `correction_log`, consented rows only, and carry the
+    two anonymised snippets the recorder prepared at edit time — one from the
+    machine's rendering, one from the sender's original wording — never the
+    reader's own wording of a message, and never who wrote it. Without this screen the
+    only visible output of the whole correction pipeline was a proposal, which
+    appears once several people have independently agreed; everything below
+    that threshold was invisible, including the case where nothing is arriving
+    at all.
+    """
+    counts = (
+        await db.execute(
+            select(Feedback.rating, func.count()).group_by(Feedback.rating)
+        )
+    ).all()
+    ratings = {int(rating): int(count) for rating, count in counts}
+    up = ratings.get(5, 0)
+    down = ratings.get(1, 0)
+    total = sum(ratings.values())
+    votes = FeedbackVoteSummary(
+        up=up,
+        down=down,
+        total=total,
+        up_rate=round(up / total, 4) if total else 0.0,
+        ratings=ratings,
+    )
+
+    shared_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(True))
+        )
+        or 0
+    )
+    withheld_total = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(False))
+        )
+        or 0
+    )
+
+    rows = (
+        await db.scalars(
+            select(CorrectionLog)
+            .where(CorrectionLog.consent_to_share.is_(True))
+            .order_by(CorrectionLog.observed_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    return FeedbackOverviewResponse(
+        votes=votes,
+        shared_corrections=[SharedCorrection.model_validate(row) for row in rows],
+        shared_total=shared_total,
+        withheld_total=withheld_total,
+    )
 
 
 def _now():

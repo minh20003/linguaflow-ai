@@ -329,9 +329,11 @@ async def test_remembering_a_message_replaces_the_vector_it_had(
     )
 
     async def fixed(text, *, settings=None):
-        return vector(0.0, 1.0)
+        # Returns the pair  returns: the vector and the model
+        # that produced it, which is what gets stored beside it.
+        return vector(0.0, 1.0), "test-embedding-model"
 
-    monkeypatch.setattr("src.services.message_memory.embed", fixed)
+    monkeypatch.setattr("src.services.message_memory.embed_with_model", fixed)
 
     import tests.conftest as conftest_module
 

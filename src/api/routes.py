@@ -44,6 +44,8 @@ from src.core.security import (
 from src.database import get_db
 from src.database.models import (
     Attachment,
+    BlockedUser,
+    CallSession,
     Conversation,
     ConversationMember,
     Feedback,
@@ -71,13 +73,21 @@ from src.schemas.auth import (
     ResetPasswordRequest,
     UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
+    UserProfileUpdate,
     UserResponse,
+    UserSettingsResponse,
+    UserSettingsUpdate,
     VerifyRegisterRequest,
 )
 from src.schemas.chat import (
     AttachmentResponse,
+    CallEvent,
+    CallResponse,
+    CallStartRequest,
     ConversationCreateRequest,
+    ConversationMemberLeftEvent,
     ConversationMemberSummary,
+    ConversationPreferencesUpdate,
     ConversationResponse,
     EditMessageRequest,
     FeedbackRequest,
@@ -87,13 +97,22 @@ from src.schemas.chat import (
     GroupTransferOwnerRequest,
     GroupUpdateRequest,
     MessageDeletedEvent,
+    MessageReactionSummary,
+    MessageReactionsUpdatedEvent,
     MessageReadEvent,
     MessageResponse,
+    MessageSearchResponse,
+    MessageSearchResult,
     MessageUpdatedEvent,
+    ReactionStateResponse,
+    ReactionUpdateRequest,
     ReadReceiptResponse,
+    SavedMessagesResponse,
+    SavedMessageStateResponse,
     TranslationEditRequest,
     TranslationEditResponse,
     TranslationEditSummary,
+    TranslationRetryResponse,
     TranslationSummary,
 )
 from src.schemas.intelligence import (
@@ -109,6 +128,12 @@ from src.services.action_proposals import (
     ActionProposalOwnershipError,
     ActionProposalService,
     ActionProposalStatusError,
+)
+from src.services.blocking import (
+    DirectMessagingBlockedError,
+    block_user,
+    list_blocked_user_ids,
+    unblock_user,
 )
 from src.services.chat import (
     ChatService,
@@ -135,7 +160,16 @@ from src.services.profiles import (
     resolve_profiles_for_conversations,
     select_for_reader,
 )
-from src.services.translation import schedule_translations
+from src.services.rtc import (
+    CallJoin,
+    CallNotFoundError,
+    CallService,
+    CallStateError,
+    RTCProviderUnavailableError,
+    get_rtc_provider,
+)
+from src.services.translation import schedule_translation_retry, schedule_translations
+from src.services.user_settings import get_or_create_user_settings, update_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -242,13 +276,14 @@ def _generate_otp() -> str:
 
 @router.post(
     "/auth/register",
-    response_model=AuthResponse,
+    response_model=PendingRegisterResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def register(
     request: RegisterRequest,
     db: AsyncSession = Depends(get_db),
-) -> AuthResponse:
-    """Create an email/password account and immediately issue an authenticated session."""
+) -> PendingRegisterResponse:
+    """Start registration by sending an OTP; the account is created after verification."""
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
@@ -256,30 +291,6 @@ async def register(
     if existing_user is not None:
         detail = "Email is already registered" if existing_user.email == request.email else "Username is already registered"
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
-
-    user = User(
-        email=request.email,
-        username=request.username,
-        display_name=(request.display_name or request.username).strip(),
-        password_hash=get_password_hash(request.password),
-        preferred_language=request.preferred_language,
-        interface_language=request.preferred_language,
-        role="member",
-    )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email or username is already registered",
-        ) from exc
-
-    return await _issue_auth_response(user, db, remember=True)
-
-    # Legacy OTP implementation retained below temporarily to keep the schema
-    # migration reversible. It is unreachable: registration is email/password only.
 
     now = datetime.now(UTC)
     otp = _generate_otp()
@@ -436,10 +447,7 @@ async def resend_register_otp(
     request: ResendRegisterOtpRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ResendRegisterOtpResponse:
-    """Retired: registration uses email and password directly."""
-    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Email verification is no longer required")
-
-    # Retained only with the old database migration; unreachable.
+    """Replace an expired or misplaced registration OTP, subject to rate limits."""
     now = datetime.now(UTC)
     otp = _generate_otp()
     otp_hash = get_password_hash(otp)
@@ -539,10 +547,7 @@ async def verify_register_otp(
     request: VerifyRegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
-    """Retired: registration uses email and password directly."""
-    raise HTTPException(status_code=status.HTTP_410_GONE, detail="Email verification is no longer required")
-
-    # Retained only with the old database migration; unreachable.
+    """Create the account and authenticate it after a valid, unused OTP."""
     pending = await db.get(PendingRegistration, request.pending_id)
     if pending is None:
         raise HTTPException(
@@ -1109,6 +1114,40 @@ async def get_current_user_info(
     return UserResponse.model_validate(current_user)
 
 
+@router.patch("/auth/me", response_model=UserResponse)
+async def update_current_user_profile(
+    request: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Persist the current user's editable profile fields only."""
+    for field, value in request.model_dump(exclude_unset=True).items():
+        setattr(current_user, field, value)
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
+@router.get("/auth/me/settings", response_model=UserSettingsResponse)
+async def get_current_user_settings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserSettingsResponse:
+    return UserSettingsResponse.model_validate(await get_or_create_user_settings(db, current_user.id))
+
+
+@router.patch("/auth/me/settings", response_model=UserSettingsResponse)
+async def patch_current_user_settings(
+    request: UserSettingsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserSettingsResponse:
+    settings = await update_user_settings(
+        db, current_user.id, request.model_dump(exclude_unset=True)
+    )
+    return UserSettingsResponse.model_validate(settings)
+
+
 @router.put("/auth/me/language", response_model=UserResponse)
 async def update_preferred_language(
     request: UpdateLanguageRequest,
@@ -1208,6 +1247,18 @@ async def find_users(
         select(User)
         .where(
             User.id != current_user.id,
+            ~select(BlockedUser.blocker_id)
+            .where(
+                BlockedUser.blocker_id == current_user.id,
+                BlockedUser.blocked_id == User.id,
+            )
+            .exists(),
+            ~select(BlockedUser.blocker_id)
+            .where(
+                BlockedUser.blocker_id == User.id,
+                BlockedUser.blocked_id == current_user.id,
+            )
+            .exists(),
             or_(
                 func.lower(User.email).like(prefix, escape="\\"),
                 func.lower(User.username).like(prefix, escape="\\"),
@@ -1219,6 +1270,42 @@ async def find_users(
         .limit(20)
     )
     return [UserResponse.model_validate(user) for user in users]
+
+
+@router.put("/users/{user_id}/block", status_code=status.HTTP_204_NO_CONTENT)
+async def block_contact(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    if await db.get(User, user_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User was not found")
+    try:
+        await block_user(db, current_user.id, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/users/{user_id}/block", status_code=status.HTTP_204_NO_CONTENT)
+async def unblock_contact(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    await unblock_user(db, current_user.id, user_id)
+
+
+@router.get("/auth/me/blocked-users", response_model=list[UserResponse])
+async def get_blocked_contacts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UserResponse]:
+    user_ids = await list_blocked_user_ids(db, current_user.id)
+    if not user_ids:
+        return []
+    users = await db.scalars(select(User).where(User.id.in_(user_ids)))
+    by_id = {user.id: user for user in users}
+    return [UserResponse.model_validate(by_id[user_id]) for user_id in user_ids if user_id in by_id]
 
 
 # ========================
@@ -1234,6 +1321,7 @@ async def _conversation_response(
     unread_count: int = 0,
     members: Sequence[User] | None = None,
     profiles: dict[str, str] | None = None,
+    preference: ConversationMember | None = None,
 ) -> ConversationResponse:
     """Build the minimal conversation representation for an authorized user.
 
@@ -1292,6 +1380,9 @@ async def _conversation_response(
             manager.online_user_ids(member.id for member in members)
         ) if manager else [],
         unread_count=unread_count,
+        is_pinned=preference.is_pinned if preference else False,
+        pinned_at=preference.pinned_at if preference else None,
+        is_muted=preference.is_muted if preference else False,
     )
 
 
@@ -1329,6 +1420,11 @@ async def create_conversation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    except DirectMessagingBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Direct messaging is unavailable",
+        ) from exc
 
     if not result.created:
         response.status_code = status.HTTP_200_OK
@@ -1337,6 +1433,7 @@ async def create_conversation(
         service,
         result.conversation,
         profiles=await resolve_profiles(db, result.conversation.id),
+        preference=await db.get(ConversationMember, (result.conversation.id, current_user.id)),
     )
 
 
@@ -1413,12 +1510,27 @@ async def update_group_role(conversation_id: str, user_id: str, payload: GroupRo
 
 
 @router.post("/conversations/{conversation_id}/leave", status_code=204)
-async def leave_group(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> None:
-    _, membership = await _group_access(db, conversation_id, current_user.id)
-    if membership.role == "owner":
-        raise HTTPException(status_code=409, detail="Transfer ownership or delete the group first")
-    await db.delete(membership)
+async def leave_group(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> None:
+    conversation, membership = await _group_access(db, conversation_id, current_user.id)
+    member_ids = await ChatService(db).get_conversation_member_ids(conversation_id=conversation_id)
+    if membership.role == "owner" and len(member_ids) > 1:
+        raise HTTPException(status_code=409, detail="Transfer ownership before leaving the group")
+    if len(member_ids) == 1:
+        await db.delete(conversation)
+    else:
+        await db.delete(membership)
     await db.commit()
+    await manager.send_to_users(
+        (member_id for member_id in member_ids if member_id != current_user.id),
+        ConversationMemberLeftEvent(
+            conversation_id=conversation_id, user_id=current_user.id
+        ).model_dump(mode="json"),
+    )
 
 
 @router.post("/conversations/{conversation_id}/owner", status_code=204)
@@ -1442,6 +1554,37 @@ async def delete_group(conversation_id: str, current_user: User = Depends(get_cu
     await db.commit()
 
 
+@router.patch(
+    "/conversations/{conversation_id}/preferences",
+    response_model=ConversationResponse,
+)
+async def update_conversation_preferences(
+    conversation_id: str,
+    payload: ConversationPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    service = ChatService(db)
+    try:
+        preference = await service.update_conversation_preferences(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            is_pinned=payload.is_pinned,
+            is_muted=payload.is_muted,
+        )
+        conversation = await db.get(Conversation, conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+    return await _conversation_response(
+        service,
+        conversation,
+        profiles=await resolve_profiles(db, conversation_id),
+        preference=preference,
+    )
+
+
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(
     current_user: User = Depends(get_current_user),
@@ -1452,6 +1595,7 @@ async def list_conversations(
     service = ChatService(db)
     conversations = await service.list_conversations(user_id=current_user.id)
     conversation_ids = [conversation.id for conversation in conversations]
+    settings = await get_or_create_user_settings(db, current_user.id)
     profiles = await resolve_profiles_for_conversations(db, conversation_ids)
     last_messages = await service.get_last_messages(
         conversation_ids=conversation_ids,
@@ -1462,12 +1606,17 @@ async def list_conversations(
             conversation_id: profile_for(members, current_user.id)
             for conversation_id, members in profiles.items()
         },
+        reader_tones={conversation_id: settings.translation_tone for conversation_id in conversation_ids},
     )
     unread = await service.get_unread_counts(
         user_id=current_user.id,
         conversation_ids=conversation_ids,
     )
     members = await service.get_members_by_conversation(conversation_ids=conversation_ids)
+    preferences = await service.get_member_preferences_for_conversations(
+        user_id=current_user.id,
+        conversation_ids=conversation_ids,
+    )
     return [
         await _conversation_response(
             service,
@@ -1477,6 +1626,7 @@ async def list_conversations(
             unread.get(conversation.id, 0),
             members.get(conversation.id, []),
             profiles.get(conversation.id, {}),
+            preferences.get(conversation.id),
         )
         for conversation in conversations
     ]
@@ -1524,31 +1674,388 @@ async def get_conversation_messages(
         conversation_id=conversation_id,
     )
     attachments = await service.get_attachments_by_message(message_ids=live_message_ids)
+    saved_message_ids = await service.saved_message_ids(
+        user_id=current_user.id, message_ids=live_message_ids
+    )
+    reactions_by_message = await service.reactions_by_message(message_ids=live_message_ids)
     return [
-        MessageResponse(
-            id=message.id,
-            client_message_id=message.client_message_id,
-            conversation_id=message.conversation_id,
-            sender_id=message.sender_id,
-            # A withdrawn message keeps its row for the measurement data hanging
-            # off it, but its text must not travel anywhere (§3.6).
-            original_text="" if message.deleted_at else message.original_text,
-            source_language=message.source_language,
-            mentions=message_mentions(message),
-            assistant_generated=message.assistant_generated,
+        _message_response(
+            message,
             translations=translations.get(message.id, []),
-            created_at=message.created_at,
-            edited_at=message.edited_at,
-            deleted_at=message.deleted_at,
-            attachment=(
-                AttachmentResponse.model_validate(attachments[message.id])
-                if message.id in attachments else None
-            ),
-            reply_to_message_id=message.reply_to_message_id,
-            forwarded_from_message_id=message.forwarded_from_message_id,
+            attachment=attachments.get(message.id),
+            is_saved=message.id in saved_message_ids,
+            reactions=reactions_by_message.get(message.id, []),
         )
         for message in messages
     ]
+
+
+def _message_response(
+    message: Message,
+    *,
+    translations: list[TranslationSummary],
+    attachment: Attachment | None,
+    is_saved: bool,
+    reactions: list[tuple[str, int, list[str]]],
+) -> MessageResponse:
+    """Serialize a message consistently for history and search results."""
+    return MessageResponse(
+        id=message.id,
+        client_message_id=message.client_message_id,
+        conversation_id=message.conversation_id,
+        sender_id=message.sender_id,
+        original_text="" if message.deleted_at else message.original_text,
+        source_language=message.source_language,
+        mentions=message_mentions(message),
+        assistant_generated=message.assistant_generated,
+        translations=translations,
+        created_at=message.created_at,
+        edited_at=message.edited_at,
+        deleted_at=message.deleted_at,
+        attachment=AttachmentResponse.model_validate(attachment) if attachment else None,
+        reply_to_message_id=message.reply_to_message_id,
+        forwarded_from_message_id=message.forwarded_from_message_id,
+        is_saved=is_saved,
+        reactions=_reaction_summaries(reactions),
+    )
+
+
+def _search_snippet(text: str, query: str, *, radius: int = 72) -> str:
+    """Return a short, stable excerpt around the case-insensitive match."""
+    index = text.lower().find(query.lower())
+    if index < 0:
+        return text[: radius * 2]
+    start = max(0, index - radius)
+    end = min(len(text), index + len(query) + radius)
+    return f"{'…' if start else ''}{text[start:end]}{'…' if end < len(text) else ''}"
+
+
+@router.get(
+    "/conversations/{conversation_id}/messages/search",
+    response_model=MessageSearchResponse,
+)
+async def search_conversation_messages(
+    conversation_id: str,
+    q: str = Query(min_length=1, max_length=255),
+    limit: int = Query(default=20, ge=1, le=100),
+    before_created_at: datetime | None = None,
+    before_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageSearchResponse:
+    """Search a conversation without exposing another reader's translation.
+
+    Search can match a stored translated rendering, but the response is built
+    from the same reader-specific selection as history.  A manager's rendering
+    can therefore never be returned to a peer merely because both rows contain
+    a similar word.
+    """
+    service = ChatService(db)
+    lowered_query = q.strip().lower()
+    preferred_language = current_user.preferred_language
+    visible_items: list[MessageSearchResult] = []
+
+    current_before_created_at = before_created_at
+    current_before_id = before_id
+    batch_size = min(max(limit * 2, 50), 100)
+    has_more = False
+
+    while len(visible_items) <= limit:
+        try:
+            candidates = await service.search_messages(
+                user_id=current_user.id,
+                conversation_id=conversation_id,
+                query=q,
+                reader_language=preferred_language,
+                limit=batch_size,
+                before_created_at=current_before_created_at,
+                before_id=current_before_id,
+            )
+        except ChatServiceError as exc:
+            raise _message_error(exc) from exc
+
+        if not candidates:
+            break
+
+        candidate_has_more = len(candidates) > batch_size
+        batch_candidates = candidates[:batch_size]
+        message_ids = [message.id for message in batch_candidates]
+
+        translations = await _translations_by_message(
+            db,
+            message_ids,
+            reader_id=current_user.id,
+            conversation_id=conversation_id,
+        )
+        attachments = await service.get_attachments_by_message(message_ids=message_ids)
+        saved_message_ids = await service.saved_message_ids(
+            user_id=current_user.id, message_ids=message_ids
+        )
+        reactions_by_message = await service.reactions_by_message(message_ids=message_ids)
+
+        for message in batch_candidates:
+            original_match = lowered_query in message.original_text.lower()
+            readable_translation = next(
+                (
+                    row
+                    for row in translations.get(message.id, [])
+                    if row.target_language == preferred_language
+                    and lowered_query in row.translated_text.lower()
+                ),
+                None,
+            )
+            if not original_match and readable_translation is None:
+                continue
+            matched_text = message.original_text if original_match else readable_translation.translated_text
+            visible_items.append(
+                MessageSearchResult(
+                    message=_message_response(
+                        message,
+                        translations=translations.get(message.id, []),
+                        attachment=attachments.get(message.id),
+                        is_saved=message.id in saved_message_ids,
+                        reactions=reactions_by_message.get(message.id, []),
+                    ),
+                    matched_in="original" if original_match else "translation",
+                    snippet=_search_snippet(matched_text, q.strip()),
+                )
+            )
+
+        if len(visible_items) > limit:
+            has_more = True
+            break
+
+        if not candidate_has_more:
+            has_more = False
+            break
+
+        last_candidate = batch_candidates[-1]
+        current_before_created_at = last_candidate.created_at
+        current_before_id = last_candidate.id
+
+    page = visible_items[:limit]
+    last = page[-1].message if page else None
+    return MessageSearchResponse(
+        items=page,
+        has_more=has_more,
+        next_before_created_at=last.created_at if has_more and last else None,
+        next_before_id=last.id if has_more and last else None,
+    )
+
+
+@router.get(
+    "/saved-messages",
+    response_model=SavedMessagesResponse,
+)
+async def list_saved_messages(
+    limit: int = Query(default=20, ge=1, le=100),
+    before_created_at: datetime | None = None,
+    before_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SavedMessagesResponse:
+    """List bookmark history ordered by bookmark creation time."""
+    service = ChatService(db)
+    try:
+        rows = await service.list_saved_messages(
+            user_id=current_user.id,
+            limit=limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
+    except ConversationValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+
+    messages = [msg for msg, _ in page_rows]
+    saved_entries = [saved for _, saved in page_rows]
+    message_ids = [msg.id for msg in messages]
+
+    conversations_by_message = {msg.id: msg.conversation_id for msg in messages}
+    translations_by_msg: dict[str, list[TranslationSummary]] = {}
+    for conv_id in set(conversations_by_message.values()):
+        c_msg_ids = [m.id for m in messages if m.conversation_id == conv_id]
+        t = await _translations_by_message(
+            db,
+            c_msg_ids,
+            reader_id=current_user.id,
+            conversation_id=conv_id,
+        )
+        translations_by_msg.update(t)
+
+    attachments = await service.get_attachments_by_message(message_ids=message_ids)
+    reactions_by_message = await service.reactions_by_message(message_ids=message_ids)
+
+    items = [
+        _message_response(
+            message,
+            translations=translations_by_msg.get(message.id, []),
+            attachment=attachments.get(message.id),
+            is_saved=True,
+            reactions=reactions_by_message.get(message.id, []),
+        )
+        for message in messages
+    ]
+
+    last_saved = saved_entries[-1] if saved_entries else None
+    return SavedMessagesResponse(
+        items=items,
+        has_more=has_more,
+        next_before_created_at=last_saved.created_at if has_more and last_saved else None,
+        next_before_id=last_saved.id if has_more and last_saved else None,
+    )
+
+
+@router.put(
+    "/conversations/{conversation_id}/messages/{message_id}/saved",
+    response_model=SavedMessageStateResponse,
+)
+async def save_message(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SavedMessageStateResponse:
+    service = ChatService(db)
+    try:
+        is_saved = await service.set_saved_message(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            is_saved=True,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+    return SavedMessageStateResponse(message_id=message_id, is_saved=is_saved)
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}/saved",
+    response_model=SavedMessageStateResponse,
+)
+async def unsave_message(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SavedMessageStateResponse:
+    service = ChatService(db)
+    try:
+        is_saved = await service.set_saved_message(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            is_saved=False,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+    return SavedMessageStateResponse(message_id=message_id, is_saved=is_saved)
+
+
+def _reaction_summaries(rows: list[tuple[str, int, list[str]]]) -> list[MessageReactionSummary]:
+    return [MessageReactionSummary(emoji=emoji, count=count, user_ids=user_ids) for emoji, count, user_ids in rows]
+
+
+@router.put(
+    "/conversations/{conversation_id}/messages/{message_id}/reactions",
+    response_model=ReactionStateResponse,
+)
+async def add_message_reaction(
+    conversation_id: str,
+    message_id: str,
+    payload: ReactionUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> ReactionStateResponse:
+    service = ChatService(db)
+    try:
+        reactions = await service.update_reaction(
+            user_id=current_user.id, conversation_id=conversation_id,
+            message_id=message_id, emoji=payload.emoji, add=True,
+        )
+        member_ids = await service.get_conversation_member_ids(conversation_id=conversation_id)
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+    response = ReactionStateResponse(message_id=message_id, reactions=_reaction_summaries(reactions))
+    await manager.send_to_users(
+        member_ids,
+        MessageReactionsUpdatedEvent(
+            conversation_id=conversation_id, message_id=message_id, reactions=response.reactions
+        ).model_dump(mode="json"),
+    )
+    return response
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}/reactions",
+    response_model=ReactionStateResponse,
+)
+async def remove_message_reaction(
+    conversation_id: str,
+    message_id: str,
+    payload: ReactionUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> ReactionStateResponse:
+    service = ChatService(db)
+    try:
+        reactions = await service.update_reaction(
+            user_id=current_user.id, conversation_id=conversation_id,
+            message_id=message_id, emoji=payload.emoji, add=False,
+        )
+        member_ids = await service.get_conversation_member_ids(conversation_id=conversation_id)
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+    response = ReactionStateResponse(message_id=message_id, reactions=_reaction_summaries(reactions))
+    await manager.send_to_users(
+        member_ids,
+        MessageReactionsUpdatedEvent(
+            conversation_id=conversation_id, message_id=message_id, reactions=response.reactions
+        ).model_dump(mode="json"),
+    )
+    return response
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/translate",
+    response_model=TranslationRetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_message_translation(
+    conversation_id: str,
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> TranslationRetryResponse:
+    """Request a fresh translation for the calling member only.
+
+    This is an explicit retry, not an implicit cache refresh.  The scheduler
+    bypasses its phrase cache and updates the caller's persisted language /
+    standing / tone bucket in place before sending the normal realtime event.
+    """
+    service = ChatService(db)
+    try:
+        message = await service.get_message_for_member(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+        if message.deleted_at is not None:
+            raise MessageAlreadyDeletedError(message_id)
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+
+    schedule_translation_retry(
+        message=message,
+        reader_id=current_user.id,
+        publisher=manager,
+    )
+    return TranslationRetryResponse(message_id=message_id)
 
 
 @router.post(
@@ -1870,6 +2377,168 @@ def _message_error(exc: ChatServiceError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
+def _call_response(call: CallSession, join: CallJoin | None = None) -> CallResponse:
+    """Serialize public call state without leaking a provider credential."""
+    return CallResponse(
+        call_id=call.id,
+        conversation_id=call.conversation_id,
+        caller_id=call.caller_id,
+        callee_id=call.callee_id,
+        call_type=call.call_type,
+        status=call.status,
+        room_url=join.room_url if join else None,
+        join_token=join.join_token if join else None,
+        created_at=call.created_at,
+        answered_at=call.answered_at,
+        ended_at=call.ended_at,
+    )
+
+
+def _call_event(call: CallSession, event_type: str) -> dict[str, object]:
+    """Build the safe WebSocket notification consumed by the call UI."""
+    return CallEvent(
+        type=event_type,  # type: ignore[arg-type]
+        call_id=call.id,
+        conversation_id=call.conversation_id,
+        caller_id=call.caller_id,
+        callee_id=call.callee_id,
+        call_type=call.call_type,
+        status=call.status,
+    ).model_dump(mode="json")
+
+
+def _call_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, CallNotFoundError | ConversationNotFoundError):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, ConversationMembershipError | DirectMessagingBlockedError):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if isinstance(exc, RTCProviderUnavailableError):
+        return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+@router.post(
+    "/conversations/{conversation_id}/calls",
+    response_model=CallResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_conversation_call(
+    conversation_id: str,
+    payload: CallStartRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> CallResponse:
+    """Begin a direct call and notify only the authenticated callee."""
+    try:
+        provider = get_rtc_provider()
+        service = CallService(db, provider)
+        join = await service.start_call(
+            caller_id=current_user.id,
+            conversation_id=conversation_id,
+            call_type=payload.call_type,
+        )
+    except (
+        CallNotFoundError,
+        CallStateError,
+        ConversationNotFoundError,
+        ConversationMembershipError,
+        DirectMessagingBlockedError,
+        RTCProviderUnavailableError,
+    ) as exc:
+        raise _call_error(exc) from exc
+
+    await manager.send_to_user(join.session.callee_id, _call_event(join.session, "call_incoming"))
+    return _call_response(join.session)
+
+
+@router.post("/calls/{call_id}/accept", response_model=CallResponse)
+async def accept_incoming_call(
+    call_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> CallResponse:
+    """Accept a ringing call and issue the callee's short-lived join token."""
+    try:
+        provider = get_rtc_provider()
+        service = CallService(db, provider)
+        join = await service.accept_call(call_id=call_id, user_id=current_user.id)
+    except (CallNotFoundError, CallStateError, RTCProviderUnavailableError) as exc:
+        # A failed token issue transitions the durable call row to `failed`.
+        # Tell the caller immediately instead of leaving their ring UI stuck.
+        if isinstance(exc, RTCProviderUnavailableError):
+            try:
+                service = CallService(db)
+                failed_call = await service.get_call(call_id=call_id, user_id=current_user.id)
+                await manager.send_to_user(failed_call.caller_id, _call_event(failed_call, "call_failed"))
+            except Exception:
+                pass
+        raise _call_error(exc) from exc
+
+    await manager.send_to_user(join.session.caller_id, _call_event(join.session, "call_accepted"))
+    return _call_response(join.session, join)
+
+
+@router.get("/calls/{call_id}/join", response_model=CallResponse)
+async def join_accepted_call(
+    call_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CallResponse:
+    """Issue this authenticated participant's Daily token after acceptance."""
+    try:
+        provider = get_rtc_provider()
+        service = CallService(db, provider)
+        join = await service.join_call(call_id=call_id, user_id=current_user.id)
+    except (CallNotFoundError, CallStateError, RTCProviderUnavailableError) as exc:
+        raise _call_error(exc) from exc
+    return _call_response(join.session, join)
+
+
+@router.post("/calls/{call_id}/reject", response_model=CallResponse)
+async def reject_incoming_call(
+    call_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> CallResponse:
+    """Reject a ringing call and notify its caller."""
+    try:
+        try:
+            provider = get_rtc_provider()
+        except RTCProviderUnavailableError:
+            provider = None
+        service = CallService(db, provider)
+        call = await service.reject_call(call_id=call_id, user_id=current_user.id)
+    except (CallNotFoundError, CallStateError) as exc:
+        raise _call_error(exc) from exc
+    await manager.send_to_user(call.caller_id, _call_event(call, "call_rejected"))
+    return _call_response(call)
+
+
+@router.post("/calls/{call_id}/end", response_model=CallResponse)
+async def end_active_call(
+    call_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> CallResponse:
+    """End an active/ringing call for both participants."""
+    try:
+        try:
+            provider = get_rtc_provider()
+        except RTCProviderUnavailableError:
+            provider = None
+        service = CallService(db, provider)
+        call = await service.end_call(call_id=call_id, user_id=current_user.id)
+    except CallNotFoundError as exc:
+        raise _call_error(exc) from exc
+    other_id = call.callee_id if current_user.id == call.caller_id else call.caller_id
+    await manager.send_to_user(other_id, _call_event(call, "call_ended"))
+    return _call_response(call)
+
+
 @router.post(
     "/conversations/{conversation_id}/read",
     response_model=ReadReceiptResponse,
@@ -1897,14 +2566,16 @@ async def mark_conversation_read(
     except ChatServiceError as exc:
         raise _message_error(exc) from exc
 
-    await manager.send_to_users(
-        tuple(member_id for member_id in member_ids if member_id != current_user.id),
-        MessageReadEvent(
-            conversation_id=conversation_id,
-            user_id=current_user.id,
-            read_at=read_at,
-        ).model_dump(mode="json"),
-    )
+    reader_settings = await get_or_create_user_settings(db, current_user.id)
+    if reader_settings.read_receipts:
+        await manager.send_to_users(
+            tuple(member_id for member_id in member_ids if member_id != current_user.id),
+            MessageReadEvent(
+                conversation_id=conversation_id,
+                user_id=current_user.id,
+                read_at=read_at,
+            ).model_dump(mode="json"),
+        )
     return ReadReceiptResponse()
 
 
@@ -2063,7 +2734,7 @@ async def submit_translation_edit(
     """
     service = ChatService(db)
     try:
-        edit, translation = await service.submit_translation_edit(
+        edit, translation, message = await service.submit_translation_edit(
             user_id=current_user.id,
             translation_id=translation_id,
             edited_text=payload.edited_text,
@@ -2094,6 +2765,7 @@ async def submit_translation_edit(
     schedule_correction_record(
         machine_text=translation.translated_text,
         human_text=edit.edited_text,
+        original_text=message.original_text,
         source_language=profile.source_language,
         target_language=translation.target_language,
         domain=profile.domain,
@@ -2155,15 +2827,18 @@ async def _translations_by_message(
     if not message_ids:
         return {}
 
-    # Ordered so that step three of the fallback ladder — "any translation into
-    # that language" — resolves to the oldest, and two consecutive reads of the
-    # same history cannot disagree.
+    # Ordered newest first so the latest translation candidate (from retry/Translate Again)
+    # is picked by select_for_reader.
     candidates = list(
         (
             await db.scalars(
                 select(TranslationResult)
                 .where(TranslationResult.message_id.in_(message_ids))
-                .order_by(TranslationResult.created_at, TranslationResult.id)
+                .order_by(
+                    TranslationResult.version.desc(),
+                    TranslationResult.created_at.desc(),
+                    TranslationResult.id.desc(),
+                )
             )
         ).all()
     )
@@ -2180,6 +2855,7 @@ async def _translations_by_message(
         ),
         "",
     )
+    reader_settings = await get_or_create_user_settings(db, reader_id)
     # Sorted so that a language read by several members always resolves through
     # the same one of them, however the database happened to return the rows.
     readers_by_language: dict[str, str] = {}
@@ -2202,6 +2878,7 @@ async def _translations_by_message(
                 message_rows,
                 target_language=language,
                 honorific_profile=standing_for(language),
+                translation_tone=reader_settings.translation_tone,
             )
             if chosen is not None:
                 rows.append(chosen)
@@ -2239,6 +2916,7 @@ async def _translations_by_message(
                 translation_id=row.id,
                 target_language=row.target_language,
                 honorific_profile=row.honorific_profile,
+                translation_tone=row.translation_tone,
                 translated_text=row.translated_text,
                 model=row.model,
                 latency_ms=row.latency_ms,

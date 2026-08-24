@@ -33,6 +33,7 @@ class HasBucket(Protocol):
 
     target_language: str
     honorific_profile: str
+    translation_tone: str
 
 
 async def resolve_profiles(
@@ -122,6 +123,7 @@ def select_for_reader(
     *,
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
 ) -> HasBucket | None:
     """Pick the translation a reader in this bucket should be shown.
 
@@ -155,12 +157,18 @@ def select_for_reader(
     if not same_language:
         return None
 
-    for row in same_language:
-        if row.honorific_profile == honorific_profile:
-            return row
-
-    for row in same_language:
-        if row.honorific_profile == DEFAULT_HONORIFIC_PROFILE:
-            return row
+    # Exact style first.  Pre-tone historical rows are natural, so changing a
+    # preference must still leave those messages readable through the lower
+    # natural fallback rather than making a thread appear untranslated.
+    for tone in (translation_tone, "natural"):
+        for row in same_language:
+            if row.honorific_profile == honorific_profile and getattr(row, "translation_tone", "natural") == tone:
+                return row
+        for row in same_language:
+            if row.honorific_profile == DEFAULT_HONORIFIC_PROFILE and getattr(row, "translation_tone", "natural") == tone:
+                return row
+        for row in same_language:
+            if getattr(row, "translation_tone", "natural") == tone:
+                return row
 
     return same_language[0]

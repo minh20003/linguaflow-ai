@@ -147,6 +147,124 @@ async def test_fallback_rate_counts_outcomes_that_produce_no_translation(
 
 
 @pytest.mark.asyncio
+async def test_passthrough_attempts_are_excluded_from_pairs_and_models_only(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """A passthrough is the bucket where the reader's own language matched the
+    message, so no model and no fallback API ever ran (`route_after_detect`).
+    That is not a translation that happened to be free — none was attempted —
+    so it must not appear as a `"vi->vi"` row with an empty `models_served`
+    bucket, and must not pull the headline latency down for work nobody did.
+
+    It still belongs in `total`, `outcomes` and `fallback_rate`: that
+    denominator is the entire reason `translation_attempts` records every
+    no-translation exit rather than only the ones that produced a translation
+    (ADR-16), and excluding it there would be overriding that decision, not
+    applying it."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await add_message(
+        test_db, conversation_id=conversation.id, sender_id=test_user.id
+    )
+
+    await add_attempt(test_db, message_id=message.id, minute=0, outcome="secondary")
+    await add_attempt(
+        test_db,
+        message_id=message.id,
+        minute=1,
+        outcome="passthrough",
+        target_language="vi",
+        source_language_declared="vi",
+        source_language_detected="vi",
+        model_served="",
+        input_tokens=0,
+        output_tokens=0,
+        total_ms=0,
+    )
+
+    summary = await summarize_attempts(test_db)
+
+    assert summary.total == 2
+    assert summary.outcomes == {"secondary": 1, "passthrough": 1}
+    assert summary.fallback_rate == 0.5
+    assert "vi->vi" not in summary.language_pairs
+    assert list(summary.language_pairs) == ["vi->en"]
+    assert "(none)" not in summary.models_served
+    # The passthrough's 0ms must not enter the latency figures either — it
+    # measures nothing, since no model was ever called.
+    assert summary.total_ms_p50 == 500.0
+
+
+@pytest.mark.asyncio
+async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """The exclusion above is keyed on the languages matching, not on
+    `outcome == "passthrough"` — a same-language bucket that timed out or
+    errored before the graph reached its routing decision is exactly as
+    uninformative in `language_pairs` as an ordinary passthrough, and the
+    outcome recorded for it is incidental to that."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await add_message(
+        test_db, conversation_id=conversation.id, sender_id=test_user.id
+    )
+
+    await add_attempt(
+        test_db,
+        message_id=message.id,
+        minute=0,
+        outcome="timeout",
+        target_language="vi",
+        source_language_declared="vi",
+        source_language_detected=None,
+        detect_method="",
+        model_served="",
+    )
+
+    summary = await summarize_attempts(test_db)
+
+    assert summary.total == 1
+    assert summary.outcomes == {"timeout": 1}
+    assert summary.language_pairs == {}
+    assert summary.models_served == {}
+
+
+@pytest.mark.asyncio
+async def test_a_different_language_failure_with_no_model_stays_in_pairs_but_not_models(
+    test_db, test_user, test_user_two, conversation_factory
+):
+    """A timeout on a genuine `en->vi` attempt spent real time trying, so it
+    still belongs in `language_pairs` — unlike the same-language case above,
+    nothing here says the attempt was pointless. `models_served` is narrower
+    still: nothing captured which model was mid-flight when it timed out, so
+    there is no model to credit or blame, and no `"(none)"` bucket to stand in
+    for one."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    message = await add_message(
+        test_db, conversation_id=conversation.id, sender_id=test_user.id
+    )
+
+    await add_attempt(
+        test_db,
+        message_id=message.id,
+        minute=0,
+        outcome="timeout",
+        target_language="vi",
+        source_language_declared="en",
+        source_language_detected=None,
+        detect_method="",
+        model_served="",
+        total_ms=4000,
+    )
+
+    summary = await summarize_attempts(test_db)
+
+    assert summary.total == 1
+    assert list(summary.language_pairs) == ["en->vi"]
+    assert summary.language_pairs["en->vi"].count == 1
+    assert summary.models_served == {}
+
+
+@pytest.mark.asyncio
 async def test_language_pair_uses_the_detected_source(
     test_db, test_user, test_user_two, conversation_factory
 ):

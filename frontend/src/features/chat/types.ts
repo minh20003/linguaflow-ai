@@ -69,6 +69,7 @@ export interface Message {
   replyTo?: MessageReply;
   forwardedFromMessageId?: string;
   reactions?: MessageReaction[];
+  isSaved?: boolean;
   attachments?: MessageAttachment[];
   mentions?: MessageMention[];
   isAssistant?: boolean;
@@ -91,6 +92,8 @@ export interface Conversation {
   typingUser?: string;
   isMuted?: boolean;
   isPinned?: boolean;
+  pinnedAt?: string | null;
+  createdAt?: string | null;
   description?: string;
   createdBy?: string;
   currentUserRole?: 'owner' | 'admin' | 'member';
@@ -100,6 +103,7 @@ export interface AppSettings {
   preferredLanguage: LanguageCode;
   interfaceLanguage: LanguageCode;
   autoTranslate: boolean;
+  showOriginalByDefault: boolean;
   translationTone: 'natural' | 'formal' | 'casual' | 'friendly';
   theme: 'light' | 'dark';
   soundEnabled: boolean;

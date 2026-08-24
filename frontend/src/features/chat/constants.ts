@@ -11,12 +11,17 @@ export const CHAT_LANGUAGES: LanguageOption[] = [
   { code: "de", name: "German", nativeName: "Deutsch", flag: "🇩🇪" },
   { code: "th", name: "Thai", nativeName: "ภาษาไทย", flag: "🇹🇭" },
   { code: "id", name: "Indonesian", nativeName: "Bahasa Indonesia", flag: "🇮🇩" },
+  { code: "pt", name: "Portuguese", nativeName: "Português", flag: "🇵🇹" },
+  { code: "ru", name: "Russian", nativeName: "Русский", flag: "🇷🇺" },
+  { code: "ar", name: "Arabic", nativeName: "العربية", flag: "🇸🇦" },
+  { code: "hi", name: "Hindi", nativeName: "हिन्दी", flag: "🇮🇳" },
 ];
 
 export const DEFAULT_CHAT_SETTINGS: AppSettings = {
   preferredLanguage: "en",
   interfaceLanguage: "en",
   autoTranslate: true,
+  showOriginalByDefault: false,
   translationTone: "natural",
   theme: "light",
   soundEnabled: true,
@@ -24,3 +29,5 @@ export const DEFAULT_CHAT_SETTINGS: AppSettings = {
   aiSmartAssistance: true,
   offlineModeSimulation: false,
 };
+
+export const DEFAULT_CALL_RING_TIMEOUT_SECONDS = 45;

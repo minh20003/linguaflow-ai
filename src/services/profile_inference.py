@@ -39,11 +39,14 @@ from src.agents.guardrails import sanitize_context_message
 from src.agents.prompts import INFER_CONVERSATION_PROFILE_PROMPT
 from src.database import get_async_session_maker
 from src.database.models import (
+    GLOSSARY_AUDIENCES,
+    GLOSSARY_DOMAINS,
     HONORIFIC_PROFILES,
     ConversationProfile,
     Message,
     ParticipantProfile,
 )
+from src.services.glossary import normalize_scope
 from src.services.llm import extract_text, get_llm
 
 logger = logging.getLogger(__name__)
@@ -224,7 +227,9 @@ async def _ask_model(llm_factory: Callable[[], Any], transcript: str) -> str:
             {
                 "role": "user",
                 "content": INFER_CONVERSATION_PROFILE_PROMPT.format(
-                    transcript=transcript
+                    transcript=transcript,
+                    domains=", ".join(f"`{value}`" for value in GLOSSARY_DOMAINS),
+                    audiences=", ".join(f"`{value}`" for value in GLOSSARY_AUDIENCES),
                 ),
             }
         ]
@@ -288,18 +293,11 @@ def _parse_inference(
         return None
 
     return {
-        "domain": _short_text(payload.get("domain")),
-        "audience": _short_text(payload.get("audience")),
+        "domain": normalize_scope(payload.get("domain"), GLOSSARY_DOMAINS),
+        "audience": normalize_scope(payload.get("audience"), GLOSSARY_AUDIENCES),
         "rationale": str(payload.get("rationale") or "")[:1000],
         "standings": standings,
     }
-
-
-def _short_text(value: Any) -> str:
-    """Coerce a model-supplied label to a string the column can hold."""
-    if not isinstance(value, str):
-        return ""
-    return value.strip()[:50]
 
 
 async def _apply(

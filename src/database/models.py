@@ -51,6 +51,30 @@ EMBEDDING_DIM = 768
 HONORIFIC_PROFILES = ("senior", "peer", "junior", "client")
 DEFAULT_HONORIFIC_PROFILE = "peer"
 
+# The scope a glossary entry is filed under, and the same words the background
+# profile inference must answer with.
+#
+# A closed vocabulary rather than free text, and the reason is mechanical: the
+# lookup compares an entry's scope to a conversation's *by equality*
+# (`_scope_rank` in `src/services/glossary.py`), so an entry filed under
+# "client" and a conversation profiled as "an external client" never meet. Both
+# ends were free text until 22/08 and the two halves of the feature could
+# therefore describe the same conversation in words that do not match — the
+# audience glossary looked implemented and did nothing outside the evaluation
+# harness, which supplies the scope directly (ADR-24, ADR-26).
+#
+# Not enforced by a CheckConstraint: `""` is a real value meaning "applies
+# everywhere", and an administrator may still file a term under a word of their
+# own for a scope this list has not learned about yet. The list is what the
+# model is held to and what the admin screen offers first.
+GLOSSARY_AUDIENCES = ("internal", "client")
+GLOSSARY_DOMAINS = ("engineering", "commercial", "support")
+
+# Translation style is an explicit part of a reader's rendering bucket.  Keep
+# this vocabulary here with the persistence constraints so API validation,
+# fan-out and rows cannot silently drift apart.
+TRANSLATION_TONES = ("natural", "formal", "casual", "friendly")
+
 # A glossary entry is never deleted, only retired: a translation delivered last
 # month was shaped by a term that was active then, and dropping the row would
 # erase the only explanation for the wording a reader is looking at.
@@ -107,6 +131,7 @@ class User(Base):
         String(100),
         nullable=True,
     )
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
@@ -329,6 +354,108 @@ class ConversationMember(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # These are deliberately membership state: pinning or muting a thread must
+    # never affect what another member sees.
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_muted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+
+class UserSettings(Base):
+    """Optional per-user UI and translation preferences, created lazily."""
+
+    __tablename__ = "user_settings"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("translation_tone", TRANSLATION_TONES),
+            name="ck_user_settings_translation_tone",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    auto_translate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    show_original_by_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
+    )
+    sound_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    read_receipts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    ai_smart_assistance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+
+
+class BlockedUser(Base):
+    """A directional social block between two accounts."""
+
+    __tablename__ = "blocked_users"
+    __table_args__ = (
+        CheckConstraint("blocker_id <> blocked_id", name="ck_blocked_users_not_self"),
+        Index("ix_blocked_users_blocked_id", "blocked_id"),
+    )
+
+    blocker_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    blocked_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CallSession(Base):
+    """Durable state for a normal direct audio/video call.
+
+    Provider join credentials are intentionally absent.  They are short lived
+    and issued on demand only to a participant after application authorization.
+    """
+
+    __tablename__ = "call_sessions"
+    __table_args__ = (
+        CheckConstraint("call_type IN ('voice', 'video')", name="ck_call_sessions_call_type"),
+        CheckConstraint(
+            "status IN ('ringing', 'accepted', 'rejected', 'ended', 'missed', 'failed')",
+            name="ck_call_sessions_status",
+        ),
+        CheckConstraint("caller_id <> callee_id", name="ck_call_sessions_not_self"),
+        Index("ix_call_sessions_conversation_created", "conversation_id", "created_at"),
+        Index("ix_call_sessions_caller_created", "caller_id", "created_at"),
+        Index("ix_call_sessions_callee_created", "callee_id", "created_at"),
+        Index("ix_call_sessions_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    callee_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    call_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_room_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The provider returns the canonical room URL when the room is created.
+    # It can contain a custom Daily domain, so reconstructing it from the room
+    # name would send participants to the wrong place.
+    provider_room_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Message(Base):
@@ -402,6 +529,49 @@ class Message(Base):
     )
 
 
+class SavedMessage(Base):
+    """A caller-specific bookmark for a durable message."""
+
+    __tablename__ = "saved_messages"
+    __table_args__ = (
+        UniqueConstraint("user_id", "message_id", name="uq_saved_messages_user_message"),
+        Index("ix_saved_messages_user_created_id", "user_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MessageReaction(Base):
+    """One explicit emoji a member attached to a message."""
+
+    __tablename__ = "message_reactions"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", "emoji", name="uq_message_reactions_message_user_emoji"),
+        Index("ix_message_reactions_message_id", "message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    message_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Attachment(Base):
     """A file uploaded to a conversation, optionally carried by a message.
 
@@ -466,17 +636,29 @@ class TranslationResult(Base):
 
     __tablename__ = "translation_results"
     __table_args__ = (
-        # Enforces the shared-row rule above in the schema rather than in hope,
-        # and makes the background translation task idempotent under retry.
+        CheckConstraint(
+            _in_clause("honorific_profile", HONORIFIC_PROFILES),
+            name="ck_translation_results_honorific_profile",
+        ),
+        CheckConstraint(
+            _in_clause("translation_tone", TRANSLATION_TONES),
+            name="ck_translation_results_translation_tone",
+        ),
         UniqueConstraint(
             "message_id",
             "target_language",
             "honorific_profile",
-            name="uq_translation_results_message_target_profile",
+            "translation_tone",
+            "version",
+            name="uq_translation_results_bucket_version",
         ),
-        CheckConstraint(
-            _in_clause("honorific_profile", HONORIFIC_PROFILES),
-            name="ck_translation_results_honorific_profile",
+        Index(
+            "ix_translation_results_lookup",
+            "message_id",
+            "target_language",
+            "honorific_profile",
+            "translation_tone",
+            "version",
         ),
         Index("ix_translation_results_message_id", "message_id"),
     )
@@ -498,6 +680,12 @@ class TranslationResult(Base):
         String(20),
         nullable=False,
         default=DEFAULT_HONORIFIC_PROFILE,
+    )
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     translated_text: Mapped[str] = mapped_column(Text, nullable=False)
     # Empty when tier 3 of the fallback chain returned the original untranslated
@@ -665,6 +853,9 @@ class TranslationAttempt(Base):
         String(20),
         nullable=False,
         default=DEFAULT_HONORIFIC_PROFILE,
+    )
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
     )
     # What the sender's profile claimed, known before the run starts.
     source_language_declared: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -1133,6 +1324,13 @@ class CorrectionLog(Base):
     )
     # Prepared here, at the one moment the surrounding text is in hand, rather
     # than in the miner where it would need the conversation back again.
+    # Anonymised the same way as `anonymized_snippet` below (names, links and
+    # long digit runs stripped), but drawn from `Message.original_text` rather
+    # than the machine's rendering — the sender's own wording, in whichever
+    # language they wrote it, rather than the reader's reading language. An
+    # admin judging a proposed term otherwise sees only one side of the
+    # translation it came from (24/08).
+    original_snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
     anonymized_snippet: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     embedding: Mapped[list[float] | None] = mapped_column(

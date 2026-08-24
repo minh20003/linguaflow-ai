@@ -24,6 +24,8 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
 
 
+
+
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
 
@@ -41,18 +43,11 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
-    # Public frontend routed through this project's Cloudflare Tunnel. Keeping
-    # it separate from CORS_ORIGINS lets a local development .env retain its
-    # localhost values without breaking the deployed browser client.
-    public_frontend_origin: str = "https://agent.dquangminh2003.id.vn"
-    # Matched against the Origin header when the exact list above does not.
-    # Vercel gives every pull request its own hostname, so a preview build can
-    # only reach the API through a pattern — for example
-    # `https://linguaflow-[a-z0-9-]+\.vercel\.app`. Empty disables it.
+    public_frontend_origin: str = ""
     cors_origin_regex: str = ""
 
     # LLM
-    llm_provider: Literal["groq", "deepseek", "gemini", "openai"] = "groq"
+    llm_provider: Literal["groq", "deepseek", "gemini", "openai", "mistral"] = "groq"
     llm_model: str = ""  # Empty = use the provider default (see services/llm.py)
     # Translation is not a creative task — a low temperature keeps the model on
     # the format rules in TRANSLATE_SYSTEM_PROMPT instead of paraphrasing.
@@ -62,11 +57,30 @@ class Settings(BaseSettings):
     # the model explaining itself, which validate_output rejects anyway.
     llm_max_tokens: int = Field(default=1024, ge=64, le=8192)
 
+    # Who scores the evaluation runs, and with which model. Both empty means
+    # "the same provider that did the translating", which the report then flags
+    # as self-judging (ADR-17). They live in configuration rather than only as
+    # command-line flags because the judge is what a score is comparable
+    # against: two runs judged by different models are not the same measurement,
+    # and a flag typed differently on two days is the easiest way to end up with
+    # exactly that without noticing.
+    llm_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    judge_model: str = ""  # Empty = the judge provider's default model
+
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
     deepseek_api_key: str = ""
-    google_api_key: str = ""
+    # Accepts either name. Google's own documentation and SDK use
+    # `GEMINI_API_KEY`, so a .env written from those docs was read as no key at
+    # all — and `embed` reports every failure as None, so the visible effect was
+    # a quota error from the *old* key rather than anything pointing at the new
+    # one. Same trap, same fix, as LANGFUSE_HOST below.
+    google_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    )
     openai_api_key: str = ""
+    mistral_api_key: str = ""
 
     # Google Identity Services authentication. This is an OAuth client ID, not
     # a secret; the browser needs the same value to request an ID token.
@@ -93,16 +107,39 @@ class Settings(BaseSettings):
     # developers with different .env files would otherwise describe two
     # different schemas.
     embedding_model: str = ""
+    # Where embedding goes when the configured provider runs out of quota.
+    # Empty disables it; `local` embeds in-process, needs no key and cannot be
+    # rate limited, so a translation never stops because an embedding budget
+    # did — and the reader is never told, because there is nothing they could
+    # do about it (ADR-25).
+    #
+    # On by default: an exhausted quota should not become an outage, and the
+    # two local packages now ship in requirements.txt for exactly this. The
+    # cost is real — they pull torch, roughly half a gigabyte, into the image.
+    # `embed_with_model` declines to fall back inside a test run, because a
+    # test that quietly loads a model that size is a test nobody can run twice.
+    embedding_fallback_provider: Literal["", "local"] = "local"
 
-    # Both default off, following `fallback_translator_enabled`. Each adds an
-    # embedding call to the request path, and NFR-01 is already the tightest
-    # figure in the project — turn them on against measurements, not hopes.
-    semantic_glossary_enabled: bool = False
+    # Each adds an embedding call to the request path, and NFR-01 is the
+    # tightest figure in the project, so both were turned on against
+    # measurements rather than hopes — and only one of them earned it.
+    # Semantic glossary matching is on; semantic *context* retrieval is not.
+    # They were measured separately and the answers differ: retrieval could not
+    # find the line that mattered often enough to pay for, while term matching
+    # separates cleanly on the model named below (ADR-26, ADR-27).
+    semantic_glossary_enabled: bool = True
     rag_context_enabled: bool = False
-    # Cosine similarity a glossary term must reach to be injected without an
-    # exact match. Conservative on purpose: a wrongly matched term is *forced*
-    # into the translation, which is worse than missing one.
-    glossary_similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    # Override for the per-model table in `services/embeddings.py`. Zero means
+    # "use the table", which is the normal setting: a cosine threshold belongs
+    # to an embedding space, so one number cannot serve several models, and the
+    # provider now changes by itself when a quota runs out. Set this only to
+    # measure a new model without editing code.
+    #
+    # Every threshold in that table is set for precision over recall. A term
+    # below the line is absent from the glossary and the model translates it
+    # itself; a term above it is *forced* into the output by the prompt. The
+    # two mistakes do not cost the same.
+    glossary_similarity_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     rag_top_k: int = Field(default=3, ge=1, le=10)
 
     # Secondary translation provider tried when the LLM path fails (ADR-07).
@@ -110,7 +147,30 @@ class Settings(BaseSettings):
     fallback_translator_enabled: bool = True
     fallback_translator_timeout_seconds: int = Field(default=5, ge=1, le=30)
 
-    # Observability — Langfuse (F-03.4). Empty keys disable tracing.
+    # Ordinary direct RTC calls.  The Daily server API key never reaches the
+    # frontend; the browser receives only a short-lived meeting token.
+    rtc_provider: Literal["daily", "disabled"] = "daily"
+    daily_api_key: str = ""
+    daily_api_base: str = "https://api.daily.co/v1"
+    call_ring_timeout_seconds: int = Field(default=45, ge=10, le=300)
+    call_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
+    # Observability (F-03.4). Which backend receives the traces, or none.
+    #
+    # A switch rather than a hard-wired vendor because a trace backend is the
+    # one dependency whose failure mode is silence: it never breaks a
+    # translation, so the only way to tell a working exporter from a broken one
+    # is to be able to point the same flow at another and compare (ADR-29).
+    observability_provider: Literal["braintrust", "langfuse", "none"] = "braintrust"
+
+    # Braintrust. An empty key disables tracing whatever the provider says.
+    braintrust_api_key: str = ""
+    # The project traces are filed under. Braintrust creates it on first use, so
+    # a typo here does not fail — it opens a second, empty project instead.
+    braintrust_project: str = "linguaflow"
+
+    # Langfuse, kept selectable after the move to Braintrust. Empty keys disable
+    # tracing.
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     # Accepts either env name. The Langfuse SDK itself reads LANGFUSE_BASE_URL,
@@ -243,6 +303,34 @@ class Settings(BaseSettings):
                     f"{generate}"
                 )
         return v
+
+    @model_validator(mode="after")
+    def _warn_unmeasured_embedding_model(self) -> "Settings":
+        """Say so when semantic matching is on for a model nobody has measured.
+
+        Not an error: the table in `services/embeddings.py` answers with a
+        threshold that admits almost nothing, so an unmeasured model degrades to
+        exact matching rather than to random terms. But silence would leave a
+        team believing a feature is working when it is deliberately inert.
+        """
+        if self.semantic_glossary_enabled and self.glossary_similarity_threshold == 0:
+            from src.services.embeddings import (  # noqa: PLC0415
+                DEFAULT_MODELS,
+                GLOSSARY_THRESHOLDS,
+            )
+
+            model = self.embedding_model or DEFAULT_MODELS.get(
+                self.embedding_provider, ""
+            )
+            if model not in GLOSSARY_THRESHOLDS:
+                logging.getLogger(__name__).warning(
+                    "SEMANTIC_GLOSSARY_ENABLED is on but %r has no measured "
+                    "threshold, so it will match almost nothing. Measure it and add "
+                    "a row to GLOSSARY_THRESHOLDS, or set "
+                    "GLOSSARY_SIMILARITY_THRESHOLD to override.",
+                    model,
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_production_and_email_config(self) -> "Settings":

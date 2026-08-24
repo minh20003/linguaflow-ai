@@ -37,7 +37,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentUser,
   onUpdateUser,
 }) => {
-  const language = settings.preferredLanguage;
+  // `preferredLanguage` controls message translation; labels must follow the
+  // separately persisted interface language selected by this account.
+  const language = settings.interfaceLanguage;
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
@@ -139,6 +141,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </select>
                   <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] pt-0.5">
                     {copy(language, 'Messages in other languages will automatically appear in your preferred language.')}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
+                    {copy(language, 'Interface Language')}
+                  </label>
+                  <select
+                    id="settings-interface-language-select"
+                    value={settings.interfaceLanguage}
+                    onChange={(e) => onUpdateSettings({ interfaceLanguage: e.target.value as LanguageCode })}
+                    className="w-full h-11 px-3 bg-[#F4F5F8] dark:bg-[#232630] text-sm text-[#1E2230] dark:text-[#F5F6FA] rounded-xl border border-transparent focus:border-[#2563EB]/40 focus:outline-none"
+                  >
+                    {CHAT_LANGUAGES.map((lang) => (
+                      <option key={lang.code} value={lang.code}>
+                        {lang.flag} {lang.name} — {lang.nativeName}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] pt-0.5">
+                    {copy(language, 'Controls, menus, and system messages use this language.')}
                   </p>
                 </div>
 

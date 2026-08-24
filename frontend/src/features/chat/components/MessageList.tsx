@@ -16,6 +16,7 @@ interface MessageListProps {
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
+  onSaveMessage: (messageId: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   onDownloadAttachment: (attachment: MessageAttachment) => void;
   onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
@@ -35,6 +36,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   onRateTranslation,
   onEditTranslation,
   onForward,
+  onSaveMessage,
   onDeleteMessage,
   onDownloadAttachment,
   onLoadAttachmentPreview,
@@ -124,6 +126,7 @@ export const MessageList: React.FC<MessageListProps> = ({
               onRateTranslation={onRateTranslation}
               onEditTranslation={onEditTranslation}
               onForward={onForward}
+              onSaveMessage={onSaveMessage}
               onDeleteMessage={onDeleteMessage}
               onDownloadAttachment={onDownloadAttachment}
               onLoadAttachmentPreview={onLoadAttachmentPreview}

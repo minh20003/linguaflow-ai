@@ -71,6 +71,36 @@ def test_an_answer_naming_an_unknown_standing_is_discarded_whole():
     assert _parse_inference("", {"U01": "u1"}) is None
 
 
+def test_a_scope_outside_the_closed_vocabulary_is_read_as_applying_everywhere():
+    """The glossary lookup compares scopes by equality, so a free-text phrase
+    files the conversation under a scope no entry is ever filed under. Empty is
+    the honest answer and it still leaves the standings, which are judged
+    separately and are the more valuable half."""
+    parsed = _parse_inference(
+        '{"domain": "contract negotiation", "audience": "an external client", '
+        '"participants": {"U01": "peer"}}',
+        {"U01": "u1"},
+    )
+
+    assert parsed is not None
+    assert (parsed["domain"], parsed["audience"]) == ("", "")
+    assert parsed["standings"] == {"u1": "peer"}
+
+
+def test_a_scope_is_accepted_whatever_case_the_model_answers_in():
+    """A model that answers `Client` means the same thing as one that answers
+    `client`, and losing the scope over a capital letter would be a silent
+    downgrade to the catch-all entries."""
+    parsed = _parse_inference(
+        '{"domain": " Engineering ", "audience": "Client", '
+        '"participants": {"U01": "peer"}}',
+        {"U01": "u1"},
+    )
+
+    assert parsed is not None
+    assert (parsed["domain"], parsed["audience"]) == ("engineering", "client")
+
+
 def test_an_invented_speaker_is_ignored_without_losing_the_rest():
     """A model that hallucinates a U09 must not cost the standings it got right;
     there is simply no row to write for a speaker nobody spoke as."""
@@ -168,8 +198,8 @@ async def test_a_first_run_stores_the_subject_area_and_every_standing(
     await _infer(
         talkative.id,
         {
-            "domain": "software delivery",
-            "audience": "an external client",
+            "domain": "engineering",
+            "audience": "client",
             "participants": {"U01": "junior", "U02": "client"},
             "rationale": "One side reports progress, the other approves it.",
         },
@@ -182,10 +212,7 @@ async def test_a_first_run_stores_the_subject_area_and_every_standing(
         # hands back the instance this session loaded first, attributes and all.
         .execution_options(populate_existing=True)
     )
-    assert (profile.domain, profile.audience) == (
-        "software delivery",
-        "an external client",
-    )
+    assert (profile.domain, profile.audience) == ("engineering", "client")
     standings = {
         row.user_id: row.honorific_profile
         for row in (
@@ -206,8 +233,8 @@ async def test_a_conversation_locks_once_three_runs_agree(
 ):
     """The lock is the mechanism that bounds the cost, and it is permanent."""
     answer = {
-        "domain": "software delivery",
-        "audience": "an internal team",
+        "domain": "engineering",
+        "audience": "internal",
         "participants": {"U01": "peer", "U02": "peer"},
         "rationale": "Nobody defers to anybody.",
     }
@@ -241,8 +268,8 @@ async def test_one_participant_changing_category_resets_the_stability_counter(
     """Strict on purpose: locking means the conclusion has settled, and a
     conclusion that still moves for one person has not."""
     first = {
-        "domain": "software delivery",
-        "audience": "an internal team",
+        "domain": "engineering",
+        "audience": "internal",
         "participants": {"U01": "peer", "U02": "peer"},
         "rationale": "Nobody defers.",
     }
@@ -362,8 +389,8 @@ async def test_a_participant_who_goes_quiet_does_not_prevent_locking(
     Their stored standing is left alone, not overwritten and not deleted.
     """
     both = {
-        "domain": "software delivery",
-        "audience": "an internal team",
+        "domain": "engineering",
+        "audience": "internal",
         "participants": {"U01": "senior", "U02": "junior"},
         "rationale": "One reviews, the other reports.",
     }

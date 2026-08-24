@@ -26,11 +26,12 @@ interface ConversationDetailsDrawerProps {
   onClose: () => void;
   onToggleMute: (conversationId: string) => void;
   onTogglePin?: (conversationId: string) => void;
+  onLeaveGroup?: (conversationId: string) => void;
+  onDeleteGroup?: (conversationId: string) => void;
+  onBlockContact: (conversationId: string) => void;
   language: LanguageCode;
   attachments: MessageAttachment[];
   onDownloadAttachment: (attachment: MessageAttachment) => void;
-  onLeaveGroup?: (conversationId: string) => void;
-  onDeleteGroup?: (conversationId: string) => void;
   currentUserId: string;
   availableUsers: User[];
   onAddMembers?: (conversationId: string, userIds: string[]) => void;
@@ -48,11 +49,12 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   onClose,
   onToggleMute,
   onTogglePin,
+  onLeaveGroup,
+  onDeleteGroup,
+  onBlockContact,
   language,
   attachments,
   onDownloadAttachment,
-  onLeaveGroup,
-  onDeleteGroup,
   currentUserId,
   availableUsers,
   onAddMembers,
@@ -297,7 +299,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
             <span>{tx(language, 'Leave Group')}</span>
           </button>
         ) : (
-          <button className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
+          <button onClick={() => onBlockContact(conversation.id)} className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
             <ShieldAlert className="w-4 h-4" />
             <span>{tx(language, 'Block Contact')}</span>
           </button>

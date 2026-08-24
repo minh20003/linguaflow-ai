@@ -7,7 +7,61 @@ import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/sess
 import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/shared/api/account-api";
 import type { AppSettings, Conversation, Message, MessageAttachment, MessageMention, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
-import { addGroupMembers, ASSISTANT_AVATAR_URL, ASSISTANT_CONVERSATION_TITLE, createConversation, deleteGroup, deleteMessage, downloadAttachment, fetchAttachmentBlob, getAssistantConversation, getMe, getMessages, leaveGroup, listAttachments, listConversations, listUsers, markRead, removeGroupMember, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessageAttachment, toMessages, transferGroupOwnership, updateGroupDetails, updateGroupRole, uploadAttachment, type ApiAttachment, type ApiConversation, type ApiMessage } from "../api/chat-api";
+import {
+  acceptCall,
+  addGroupMembers,
+  addReaction,
+  ASSISTANT_AVATAR_URL,
+  ASSISTANT_CONVERSATION_TITLE,
+  blockContact,
+  compareConversations,
+  createConversation,
+  deleteGroup,
+  deleteMessage,
+  downloadAttachment,
+  endCall,
+  fetchAttachmentBlob,
+  getAssistantConversation,
+  getMe,
+  getMessages,
+  getUserSettings,
+  joinCall,
+  leaveConversation,
+  leaveGroup,
+  listAttachments,
+  listConversations,
+  listUsers,
+  markRead,
+  rejectCall,
+  removeGroupMember,
+  removeReaction,
+  retryTranslation,
+  saveMessage,
+  searchMessages,
+  startCall as startRtcCall,
+  submitTranslationEdit,
+  submitTranslationFeedback,
+  toChatUser,
+  toConversation,
+  toLanguageCode,
+  toMessage,
+  toMessageAttachment,
+  toMessages,
+  transferGroupOwnership,
+  unsaveMessage,
+  updateConversationPreferences,
+  updateGroupDetails,
+  updateGroupRole,
+  updateProfile,
+  updateUserSettings,
+  uploadAttachment,
+  type ApiAttachment,
+  type ApiCall,
+  type ApiConversation,
+  type ApiMessage,
+  type ApiMessageReaction,
+  type ApiUserSettings,
+} from "../api/chat-api";
 import { newClientMessageId, socketUrl } from "../api/chat-socket";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -17,10 +71,11 @@ import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
-import { CallModal } from "./CallModal";
+import { CallModal, type ActiveCall } from "./CallModal";
 import { ToastContainer } from "./ToastContainer";
 import { ForwardMessageModal } from "./ForwardMessageModal";
 import { PersonalCalendar } from "./PersonalCalendar";
+import type { ConversationSearchResult } from "./MessageSearchPanel";
 
 const EMPTY_USER: User = { id: "", email: "", name: "", username: "", avatar: "", nativeLanguage: "en", onlineStatus: "offline" };
 
@@ -47,6 +102,43 @@ function toAssistantConversation(item: ApiConversation, currentUserId: string): 
   };
 }
 
+function sortConversations(items: Conversation[]): Conversation[] {
+  return [...items].sort(compareConversations);
+}
+
+function toActiveCall(call: ApiCall, phase: ActiveCall["phase"]): ActiveCall {
+  return {
+    id: call.call_id,
+    conversationId: call.conversation_id,
+    callerId: call.caller_id,
+    calleeId: call.callee_id,
+    type: call.call_type,
+    phase,
+    roomUrl: call.room_url ?? undefined,
+    joinToken: call.join_token ?? undefined,
+  };
+}
+
+function persistedSettings(settings: ApiUserSettings): Pick<AppSettings, "autoTranslate" | "showOriginalByDefault" | "translationTone" | "soundEnabled" | "readReceipts" | "aiSmartAssistance"> {
+  return {
+    autoTranslate: settings.auto_translate,
+    showOriginalByDefault: settings.show_original_by_default,
+    translationTone: settings.translation_tone,
+    soundEnabled: settings.sound_enabled,
+    readReceipts: settings.read_receipts,
+    aiSmartAssistance: settings.ai_smart_assistance,
+  };
+}
+
+function applyDisplayPreference(messages: Message[], showOriginalByDefault: boolean): Message[] {
+  return messages.map((message) => message.translation
+    ? { ...message, translation: { ...message.translation, showOriginal: showOriginalByDefault } }
+    : message);
+}
+
+function toReactions(reactions: ApiMessageReaction[]) {
+  return reactions.map((reaction) => ({ emoji: reaction.emoji, count: reaction.count, users: reaction.user_ids }));
+}
 export const AppShell: React.FC = () => {
   const router = useRouter();
   const socket = useRef<WebSocket | null>(null);
@@ -65,7 +157,7 @@ export const AppShell: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [callState, setCallState] = useState<{ isOpen: boolean; type: "voice" | "video" }>({ isOpen: false, type: "voice" });
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
   const [isAssistantChatOpen, setIsAssistantChatOpen] = useState(false);
   const [assistantConversation, setAssistantConversation] = useState<Conversation | null>(null);
@@ -75,6 +167,10 @@ export const AppShell: React.FC = () => {
     setToasts((items) => [...items, { id, title, message, type }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 3500);
   }, []);
+
+  const handleCallMediaError = useCallback((message: string) => {
+    addToast("Cuộc gọi", message, "warning");
+  }, [addToast]);
 
   const handleLogout = useCallback(async () => {
     if (isLoggingOut) return;
@@ -101,11 +197,64 @@ export const AppShell: React.FC = () => {
   const currentAttachments = activeConversationId ? attachmentsMap[activeConversationId] ?? [] : [];
   const usersById = useMemo(() => new Map([currentUser, ...users].filter((user) => user.id).map((user) => [user.id, user])), [currentUser, users]);
 
+  const initiateCall = async (type: "voice" | "video") => {
+    if (!token.current || !selectedConversation) return;
+    if (selectedConversation.type !== "direct") {
+      addToast("Cuộc gọi chưa khả dụng", "Hiện chỉ hỗ trợ gọi 1–1.", "warning");
+      return;
+    }
+    try {
+      const call = await startRtcCall(token.current, selectedConversation.id, type);
+      setActiveCall(toActiveCall(call, "outgoing"));
+    } catch (error) {
+      addToast("Không thể gọi", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const acceptIncomingCall = async () => {
+    if (!token.current || !activeCall) return;
+    try {
+      const call = await acceptCall(token.current, activeCall.id);
+      setActiveCall(toActiveCall(call, "active"));
+    } catch (error) {
+      addToast("Không thể nhận cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+      setActiveCall(null);
+    }
+  };
+
+  const rejectIncomingCall = async () => {
+    if (!token.current || !activeCall) return;
+    try {
+      await rejectCall(token.current, activeCall.id);
+    } catch (error) {
+      addToast("Không thể từ chối cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+    } finally {
+      setActiveCall(null);
+    }
+  };
+
+  const endCurrentCall = async () => {
+    if (!token.current || !activeCall) return;
+    try {
+      await endCall(token.current, activeCall.id);
+    } catch (error) {
+      addToast("Không thể kết thúc cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+    } finally {
+      setActiveCall(null);
+    }
+  };
+
   const loadConversationMessages = useCallback(async (conversationId: string) => {
     if (!token.current) return;
     const history = await getMessages(token.current, conversationId);
-    setMessagesMap((previous) => ({ ...previous, [conversationId]: toMessages(history, usersById, settings.preferredLanguage) }));
-  }, [settings.preferredLanguage, usersById]);
+    setMessagesMap((previous) => ({
+      ...previous,
+      [conversationId]: applyDisplayPreference(
+        toMessages(history, usersById, settings.preferredLanguage),
+        settings.showOriginalByDefault,
+      ),
+    }));
+  }, [settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
 
   const loadConversationAttachments = useCallback(async (conversationId: string) => {
     if (!token.current) return;
@@ -141,14 +290,22 @@ export const AppShell: React.FC = () => {
         return;
       }
       const user = toChatUser(profile);
-      const list = await listConversations(accessToken);
+      const [list, savedSettings] = await Promise.all([
+        listConversations(accessToken),
+        getUserSettings(accessToken),
+      ]);
       if (!active) return;
       const visible = list.filter((item) => !isAssistantConversation(item));
       const contacts = conversationUsers(visible).filter((contact) => contact.id !== user.id);
       setCurrentUser(user);
       setUsers(contacts);
-      setSettings((value) => ({ ...value, preferredLanguage: user.nativeLanguage, interfaceLanguage: toLanguageCode(profile.interface_language) }));
-      setConversations(visible.map((item) => toConversation(item, user.id)));
+      const restoredSettings = {
+        ...persistedSettings(savedSettings),
+        preferredLanguage: user.nativeLanguage,
+        interfaceLanguage: toLanguageCode(profile.interface_language),
+      };
+      setSettings((value) => ({ ...value, ...restoredSettings }));
+      setConversations(sortConversations(visible.map((item) => toConversation(item, user.id))));
       if (visible[0]) {
         const members = new Map([user, ...contacts].map((contact) => [contact.id, contact]));
         const [history, attachments] = await Promise.all([
@@ -156,7 +313,12 @@ export const AppShell: React.FC = () => {
           listAttachments(accessToken, visible[0].id).catch(() => []),
         ]);
         if (!active) return;
-        setMessagesMap({ [visible[0].id]: toMessages(history, members, user.nativeLanguage) });
+        setMessagesMap({
+          [visible[0].id]: applyDisplayPreference(
+            toMessages(history, members, user.nativeLanguage),
+            restoredSettings.showOriginalByDefault,
+          ),
+        });
         setAttachmentsMap({ [visible[0].id]: attachments.map(toMessageAttachment) });
         setSelectedConversationId(visible[0].id);
       }
@@ -180,7 +342,10 @@ export const AppShell: React.FC = () => {
           const clientMessageId = payload.client_message_id as string | undefined;
           const realtimeAttachment = realtime.attachment as ApiAttachment | null | undefined;
           const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null, forwarded_from_message_id: realtime.forwarded_from_message_id as string | null, attachment: realtimeAttachment, mentions: realtime.mentions as ApiMessage['mentions'], assistant_generated: Boolean(realtime.assistant_generated) };
-          const mapped = toMessage(message, usersById, settings.preferredLanguage);
+          const mapped = applyDisplayPreference(
+            [toMessage(message, usersById, settings.preferredLanguage)],
+            settings.showOriginalByDefault,
+          )[0];
           setAssistantConversation((previous) => previous?.id === mapped.conversationId
             ? { ...previous, lastMessage: mapped.content, lastMessageTime: mapped.timestamp }
             : previous);
@@ -222,7 +387,45 @@ export const AppShell: React.FC = () => {
           const translatedText = String(payload.translated_text ?? payload.content ?? "");
           const sourceLanguage = toLanguageCode(String(payload.source_language || "en"));
           const status = payload.status === "failed" || !translatedText ? "failed" : "success";
-          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, translation: { translationId: String(payload.translation_id), originalText: item.content, originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status } } : item)])));
+          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, translation: { translationId: String(payload.translation_id), originalText: item.content, originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status, showOriginal: settings.showOriginalByDefault } } : item)])));
+        }
+        if (["call_incoming", "call_accepted", "call_rejected", "call_ended", "call_failed"].includes(eventType)) {
+          const call: ApiCall = {
+            call_id: String(payload.call_id),
+            conversation_id: String(payload.conversation_id),
+            caller_id: String(payload.caller_id),
+            callee_id: String(payload.callee_id),
+            call_type: payload.call_type === "video" ? "video" : "voice",
+            status: String(payload.status) as ApiCall["status"],
+            room_url: null,
+            join_token: null,
+            created_at: "",
+            answered_at: null,
+            ended_at: null,
+          };
+          if (eventType === "call_incoming" && call.callee_id === currentUser.id) {
+            setActiveCall(toActiveCall(call, "incoming"));
+          }
+          if (eventType === "call_accepted" && call.caller_id === currentUser.id && token.current) {
+            void joinCall(token.current, call.call_id)
+              .then((join) => setActiveCall(toActiveCall(join, "active")))
+              .catch((error: unknown) => {
+                addToast("Không thể kết nối cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+                setActiveCall(null);
+              });
+          }
+          if (["call_rejected", "call_ended", "call_failed"].includes(eventType)) {
+            setActiveCall((current) => current?.id === call.call_id ? null : current);
+            addToast(
+              eventType === "call_rejected"
+                ? "Cuộc gọi bị từ chối"
+                : eventType === "call_failed"
+                  ? "Cuộc gọi thất bại"
+                  : "Cuộc gọi đã kết thúc",
+              undefined,
+              "info",
+            );
+          }
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
         if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
@@ -230,6 +433,24 @@ export const AppShell: React.FC = () => {
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
           setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, content: eventType === "message_deleted" ? "This message was deleted" : payload.original_text as string, translation: undefined } : item)])));
+        }
+        if (eventType === "message_reactions_updated") {
+          const messageId = String(payload.message_id);
+          const reactions = Array.isArray(payload.reactions) ? payload.reactions as ApiMessageReaction[] : [];
+          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [
+            conversationId,
+            messages.map((message) => message.id === messageId ? { ...message, reactions: toReactions(reactions) } : message),
+          ])));
+        }
+        if (eventType === "conversation_member_left") {
+          const conversationId = String(payload.conversation_id);
+          const departedUserId = String(payload.user_id);
+          if (departedUserId === currentUser.id) {
+            setConversations((items) => items.filter((item) => item.id !== conversationId));
+            setSelectedConversationId((selected) => selected === conversationId ? null : selected);
+          } else {
+            void refreshConversations();
+          }
         }
         if (eventType === "error") addToast("Chat error", payload.message as string, "warning");
       };
@@ -240,7 +461,10 @@ export const AppShell: React.FC = () => {
   }, [addToast, currentUser.id, refreshConversations, settings.preferredLanguage, usersById]);
 
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
-  useEffect(() => { document.documentElement.lang = settings.interfaceLanguage; }, [settings.interfaceLanguage]);
+  useEffect(() => {
+    document.documentElement.lang = settings.interfaceLanguage;
+    document.documentElement.dir = settings.interfaceLanguage === "ar" ? "rtl" : "ltr";
+  }, [settings.interfaceLanguage]);
 
   const selectConversation = async (conversation: Conversation) => {
     setIsAssistantChatOpen(false);
@@ -349,6 +573,146 @@ export const AppShell: React.FC = () => {
     await startConversation(user);
   };
 
+  const searchInConversation = useCallback(async (query: string): Promise<ConversationSearchResult[]> => {
+    if (!token.current || !selectedConversationId) return [];
+    const result = await searchMessages(token.current, selectedConversationId, query);
+    const foundMessages = applyDisplayPreference(
+      result.items.map((item) => toMessage(item.message, usersById, settings.preferredLanguage)),
+      settings.showOriginalByDefault,
+    );
+    setMessagesMap((previous) => {
+      const current = previous[selectedConversationId] ?? [];
+      const byId = new Map(current.map((message) => [message.id, message]));
+      for (const message of foundMessages) byId.set(message.id, message);
+      return { ...previous, [selectedConversationId]: [...byId.values()] };
+    });
+    return result.items.map((item) => ({
+      messageId: item.message.id,
+      snippet: item.snippet,
+      matchedIn: item.matched_in,
+    }));
+  }, [selectedConversationId, settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
+
+  const changeConversationPreference = async (
+    conversationId: string,
+    changes: { is_pinned?: boolean; is_muted?: boolean },
+  ) => {
+    if (!token.current) return;
+    try {
+      const updated = await updateConversationPreferences(token.current, conversationId, changes);
+      const mapped = toConversation(updated, currentUser.id);
+      setConversations((items) => sortConversations(items.map((item) => item.id === conversationId ? mapped : item)));
+    } catch (error) {
+      addToast("Could not update conversation", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const toggleMute = (conversationId: string) => {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversation) void changeConversationPreference(conversationId, { is_muted: !conversation.isMuted });
+  };
+
+  const togglePin = (conversationId: string) => {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversation) void changeConversationPreference(conversationId, { is_pinned: !conversation.isPinned });
+  };
+
+  const leaveSelectedGroup = async (conversationId: string) => {
+    if (!token.current) return;
+    try {
+      await leaveConversation(token.current, conversationId);
+      setConversations((items) => items.filter((item) => item.id !== conversationId));
+      setMessagesMap((items) => {
+        const { [conversationId]: _removed, ...rest } = items;
+        return rest;
+      });
+      if (selectedConversationId === conversationId) setSelectedConversationId(null);
+      addToast("Left group", undefined, "success");
+    } catch (error) {
+      addToast("Could not leave group", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const blockConversationContact = async (conversationId: string) => {
+    if (!token.current) return;
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (!conversation?.recipient) return;
+    try {
+      await blockContact(token.current, conversation.recipient.id);
+      addToast("Contact blocked", conversation.recipient.name, "success");
+    } catch (error) {
+      addToast("Could not block contact", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const toggleSavedMessage = async (messageId: string) => {
+    if (!token.current || !selectedConversationId) return;
+    const message = (messagesMap[selectedConversationId] ?? []).find((item) => item.id === messageId);
+    if (!message) return;
+    try {
+      const result = message.isSaved
+        ? await unsaveMessage(token.current, selectedConversationId, messageId)
+        : await saveMessage(token.current, selectedConversationId, messageId);
+      setMessagesMap((previous) => ({
+        ...previous,
+        [selectedConversationId]: (previous[selectedConversationId] ?? []).map((item) => item.id === messageId
+          ? { ...item, isSaved: result.is_saved }
+          : item),
+      }));
+    } catch (error) {
+      addToast("Could not save message", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    if (!token.current || !selectedConversationId) return;
+    const message = (messagesMap[selectedConversationId] ?? []).find((item) => item.id === messageId);
+    const reacted = Boolean(message?.reactions?.some((reaction) => reaction.emoji === emoji && reaction.users.includes(currentUser.id)));
+    try {
+      const result = reacted
+        ? await removeReaction(token.current, selectedConversationId, messageId, emoji)
+        : await addReaction(token.current, selectedConversationId, messageId, emoji);
+      setMessagesMap((previous) => ({
+        ...previous,
+        [selectedConversationId]: (previous[selectedConversationId] ?? []).map((item) => item.id === messageId
+          ? { ...item, reactions: toReactions(result.reactions) }
+          : item),
+      }));
+    } catch (error) {
+      addToast("Could not update reaction", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const requestTranslationRetry = async (messageId: string) => {
+    if (!token.current || !selectedConversationId) return;
+    try {
+      await retryTranslation(token.current, selectedConversationId, messageId);
+      setMessagesMap((previous) => ({
+        ...previous,
+        [selectedConversationId]: (previous[selectedConversationId] ?? []).map((message) => message.id === messageId && message.translation
+          ? { ...message, translation: { ...message.translation, status: "pending" } }
+          : message),
+      }));
+      addToast("Translation requested", "A fresh translation is being generated.", "translation");
+    } catch (error) {
+      addToast("Could not retry translation", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const saveProfile = async (value: Partial<User>) => {
+    if (!token.current) return;
+    try {
+      const profile = await updateProfile(token.current, {
+        display_name: value.name,
+        bio: value.bio,
+      });
+      setCurrentUser((previous) => ({ ...previous, ...toChatUser(profile) }));
+      addToast("Profile saved", undefined, "success");
+    } catch (error) {
+      addToast("Could not save profile", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
   const closeGroup = async (conversationId: string, removeForEveryone: boolean) => {
     if (!token.current) return;
     try {
@@ -384,6 +748,30 @@ export const AppShell: React.FC = () => {
   };
 
   const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
+    const serverChanges: Partial<ApiUserSettings> = {};
+    if (value.autoTranslate !== undefined) serverChanges.auto_translate = value.autoTranslate;
+    if (value.showOriginalByDefault !== undefined) serverChanges.show_original_by_default = value.showOriginalByDefault;
+    if (value.translationTone !== undefined) serverChanges.translation_tone = value.translationTone;
+    if (value.soundEnabled !== undefined) serverChanges.sound_enabled = value.soundEnabled;
+    if (value.readReceipts !== undefined) serverChanges.read_receipts = value.readReceipts;
+    if (value.aiSmartAssistance !== undefined) serverChanges.ai_smart_assistance = value.aiSmartAssistance;
+    if (Object.keys(serverChanges).length > 0) {
+      if (!token.current) {
+        addToast("Could not save settings", "Please sign in again.", "warning");
+      } else {
+        void updateUserSettings(token.current, serverChanges)
+          .then((saved) => {
+            setSettings((previous) => ({ ...previous, ...persistedSettings(saved) }));
+            if (value.showOriginalByDefault !== undefined) {
+              setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [
+                conversationId,
+                applyDisplayPreference(messages, saved.show_original_by_default),
+              ])));
+            }
+          })
+          .catch((error: unknown) => addToast("Could not save settings", error instanceof Error ? error.message : undefined, "warning"));
+      }
+    }
     const requestedInterfaceLanguage = value.interfaceLanguage;
     if (requestedInterfaceLanguage && requestedInterfaceLanguage !== settings.interfaceLanguage && token.current) {
       void updateInterfaceLanguage(token.current, requestedInterfaceLanguage)
@@ -392,7 +780,9 @@ export const AppShell: React.FC = () => {
     }
     const requestedLanguage = value.preferredLanguage;
     if (!requestedLanguage || requestedLanguage === settings.preferredLanguage) {
-      setSettings((previous) => ({ ...previous, ...value }));
+      if (value.theme !== undefined || value.offlineModeSimulation !== undefined) {
+        setSettings((previous) => ({ ...previous, theme: value.theme ?? previous.theme, offlineModeSimulation: value.offlineModeSimulation ?? previous.offlineModeSimulation }));
+      }
       return;
     }
     if (!token.current) {
@@ -400,27 +790,20 @@ export const AppShell: React.FC = () => {
       return;
     }
 
-    // The reading language is a server-side preference: it determines which
-    // translation jobs the backend creates. Do not update local state first,
-    // otherwise a failed request leaves the UI claiming a language the API does
-    // not know about.
     void updatePreferredLanguage(token.current, requestedLanguage)
       .then(async (profile) => {
         const preferredLanguage = toLanguageCode(profile.preferred_language);
-        // Product policy: the language chosen for reading messages is also the
-        // language of every system label. Persist both preferences together.
-        await updateInterfaceLanguage(token.current!, preferredLanguage);
         setCurrentUser((previous) => ({ ...previous, nativeLanguage: preferredLanguage }));
-        setSettings((previous) => ({ ...previous, ...value, preferredLanguage, interfaceLanguage: preferredLanguage }));
+        setSettings((previous) => ({ ...previous, preferredLanguage }));
 
-        // Existing results are returned in the reader's persisted language.
-        // Reload the active history so any translation already stored for this
-        // language becomes visible immediately.
         if (selectedConversationId && token.current) {
           const history = await getMessages(token.current, selectedConversationId);
           setMessagesMap((previous) => ({
             ...previous,
-            [selectedConversationId]: toMessages(history, usersById, preferredLanguage),
+            [selectedConversationId]: applyDisplayPreference(
+              toMessages(history, usersById, preferredLanguage),
+              settings.showOriginalByDefault,
+            ),
           }));
         }
         addToast("Language updated", "New messages will be translated in your selected language.", "success");
@@ -428,9 +811,12 @@ export const AppShell: React.FC = () => {
       .catch((error: unknown) => {
         addToast("Could not save language", error instanceof Error ? error.message : undefined, "warning");
       });
-  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, usersById]);
+  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
 
   const unreadChatsCount = conversations.reduce((total, item) => total + item.unreadCount, 0);
+  const activeCallConversation = activeCall
+    ? conversations.find((conversation) => conversation.id === activeCall.conversationId) ?? null
+    : null;
   if (!currentUser.id) return <div className="h-screen bg-[#F7F8FC]" />;
 
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
@@ -477,18 +863,22 @@ export const AppShell: React.FC = () => {
           ? void attach(file, activeConversationId, [{ type: "assistant" }])
           : void attach(file)}
         onTyping={(isTyping) => activeConversationId && socket.current?.readyState === WebSocket.OPEN && socket.current.send(JSON.stringify({ type: "typing", conversation_id: activeConversationId, is_typing: isTyping }))}
-        onReact={() => addToast("Not available", "Reactions are not supported by the backend yet.", "info")}
+        onReact={(messageId, emoji) => { if (!isAssistantChatOpen) void toggleReaction(messageId, emoji); }}
         onCopy={(text) => void navigator.clipboard.writeText(text)}
         onToggleOriginal={(id) => activeConversationId && setMessagesMap((items) => ({ ...items, [activeConversationId]: (items[activeConversationId] ?? []).map((message) => message.id === id && message.translation ? { ...message, translation: { ...message.translation, showOriginal: !message.translation.showOriginal } } : message) }))}
-        onRetryTranslation={() => addToast("Translation", "Translations are generated automatically by the backend.", "info")}
+        onRetryTranslation={(messageId) => { if (!isAssistantChatOpen) void requestTranslationRetry(messageId); }}
         onRateTranslation={rateTranslation}
         onEditTranslation={editTranslation}
         onForward={setForwardingMessage}
+        onSaveMessage={(messageId) => void toggleSavedMessage(messageId)}
         onDeleteMessage={(id) => void deleteOwnMessage(id)}
-        onToggleMute={() => addToast("Not available", "Notification settings are not exposed by the backend yet.", "info")}
+        onToggleMute={toggleMute}
+        onTogglePin={togglePin}
+        onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
+        onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
-        onStartCall={(type) => setCallState({ isOpen: true, type })}
-        language={settings.preferredLanguage}
+        onStartCall={(type) => void initiateCall(type)}
+        language={settings.interfaceLanguage}
         attachments={currentAttachments}
         onDownloadAttachment={downloadSharedFile}
         onLoadAttachmentPreview={loadSharedFilePreview}
@@ -505,11 +895,20 @@ export const AppShell: React.FC = () => {
         assistantMode={isAssistantChatOpen}
       />}
     </div>
-    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
-    <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.preferredLanguage} />
-    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => setCurrentUser((previous) => ({ ...previous, ...value }))} />
-    {selectedConversation && <CallModal isOpen={callState.isOpen} type={callState.type} conversation={selectedConversation} onEndCall={() => setCallState({ isOpen: false, type: "voice" })} />}
+    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
+    <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
+    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} />
+    <CallModal
+      key={activeCall?.id ?? "no-active-call"}
+      call={activeCall}
+      conversation={activeCallConversation}
+      onAccept={() => void acceptIncomingCall()}
+      onReject={() => void rejectIncomingCall()}
+      onEnd={() => void endCurrentCall()}
+      onMediaError={handleCallMediaError}
+      language={settings.interfaceLanguage}
+    />
     <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
-    <ForwardMessageModal message={forwardingMessage} conversations={conversations} onClose={() => setForwardingMessage(null)} onStartNewChat={() => { setForwardingMessage(null); setIsNewChatOpen(true); }} onSelect={(target) => { if (!forwardingMessage) return; send(forwardingMessage.content, undefined, [], undefined, forwardingMessage.id, target.id); setForwardingMessage(null); addToast("Message forwarded", `Sent to ${target.name}.`, "success"); }} language={settings.preferredLanguage} />
+    <ForwardMessageModal message={forwardingMessage} conversations={conversations} onClose={() => setForwardingMessage(null)} onStartNewChat={() => { setForwardingMessage(null); setIsNewChatOpen(true); }} onSelect={(target) => { if (!forwardingMessage) return; send(forwardingMessage.content, undefined, [], undefined, forwardingMessage.id, target.id); setForwardingMessage(null); addToast("Message forwarded", `Sent to ${target.name}.`, "success"); }} language={settings.interfaceLanguage} />
   </div>;
 };

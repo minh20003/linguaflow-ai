@@ -265,3 +265,45 @@ async def test_a_forced_term_is_not_discarded_as_an_invented_identifier():
 
     assert result["is_fallback"] is False
     assert forced in result["translated_text"]
+
+
+def test_the_audience_section_states_the_relationship_not_the_ladder_position():
+    """A message between two juniors is between peers.
+
+    `participant_profiles` holds one standing per person, but a language marks
+    the relationship between two. Before the sender's standing reached the
+    prompt, a junior writing to a junior was rendered "the reader is junior to
+    the sender" — the register came from the conversation's ladder rather than
+    from this pair (ADR-23)."""
+    between_juniors = build_audience_block(
+        honorific_profile="junior", sender_honorific_profile="junior"
+    )
+    from_the_top = build_audience_block(
+        honorific_profile="junior", sender_honorific_profile="senior"
+    )
+
+    assert "peers" in between_juniors
+    assert "junior to the sender" in from_the_top
+
+
+def test_an_unknown_sender_leaves_the_readers_standing_speaking_for_itself():
+    """Every conversation is in that state until enough has been said to infer
+    from, so it has to read exactly as it did before this field existed."""
+    assert build_audience_block(
+        honorific_profile="senior", sender_honorific_profile=""
+    ) == build_audience_block(honorific_profile="senior")
+
+
+def test_a_client_on_either_side_makes_the_exchange_commercial():
+    """The politeness a vendor owes a client and the politeness a client is
+    written with are the same register, so the axis does not depend on which of
+    them is holding the keyboard."""
+    to_client = build_audience_block(
+        honorific_profile="client", sender_honorific_profile="junior"
+    )
+    from_client = build_audience_block(
+        honorific_profile="junior", sender_honorific_profile="client"
+    )
+
+    assert "client, not a colleague" in to_client
+    assert "client, not a colleague" in from_client
