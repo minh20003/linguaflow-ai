@@ -185,11 +185,8 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 4. Application type: **Web application**
 5. Thêm **Authorized JavaScript origins**:
    - Development: `http://localhost:3000`
-   - Production / Tunnel: `https://agent.dquangminh2003.id.vn` (hoặc domain Vercel/Cloudflare của bạn)
+   - Production: `https://your-domain.com` (hoặc domain Vercel của bạn)
 6. Copy **Client ID** (format: `xxx.apps.googleusercontent.com`)
-
-**Địa chỉ API Backend Production:**
-- Production API: `https://api.dquangminh2003.id.vn`
 
 **Đặt biến môi trường:**
 

@@ -41,14 +41,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
-    # Public frontend routed through this project's Cloudflare Tunnel. Keeping
-    # it separate from CORS_ORIGINS lets a local development .env retain its
-    # localhost values without breaking the deployed browser client.
-    public_frontend_origin: str = "https://agent.dquangminh2003.id.vn"
-    # Matched against the Origin header when the exact list above does not.
-    # Vercel gives every pull request its own hostname, so a preview build can
-    # only reach the API through a pattern — for example
-    # `https://linguaflow-[a-z0-9-]+\.vercel\.app`. Empty disables it.
+    public_frontend_origin: str = ""
     cors_origin_regex: str = ""
 
     # LLM
