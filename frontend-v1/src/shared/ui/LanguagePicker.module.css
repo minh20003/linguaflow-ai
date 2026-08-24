@@ -1,0 +1,108 @@
+/* One row is a fixed height so the list can be capped at exactly five of them.
+   Anything beyond that is reached by scrolling — the point of collapsing a
+   fourteen-option field in the first place. */
+.root {
+  /* The height of one option row. The list is capped at exactly five of them
+     plus its own padding, so "five visible" is arithmetic rather than a guess.
+     The trigger sets its own height below. */
+  --row-height: 38px;
+  --visible-rows: 5;
+  --list-padding: var(--s-1);
+  position: relative;
+  width: 100%;
+}
+
+.trigger {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding-inline: var(--s-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-2);
+  color: var(--ink);
+  background: var(--surface-card);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  text-align: start;
+  cursor: pointer;
+}
+
+.trigger:hover:not(:disabled) { border-color: var(--primary); }
+.trigger:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.trigger:disabled { color: var(--ink-disabled); cursor: not-allowed; }
+
+.triggerText {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevronOpen { transform: rotate(180deg); }
+
+/* A fixed-width code keeps every name starting at the same x, so the list reads
+   as a column rather than a ragged edge. */
+.code {
+  flex: 0 0 auto;
+  min-width: 30px;
+  padding: 2px 6px;
+  border-radius: var(--r-1);
+  color: var(--ink-secondary);
+  background: var(--surface-label);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-align: center;
+}
+
+.list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + var(--s-1));
+  inset-inline: 0;
+  max-height: calc(var(--row-height) * var(--visible-rows) + var(--list-padding) * 2);
+  overflow-y: auto;
+  padding: var(--list-padding);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-lg);
+  list-style: none;
+}
+
+.option {
+  display: flex;
+  height: var(--row-height);
+  align-items: center;
+  gap: var(--s-3);
+  padding-inline: var(--s-3);
+  border-radius: var(--r-2);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  cursor: pointer;
+}
+
+.option[aria-selected="true"] { font-weight: 600; }
+.option[aria-selected="true"] .code { color: var(--ink-inverse); background: var(--primary); }
+
+/* Hover and keyboard share one highlight: two different "current" rows in the
+   same list is the classic way to lose track of what Enter will pick. */
+.optionActive { background: var(--surface-sunken); }
+
+.option > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevronOpen { transform: none; }
+}

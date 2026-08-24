@@ -18,6 +18,7 @@ and `embed` refuses rather than writing a vector the column cannot hold.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from src.config import Settings, get_settings
@@ -29,9 +30,17 @@ logger = logging.getLogger(__name__)
 # the widths differ, which is exactly why the width is pinned in the schema and
 # checked below rather than trusted.
 DEFAULT_MODELS: dict[str, str] = {
-    "gemini": "models/text-embedding-004",
+    # `models/text-embedding-004` was withdrawn and now answers 404. Its
+    # replacement returns 3072 dimensions by default, which is why the width is
+    # requested explicitly below rather than accepted.
+    "gemini": "models/gemini-embedding-001",
     "openai": "text-embedding-3-small",
-    "local": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    # LaBSE, because it is the only local model measured to do semantic work:
+    # 4 of 8 term variants at zero false positives, against 1 for e5 and 3 for
+    # MiniLM — and e5's single hit means it is a surface matcher, not a semantic
+    # one. MiniLM-L12-v2 sat here first and returns 384 dimensions, which the
+    # `vector(768)` columns reject outright, so `local` had never once run.
+    "local": "sentence-transformers/LaBSE",
 }
 
 # Which settings field carries each provider's key, and so — since
@@ -54,22 +63,37 @@ class EmbeddingConfigError(RuntimeError):
 _CLIENTS: dict[tuple[str, str], Any] = {}
 
 
-def _build_client(provider: str, model: str) -> Any:
+def _build_client(provider: str, model: str, api_key: str) -> Any:
     """Import and construct one provider's client.
 
     Imported inside the function so a provider nobody uses does not have to be
     installed — `sentence-transformers` in particular pulls in torch, which is
     several hundred megabytes and has no place in an image that will never call
     it (ADR-18).
+
+    The key is passed in rather than left to the provider package to find. Both
+    packages fall back to reading the environment, and this project keeps its
+    keys in `.env`, which pydantic-settings reads *without* exporting — so the
+    client would raise for a missing key that `get_embedder` had just confirmed
+    was present. `embed` swallows every failure by design, so the visible effect
+    was not an error but silence: both retrieval flags could be switched on and
+    do nothing at all.
     """
+    # The width is asked for, not accepted. `message_embeddings.embedding` and
+    # `glossary_entries.embedding` are `vector(768)` columns, and both current
+    # hosted models return something wider unless told otherwise — a vector of
+    # the wrong width is rejected by the column, so this is the difference
+    # between retrieval working and every insert failing.
     if provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        return GoogleGenerativeAIEmbeddings(model=model)
+        return GoogleGenerativeAIEmbeddings(
+            model=model, google_api_key=api_key, output_dimensionality=EMBEDDING_DIM
+        )
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
-        return OpenAIEmbeddings(model=model)
+        return OpenAIEmbeddings(model=model, api_key=api_key, dimensions=EMBEDDING_DIM)
 
     from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -97,7 +121,8 @@ def get_embedder(settings: Settings | None = None) -> Any:
     # Checked before the provider package is imported, so a missing key reports
     # itself rather than surfacing as an ImportError about an absent package.
     key_field = PROVIDER_KEY_FIELD.get(provider)
-    if key_field and not getattr(settings, key_field, ""):
+    api_key = getattr(settings, key_field, "") if key_field else ""
+    if key_field and not api_key:
         raise EmbeddingConfigError(
             f"EMBEDDING_PROVIDER={provider} but {key_field.upper()} is not set. "
             f"Add {key_field.upper()} to .env, or set EMBEDDING_PROVIDER=local "
@@ -107,7 +132,7 @@ def get_embedder(settings: Settings | None = None) -> Any:
     model = settings.embedding_model or DEFAULT_MODELS[provider]
     cached = _CLIENTS.get((provider, model))
     if cached is None:
-        cached = _build_client(provider, model)
+        cached = _build_client(provider, model, api_key)
         _CLIENTS[(provider, model)] = cached
     return cached
 
@@ -123,6 +148,136 @@ def embedding_model_name(settings: Settings | None = None) -> str:
     return settings.embedding_model or DEFAULT_MODELS.get(
         settings.embedding_provider, ""
     )
+
+
+# What a term has to score to be injected without an exact string match, per
+# model. A cosine threshold is a property of an embedding space, not of a task,
+# so one number cannot serve several models — measured on this project's own
+# terms, `gemini-embedding-001` separates true variants from unrelated words
+# cleanly while `multilingual-e5-base` puts both at 0.83 +/- 0.01.
+#
+# Every number here is set for **precision over recall**, deliberately. A term
+# below the line is simply absent from the glossary and the model translates it
+# itself; a term above it is *forced* into the output by the prompt. Missing a
+# real variant costs a slightly flatter translation. Matching a wrong one
+# changes what the message says.
+GLOSSARY_THRESHOLDS: dict[str, float] = {
+    # Measured 22/08: true variants 0.586-0.756, unrelated words 0.477-0.574.
+    # 0.65 sits clear of every unrelated pair and gives up the two weakest true
+    # ones on purpose.
+    "models/gemini-embedding-001": 0.65,
+    # Measured 22/08 on the same pairs: unrelated words top out at 0.616 and
+    # 6 of 8 true variants clear it, against 8 of 8 for -001. The newer model
+    # retrieves passages better and separates terms slightly worse — two
+    # different jobs, which is why the two are configured independently.
+    "models/gemini-embedding-2": 0.65,
+    # The local models, at the highest threshold that lets no wrong pair
+    # through. An earlier note here claimed no threshold existed because the
+    # worst true pair scores below the best false one — that only rules out a
+    # threshold with full recall. Set the line above every false pair instead
+    # and each model keeps the matches it is *sure* of, which is the trade this
+    # project wants everywhere: a term below the line is absent from the
+    # glossary and the model translates it itself.
+    #
+    # What they keep, out of 8 semantic variants and 6 typos:
+    #   LaBSE   4 semantic, 1 typo  — the only local model doing semantic work
+    #   e5      1 semantic, 6 typos — a surface matcher wearing an embedding
+    #   MiniLM  3 semantic, 2 typos — and 384 dimensions, so it needs a migration
+    "sentence-transformers/LaBSE": 0.675,
+    "intfloat/multilingual-e5-base": 0.855,
+    #
+    # Mistral is absent for a different reason: `mistral-embed` returns 1024
+    # dimensions and rejects `output_dimension`, `codestral-embed` returns 1536,
+    # and the columns are `vector(768)`. Adding it is a migration plus a pass to
+    # re-embed everything, and it would then exclude every model that currently
+    # works — a schema decision, not a configuration one (ADR-25).
+}
+
+# A model nobody has measured gets a threshold that admits almost nothing, so
+# switching provider under quota pressure degrades to exact matching rather than
+# to random terms. Measure it and add a row above to turn it on properly.
+UNMEASURED_GLOSSARY_THRESHOLD = 0.95
+
+
+def glossary_threshold_for(model: str, settings: Settings | None = None) -> float:
+    """The similarity a term must reach in this model's space.
+
+    Args:
+        model: The model that produced the query vector, resolved.
+        settings: Configuration. A non-zero `glossary_similarity_threshold`
+            overrides the table, for measuring a new model without editing code.
+    """
+    settings = settings or get_settings()
+    if settings.glossary_similarity_threshold > 0:
+        return settings.glossary_similarity_threshold
+    return GLOSSARY_THRESHOLDS.get(model, UNMEASURED_GLOSSARY_THRESHOLD)
+
+
+async def embed_with_model(
+    text: str, *, settings: Settings | None = None
+) -> tuple[list[float] | None, str]:
+    """Embed one string, and say which model actually produced the vector.
+
+    The name is not decoration. Vectors from two models occupy different spaces;
+    comparing them returns a number that means nothing, and storing one under
+    the other's name poisons the table for good. When a hosted provider is out
+    of quota this falls back to a local model, so the *configured* name and the
+    *producing* name stop agreeing — every caller that stores or compares a
+    vector needs the second one.
+
+    The fallback is what keeps a quota failure from becoming a service failure,
+    and it degrades in the safe direction on its own: a local query vector
+    matches no Gemini-stored entry, so semantic glossary matching quietly
+    returns nothing and exact matching carries the message. The reader sees a
+    translation and never learns an embedding budget ran out.
+
+    Returns:
+        The vector and its model, or `(None, "")` when every provider failed.
+    """
+    settings = settings or get_settings()
+    vector = await embed(text, settings=settings)
+    if vector is not None:
+        return vector, embedding_model_name(settings)
+
+    fallback = settings.embedding_fallback_provider
+    if not fallback or fallback == settings.embedding_provider:
+        return None, ""
+
+    # Never inside a test run. The fallback imports sentence-transformers, which
+    # pulls torch into the process; under pytest that has crashed the suite
+    # outright on Windows, and even where it does not, a test that silently
+    # loads half a gigabyte is one nobody will run twice. Tests that mean to
+    # exercise the fallback construct it explicitly.
+    if "pytest" in sys.modules:
+        return None, ""
+
+    # Only a provider that *had* a key and still failed gets a fallback. Without
+    # a key it never ran, and that is a misconfiguration rather than a quota
+    # running out — falling back would paper over it, and would pull a
+    # half-gigabyte local model into a process that was never meant to have one,
+    # which is exactly what happened to the test suite when this rule was
+    # missing.
+    key_field = PROVIDER_KEY_FIELD.get(settings.embedding_provider)
+    if key_field and not getattr(settings, key_field, ""):
+        return None, ""
+
+    logger.warning(
+        "Embedding provider %r returned nothing; falling back to %s. Semantic "
+        "glossary matching is inert until it recovers, because a vector from "
+        "another model cannot be compared with the stored ones.",
+        settings.embedding_provider,
+        fallback,
+    )
+    local = settings.model_copy(
+        update={
+            "embedding_provider": fallback,
+            "embedding_model": DEFAULT_MODELS[fallback],
+        }
+    )
+    vector = await embed(text, settings=local)
+    if vector is None:
+        return None, ""
+    return vector, embedding_model_name(local)
 
 
 async def embed(text: str, *, settings: Settings | None = None) -> list[float] | None:

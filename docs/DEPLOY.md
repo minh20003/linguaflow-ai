@@ -9,8 +9,8 @@ Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-
 |---|---|---|
 | Backend + Agent | Railway, dựng từ `Dockerfile` | **Đúng 1 bản sao**, không autoscale |
 | Cơ sở dữ liệu | PostgreSQL (plugin của Railway) | Supabase thay được, xem §6 |
-| Tệp đính kèm | Supabase Storage, bucket private `attachments` | Backend kiểm tra quyền trước khi tải xuống |
-| Frontend | Vercel, thư mục gốc `frontend/` | Biến môi trường nhúng lúc build |
+| Tệp đính kèm | Supabase Storage (bucket private `attachments`) khi có đủ `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`; nếu không, Volume gắn vào `/app/data` của container backend | Backend tự chọn theo biến môi trường có đặt hay không (xem §2 bước 4) |
+| Frontend | Vercel, thư mục gốc `frontend-v1/` (v1 — chờ chuyển sang frontend mới của `develop_v2`) | Biến môi trường nhúng lúc build |
 
 > **Chỉ được chạy một bản sao.** `ConnectionManager` giữ danh sách socket trong bộ
 > nhớ tiến trình. Bản sao thứ hai sẽ nhận một nửa số kết nối và **âm thầm đánh rơi**
@@ -49,9 +49,19 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 | `SUPABASE_STORAGE_BUCKET` | `attachments` |
    | `LLM_PROVIDER` | `groq` |
    | `GROQ_API_KEY` | khoá của bạn |
+   | `EMAIL_PROVIDER` | `smtp` |
+   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | thông tin máy chủ gửi thư |
 
-   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `LANGFUSE_*` để
-   bật tracing, `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
+   **Năm biến SMTP là bắt buộc, không phải tuỳ chọn.** `Settings` từ chối khởi tạo
+   khi `APP_ENV=production` mà `EMAIL_PROVIDER` vẫn là `memory` hoặc `console`, hoặc
+   là `smtp` nhưng thiếu một trong bốn giá trị còn lại — container sẽ lặp vô hạn
+   *trước khi* uvicorn kịp chạy. Bảng này trước đây bỏ sót chúng trong khi §5.1 lại
+   ghi là bắt buộc, và hai chỗ nói ngược nhau thì chỗ người ta làm theo là chỗ có
+   các bước. Không có SMTP thì mã OTP không gửi được, tức **không ai đăng ký được
+   tài khoản mới** dù mọi thứ khác đã chạy.
+
+   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `BRAINTRUST_API_KEY`
+   để bật tracing (hoặc `OBSERVABILITY_PROVIDER=langfuse` cùng `LANGFUSE_*`), `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
    nhắn sang endpoint Google Translate không chính thức (ADR-07, ADR-15).
 
    Không cần đặt `PORT`: Railway tự tiêm, và `CMD` trong `Dockerfile` đọc nó.
@@ -67,7 +77,7 @@ là phục vụ trên một cơ sở dữ liệu sai hình dạng.
 
 ## 3. Frontend trên Vercel
 
-1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend`.
+1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend-v1`.
 2. Environment Variables: `NEXT_PUBLIC_API_URL = https://<backend>.up.railway.app`
    (không có dấu `/` ở cuối).
 3. Deploy. Sau đó quay lại Railway đặt `CORS_ORIGINS` đúng bằng tên miền Vercel
@@ -81,7 +91,7 @@ chỉ cũ. Địa chỉ WebSocket suy ra từ chính biến này (`https` → `w
 
 ```bash
 docker compose up --build      # backend + PostgreSQL, giống production
-cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
+cd frontend-v1 && npm run dev  # giao diện, trỏ vào localhost:8000
 ```
 
 Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy backend ở ngoài container:
@@ -147,7 +157,9 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `SMTP_USER`, `SMTP_PASSWORD` | — | Bắt buộc ở production |
 | `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP |
 | `SMTP_USE_TLS` | `true` | Bật STARTTLS cho cổng 587 |
-| `LANGFUSE_*` | rỗng | Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
+| `OBSERVABILITY_PROVIDER` | `braintrust` | `braintrust` \| `langfuse` \| `none`. Chọn backend nhận trace (ADR-29) |
+| `BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT` | rỗng / `linguaflow` | Rỗng là tắt tracing. Khoá Braintrust bắt đầu bằng `sk-` |
+| `LANGFUSE_*` | rỗng | Chỉ dùng khi `OBSERVABILITY_PROVIDER=langfuse`. Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
 
 ### 5.1. Khoá bí mật — cần cấp những gì
 
@@ -158,7 +170,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Có, ở production** | Server từ chối khởi động nếu thiếu ở `APP_ENV=production` |
 | `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
+| `BRAINTRUST_API_KEY` (hoặc `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` khi chọn Langfuse) | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
 | `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
 
 ### 5.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)

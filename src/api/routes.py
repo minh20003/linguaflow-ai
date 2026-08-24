@@ -2714,7 +2714,7 @@ async def submit_translation_edit(
     """
     service = ChatService(db)
     try:
-        edit, translation = await service.submit_translation_edit(
+        edit, translation, message = await service.submit_translation_edit(
             user_id=current_user.id,
             translation_id=translation_id,
             edited_text=payload.edited_text,
@@ -2745,6 +2745,7 @@ async def submit_translation_edit(
     schedule_correction_record(
         machine_text=translation.translated_text,
         human_text=edit.edited_text,
+        original_text=message.original_text,
         source_language=profile.source_language,
         target_language=translation.target_language,
         domain=profile.domain,

@@ -1,0 +1,64 @@
+.root {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* Same 32px disc as the attach and send buttons on the same row: the three are
+   one set of icon buttons, so their hover washes have to be one size. */
+.trigger {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-full);
+  color: var(--ink-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur-hover), background var(--dur-hover);
+}
+
+.trigger:hover:not(:disabled) { color: var(--accent-warm); background: var(--surface-sunken); }
+.trigger:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.trigger:disabled { color: var(--ink-disabled); cursor: not-allowed; }
+.trigger[aria-expanded="true"] { color: var(--accent-warm); background: var(--surface-sunken); }
+
+.panel {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + var(--s-2));
+  inset-inline-start: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-3);
+  background: var(--surface-card);
+  /* Layered rather than a single drop: a near shadow anchors the panel to the
+     composer, a far one lifts it off the thread behind. */
+  box-shadow: 0 1px 2px rgb(45 28 54 / 10%), 0 12px 32px rgb(45 28 54 / 18%);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(8, 34px);
+  gap: 2px;
+}
+
+.emoji {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-2);
+  background: transparent;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji:hover { background: var(--surface-sunken); }
+.emoji:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+@media (max-width: 680px) {
+  .grid { grid-template-columns: repeat(6, 34px); }
+}
