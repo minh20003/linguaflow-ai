@@ -24,7 +24,6 @@ src/
   features/auth/       Authentication UI, API client and session helpers
   features/chat/       Chat UI, REST/WebSocket clients and styles
 ```
-
 Keep route files thin. Feature-specific code belongs under its feature.
 
 ## Environment Variables
@@ -32,8 +31,11 @@ Keep route files thin. Feature-specific code belongs under its feature.
 | Variable | Required | Description |
 |---|---|---|
 | `NEXT_PUBLIC_API_URL` | Yes (when not localhost:8000) | Backend base URL, e.g. `http://localhost:8000` |
-| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Optional | Google OAuth 2.0 Web Client ID, must match `GOOGLE_OAUTH_CLIENT_ID` in backend |
+| `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | Optional | Google OAuth 2.0 Web Client ID, must match `GOOGLE_OAUTH_CLIENT_ID` in backend |
 
+Google Sign-In uses the Google Identity Services ID-token flow. Add the site's
+origin to **Authorized JavaScript origins** in Google Cloud Console. The backend
+verifies the token and resolves accounts by the immutable `google_sub` value.
 ## Docker
 
 The production image is a Next.js standalone server. Build and run it with:

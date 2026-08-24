@@ -117,14 +117,6 @@ class User(Base):
         String(255),
         nullable=True,
     )
-    # Google `sub` is the stable, provider-issued user identifier. Email is
-    # deliberately not used as the OAuth identity because a user can change it.
-    google_subject: Mapped[str | None] = mapped_column(
-        String(255),
-        unique=True,
-        nullable=True,
-        index=True,
-    )
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

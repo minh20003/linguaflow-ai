@@ -87,6 +87,8 @@ export interface Conversation {
   pinnedAt?: string | null;
   createdAt?: string | null;
   description?: string;
+  createdBy?: string;
+  currentUserRole?: 'owner' | 'admin' | 'member';
 }
 
 export interface AppSettings {

@@ -4,7 +4,7 @@ import {
   parseJson,
   type ApiErrorBody,
 } from "@/shared/api/response";
-import type { AuthSession } from "@/shared/types/auth";
+import type { AuthSession, AuthUser } from "@/shared/types/auth";
 
 export type { AuthSession, AuthUser } from "@/shared/types/auth";
 export {
@@ -20,6 +20,14 @@ interface RegisterInput {
   preferredLanguage?: string;
 }
 
+export interface PendingRegistrationResponse {
+  pending_id: string;
+  email: string;
+  expires_in_seconds: number;
+  cooldown_seconds: number;
+  message: string;
+}
+
 async function request<T>(path: string, init: RequestInit, fallback: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -30,6 +38,38 @@ async function request<T>(path: string, init: RequestInit, fallback: string): Pr
     throw new Error(getApiErrorMessage(body, fallback));
   }
   return body;
+}
+
+function isAuthUser(value: unknown): value is AuthUser {
+  return Boolean(
+    value
+      && typeof value === "object"
+      && typeof (value as Partial<AuthUser>).id === "string"
+      && typeof (value as Partial<AuthUser>).email === "string",
+  );
+}
+
+/**
+ * Accept both the current session response and the older token-only response.
+ * A token-only response is completed from `/auth/me` before any screen reads
+ * profile fields, preventing an opaque browser `undefined.display_name` error.
+ */
+async function requestAuthSession(path: string, init: RequestInit, fallback: string): Promise<AuthSession> {
+  const session = await request<Partial<AuthSession>>(path, init, fallback);
+  if (!session.access_token || !session.refresh_token) {
+    throw new Error("The server returned an incomplete sign-in session. Please try again.");
+  }
+  if (isAuthUser(session.user)) return session as AuthSession;
+
+  const response = await fetch(`${API_BASE}/api/v1/auth/me`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const user = await parseJson<AuthUser & ApiErrorBody>(response);
+  if (!response.ok || !isAuthUser(user)) {
+    throw new Error(getApiErrorMessage(user, "Unable to load your account after sign-in. Please try again."));
+  }
+
+  return { ...session, token_type: session.token_type ?? "bearer", user } as AuthSession;
 }
 
 function usernameFrom(fullName: string, email: string): string {
@@ -47,19 +87,11 @@ function usernameFrom(fullName: string, email: string): string {
 }
 
 export function signIn(email: string, password: string, remember: boolean): Promise<AuthSession> {
-  return request<AuthSession>(
+  return requestAuthSession(
     "/api/v1/auth/login",
     { method: "POST", body: JSON.stringify({ email: email.trim(), password, remember }) },
     "Unable to sign in. Please try again.",
   );
-}
-
-export interface PendingRegistrationResponse {
-  pending_id: string;
-  email: string;
-  expires_in_seconds: number;
-  cooldown_seconds: number;
-  message: string;
 }
 
 export function registerInit({
@@ -102,9 +134,6 @@ export function verifyRegisterOtp(pendingId: string, otp: string): Promise<AuthS
 export function resendRegisterOtp(pendingId: string): Promise<{ pending_id: string; expires_in_seconds: number; cooldown_seconds: number; message: string }> {
   const normalizedPendingId = pendingId?.trim();
   if (!normalizedPendingId) {
-    // JSON.stringify omits properties whose value is undefined. Failing here
-    // makes the recovery action clear instead of issuing a guaranteed 422 with
-    // an opaque `{}` request body.
     return Promise.reject(
       new Error("Your registration session is no longer available. Please return to the details form and register again."),
     );
@@ -137,8 +166,8 @@ export function requestPasswordReset(email: string): Promise<{ message: string; 
 }
 
 export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
-  return request<AuthSession>(
-    "/api/v1/auth/google",
+  return requestAuthSession(
+    "/api/v1/auth/google/login",
     { method: "POST", body: JSON.stringify({ credential, remember }) },
     "Unable to sign in with Google. Please try again.",
   );

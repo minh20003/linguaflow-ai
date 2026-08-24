@@ -231,7 +231,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
             </div>
 
             <div className="p-3 bg-[#EFF6FF]/50 dark:bg-[#2563EB]/10 rounded-2xl text-xs text-[#2563EB]">
-              ✨ All group members will have incoming messages auto-translated into their own native languages!
+              ✨ {interactionText(language, 'Group translations notice')}
             </div>
 
             <button

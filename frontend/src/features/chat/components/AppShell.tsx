@@ -7,7 +7,57 @@ import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/sess
 import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/shared/api/account-api";
 import type { AppSettings, Conversation, Message, MessageAttachment, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
-import { acceptCall, addReaction, blockContact, compareConversations, createConversation, deleteMessage, downloadAttachment, endCall, fetchAttachmentBlob, getMe, getMessages, getUserSettings, joinCall, leaveConversation, listAttachments, listConversations, listUsers, markRead, rejectCall, removeReaction, retryTranslation, saveMessage, searchMessages, startCall as startRtcCall, submitTranslationEdit, submitTranslationFeedback, toChatUser, toConversation, toLanguageCode, toMessage, toMessageAttachment, toMessages, unsaveMessage, updateConversationPreferences, updateProfile, updateUserSettings, uploadAttachment, type ApiAttachment, type ApiCall, type ApiMessage, type ApiMessageReaction, type ApiUserSettings } from "../api/chat-api";
+import {
+  acceptCall,
+  addGroupMembers,
+  addReaction,
+  blockContact,
+  compareConversations,
+  createConversation,
+  deleteGroup,
+  deleteMessage,
+  downloadAttachment,
+  endCall,
+  fetchAttachmentBlob,
+  getMe,
+  getMessages,
+  getUserSettings,
+  joinCall,
+  leaveConversation,
+  leaveGroup,
+  listAttachments,
+  listConversations,
+  listUsers,
+  markRead,
+  rejectCall,
+  removeGroupMember,
+  removeReaction,
+  retryTranslation,
+  saveMessage,
+  searchMessages,
+  startCall as startRtcCall,
+  submitTranslationEdit,
+  submitTranslationFeedback,
+  toChatUser,
+  toConversation,
+  toLanguageCode,
+  toMessage,
+  toMessageAttachment,
+  toMessages,
+  transferGroupOwnership,
+  unsaveMessage,
+  updateConversationPreferences,
+  updateGroupDetails,
+  updateGroupRole,
+  updateProfile,
+  updateUserSettings,
+  uploadAttachment,
+  type ApiAttachment,
+  type ApiCall,
+  type ApiMessage,
+  type ApiMessageReaction,
+  type ApiUserSettings,
+} from "../api/chat-api";
 import { newClientMessageId, socketUrl } from "../api/chat-socket";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -620,6 +670,40 @@ export const AppShell: React.FC = () => {
     }
   };
 
+  const closeGroup = async (conversationId: string, removeForEveryone: boolean) => {
+    if (!token.current) return;
+    try {
+      if (removeForEveryone) await deleteGroup(token.current, conversationId);
+      else await leaveGroup(token.current, conversationId);
+      setConversations((items) => items.filter((item) => item.id !== conversationId));
+      setSelectedConversationId(null);
+      addToast(removeForEveryone ? "Group deleted" : "Left group", undefined, "success");
+    } catch (error) {
+      addToast("Group action failed", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const manageGroup = async (action: () => Promise<void>, success: string) => {
+    try {
+      await action();
+      await refreshConversations();
+      addToast(success, undefined, "success");
+    } catch (error) {
+      addToast("Could not update group", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
+  const deleteOwnMessage = async (messageId: string) => {
+    if (!token.current || !selectedConversationId) return;
+    try {
+      await deleteMessage(token.current, selectedConversationId, messageId);
+      await loadConversationMessages(selectedConversationId);
+      addToast("Message deleted", "The message has been removed for everyone.", "success");
+    } catch (error) {
+      addToast("Could not delete message", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
+
   const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
     const serverChanges: Partial<ApiUserSettings> = {};
     if (value.autoTranslate !== undefined) serverChanges.auto_translate = value.autoTranslate;
@@ -715,12 +799,10 @@ export const AppShell: React.FC = () => {
         onRetryTranslation={(messageId) => void requestTranslationRetry(messageId)}
         onRateTranslation={rateTranslation}
         onEditTranslation={editTranslation}
-        onForward={setForwardingMessage}
         onSaveMessage={(messageId) => void toggleSavedMessage(messageId)}
-        onDeleteMessage={(id) => selectedConversationId && void deleteMessage(token.current!, selectedConversationId, id).catch((error) => addToast("Could not delete message", error.message, "warning"))}
+        onDeleteMessage={(id) => void deleteOwnMessage(id)}
         onToggleMute={toggleMute}
         onTogglePin={togglePin}
-        onLeaveGroup={(conversationId) => void leaveSelectedGroup(conversationId)}
         onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
         onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
@@ -729,6 +811,15 @@ export const AppShell: React.FC = () => {
         attachments={currentAttachments}
         onDownloadAttachment={downloadSharedFile}
         onLoadAttachmentPreview={loadSharedFilePreview}
+        onLeaveGroup={(id) => void closeGroup(id, false)}
+        onDeleteGroup={(id) => void closeGroup(id, true)}
+        availableUsers={users}
+        onAddMembers={(id, userIds) => token.current && void manageGroup(() => addGroupMembers(token.current!, id, userIds), "Members added")}
+        onRemoveMember={(id, userId) => token.current && void manageGroup(() => removeGroupMember(token.current!, id, userId), "Member removed")}
+        onChangeMemberRole={(id, userId, role) => token.current && void manageGroup(() => updateGroupRole(token.current!, id, userId, role), role === "admin" ? "Admin assigned" : "Admin removed")}
+        onSearchUsers={(query) => void searchUsers(query)}
+        onTransferOwnership={(id, userId) => token.current && void manageGroup(() => transferGroupOwnership(token.current!, id, userId), "Ownership transferred")}
+        onUpdateGroup={(id, title, description) => token.current && void manageGroup(() => updateGroupDetails(token.current!, id, title, description), "Group information updated")}
       />
     </div>
     <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />

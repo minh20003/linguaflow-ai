@@ -85,7 +85,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const showTranslatedAsPrimary = isTranslated && !isShowingOriginal;
   const showTranslationPreview = isTranslated && isShowingOriginal;
   const canReviewTranslation = Boolean(
-    !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
+    !isOutgoing && !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
   );
 
   const beginTranslationEdit = () => {
@@ -500,6 +500,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             <Copy className="w-3.5 h-3.5" />
           </button>
 
+          {isOutgoing && onDeleteMessage && (
+            <button
+              onClick={() => {
+                if (window.confirm("Delete this message?")) onDeleteMessage(message.id);
+              }}
+              aria-label="Delete message"
+              title="Delete message"
+              className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
           {/* More Menu Dropdown */}
           <div className="relative">
             <button
@@ -541,18 +554,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   <span>{interactionText(language, message.isSaved ? 'Unsave message' : 'Save message')}</span>
                 </button>
 
-                {onDeleteMessage && (
-                  <button
-                    onClick={() => {
-                      onDeleteMessage(message.id);
-                      setShowMoreMenu(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 text-left"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    <span>{interactionText(language, 'Delete')}</span>
-                  </button>
-                )}
               </div>
             )}
           </div>
