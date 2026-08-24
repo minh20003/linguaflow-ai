@@ -16,8 +16,8 @@ import { TranslationSuggestion } from '../../types';
 
 interface SuggestionsViewProps {
   suggestions: TranslationSuggestion[];
-  onApprove: (id: string, notes?: string, addToGlossary?: boolean) => void;
-  onReject: (id: string, reason?: string) => void;
+  onApprove: (id: string) => Promise<void>;
+  onReject: (id: string, reason?: string) => Promise<void>;
   onNotify: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -37,8 +37,6 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
 
   // Approval modal
   const [approvingItem, setApprovingItem] = useState<TranslationSuggestion | null>(null);
-  const [autoAddGlossary, setAutoAddGlossary] = useState(true);
-  const [approvalNote, setApprovalNote] = useState('');
 
   // Filtered suggestions
   const filteredSuggestions = useMemo(() => {
@@ -63,25 +61,18 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
 
   const handleOpenApprove = (item: TranslationSuggestion) => {
     setApprovingItem(item);
-    setAutoAddGlossary(item.autoAddToGlossary ?? true);
-    setApprovalNote('');
   };
 
-  const handleConfirmApprove = () => {
+  const handleConfirmApprove = async () => {
     if (!approvingItem) return;
-    onApprove(approvingItem.id, approvalNote, autoAddGlossary);
-    confetti({
-      particleCount: 50,
-      spread: 60,
-      origin: { y: 0.8 },
-    });
-    onNotify(
-      `Đã duyệt đề xuất "${approvingItem.suggestedTranslation.slice(0, 30)}..."${
-        autoAddGlossary ? ' và thêm vào từ điển' : ''
-      }`,
-      'success'
-    );
-    setApprovingItem(null);
+    try {
+      await onApprove(approvingItem.id);
+      confetti({ particleCount: 50, spread: 60, origin: { y: 0.8 } });
+      onNotify(`Đã duyệt và áp dụng thuật ngữ "${approvingItem.suggestedTranslation.slice(0, 30)}..."`, 'success');
+      setApprovingItem(null);
+    } catch {
+      onNotify('Không thể duyệt đề xuất. Vui lòng thử lại.', 'error');
+    }
   };
 
   const handleOpenReject = (item: TranslationSuggestion) => {
@@ -89,11 +80,15 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
     setRejectReason('');
   };
 
-  const handleConfirmReject = () => {
+  const handleConfirmReject = async () => {
     if (!rejectingItem) return;
-    onReject(rejectingItem.id, rejectReason || 'Chưa phù hợp với ngữ cảnh tiêu chuẩn LinguaFlow');
-    onNotify(`Đã từ chối đề xuất của ${rejectingItem.user}`, 'info');
-    setRejectingItem(null);
+    try {
+      await onReject(rejectingItem.id, rejectReason || 'Chưa phù hợp với ngữ cảnh tiêu chuẩn LinguaFlow');
+      onNotify(`Đã từ chối đề xuất của ${rejectingItem.user}`, 'info');
+      setRejectingItem(null);
+    } catch {
+      onNotify('Không thể từ chối đề xuất. Vui lòng thử lại.', 'error');
+    }
   };
 
   // Helper to render simple text comparison highlighting
@@ -156,7 +151,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
             </div>
           </div>
           <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{approvedCount}</div>
-          <div className="mt-2 text-xs text-green-600 font-medium">Đã tích hợp vào mô hình & thuật ngữ</div>
+          <div className="mt-2 text-xs text-green-600 font-medium">Đã được lưu thành thuật ngữ áp dụng</div>
         </button>
 
         <button
@@ -409,36 +404,8 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
               <p className="text-gray-900 font-medium">{approvingItem.suggestedTranslation}</p>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <label className="flex items-start gap-2.5 p-3 bg-gray-50 rounded-lg border border-gray-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoAddGlossary}
-                  onChange={(e) => setAutoAddGlossary(e.target.checked)}
-                  className="rounded text-green-600 focus:ring-green-500 w-4 h-4 mt-0.5"
-                />
-                <div>
-                  <span className="font-medium text-gray-900 block">
-                    Tự động thêm vào Từ điển Thuật ngữ (Glossary)
-                  </span>
-                  <span className="text-gray-400 text-xs">
-                    Lưu các từ khóa chính thành quy tắc dịch ưu tiên cao cho các lần dịch sau.
-                  </span>
-                </div>
-              </label>
-
-              <div>
-                <label className="font-medium text-gray-700 block mb-1">
-                  Ghi chú kiểm duyệt (Tùy chọn)
-                </label>
-                <input
-                  type="text"
-                  value={approvalNote}
-                  onChange={(e) => setApprovalNote(e.target.value)}
-                  placeholder="Ví dụ: Đã chuẩn hóa thuật ngữ chuyên ngành AI..."
-                  className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900"
-                />
-              </div>
+            <div className="rounded-lg border border-green-100 bg-green-50/50 p-3 text-xs text-green-900">
+              Khi duyệt, đề xuất sẽ được lưu thành thuật ngữ đang áp dụng cho các lần dịch sau. Thao tác này dùng dữ liệu backend, không chỉ cập nhật giao diện.
             </div>
 
             <div className="pt-2 flex justify-end gap-2 text-xs">

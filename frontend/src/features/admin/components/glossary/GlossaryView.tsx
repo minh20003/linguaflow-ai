@@ -17,10 +17,10 @@ import { TermItem, TermCategory, LanguageCode } from '../../types';
 
 interface GlossaryViewProps {
   terms: TermItem[];
-  onAddTerm: (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => void;
-  onUpdateTerm: (id: string, updatedData: Partial<TermItem>) => void;
-  onDeleteTerm: (id: string) => void;
-  onBatchImport: (importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[]) => void;
+  onAddTerm: (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => Promise<void>;
+  onUpdateTerm: (id: string, updatedData: Partial<TermItem>) => Promise<void>;
+  onDeleteTerm: (id: string) => Promise<void>;
+  onBatchImport: (importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[]) => Promise<void>;
   onNotify: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
@@ -124,7 +124,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
     });
   };
 
-  const handleSubmitForm = (e: React.FormEvent) => {
+  const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.sourceTerm.trim() || !formData.targetTerm.trim()) {
       onNotify('Vui lòng nhập cả thuật ngữ gốc và bản dịch chuẩn', 'error');
@@ -132,28 +132,34 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
     }
 
     if (editingTerm) {
-      onUpdateTerm(editingTerm.id, {
-        ...formData,
-        updatedAt: new Date().toISOString().split('T')[0],
-      });
-      onNotify(`Đã cập nhật thuật ngữ "${formData.sourceTerm}"`, 'success');
-      setEditingTerm(null);
+      try {
+        await onUpdateTerm(editingTerm.id, { ...formData, updatedAt: new Date().toISOString().split('T')[0] });
+        onNotify(`Đã cập nhật thuật ngữ "${formData.sourceTerm}"`, 'success');
+        setEditingTerm(null);
+      } catch {
+        onNotify('Không thể cập nhật thuật ngữ trên máy chủ.', 'error');
+      }
     } else {
-      onAddTerm({
-        ...formData,
-        createdBy: 'admin@linguaflow.ai',
-      });
-      onNotify(`Đã thêm thuật ngữ "${formData.sourceTerm}" vào từ điển`, 'success');
-      setIsAddModalOpen(false);
+      try {
+        await onAddTerm({ ...formData, createdBy: 'admin@linguaflow.ai' });
+        onNotify(`Đã thêm thuật ngữ "${formData.sourceTerm}" vào từ điển`, 'success');
+        setIsAddModalOpen(false);
+      } catch {
+        onNotify('Không thể thêm thuật ngữ trên máy chủ.', 'error');
+      }
     }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (deletingTermId) {
       const termToDelete = terms.find((t) => t.id === deletingTermId);
-      onDeleteTerm(deletingTermId);
-      onNotify(`Đã xóa thuật ngữ "${termToDelete?.sourceTerm}"`, 'info');
-      setDeletingTermId(null);
+      try {
+        await onDeleteTerm(deletingTermId);
+        onNotify(`Đã ngừng áp dụng thuật ngữ "${termToDelete?.sourceTerm}"`, 'info');
+        setDeletingTermId(null);
+      } catch {
+        onNotify('Không thể cập nhật trạng thái thuật ngữ trên máy chủ.', 'error');
+      }
     }
   };
 
@@ -184,7 +190,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
     onNotify(`Đã xuất ${filteredTerms.length} thuật ngữ ra file CSV thành công!`, 'success');
   };
 
-  const handleProcessImport = () => {
+  const handleProcessImport = async () => {
     if (!importText.trim()) {
       onNotify('Vui lòng dán nội dung CSV hoặc JSON để import', 'error');
       return;
@@ -242,7 +248,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
         return;
       }
 
-      onBatchImport(parsedItems);
+      await onBatchImport(parsedItems);
       onNotify(`Đã nhập thành công ${parsedItems.length} thuật ngữ vào từ điển!`, 'success');
       setIsImportModalOpen(false);
       setImportText('');
@@ -520,11 +526,11 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
                     {/* Status */}
                     <td className="px-6 py-3.5 text-center whitespace-nowrap">
                       <button
-                        onClick={() =>
-                          onUpdateTerm(term.id, {
+                        onClick={() => {
+                          void onUpdateTerm(term.id, {
                             status: term.status === 'active' ? 'inactive' : 'active',
-                          })
-                        }
+                          }).catch(() => onNotify('Không thể đổi trạng thái thuật ngữ trên máy chủ.', 'error'));
+                        }}
                         className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
                           term.status === 'active'
                             ? 'bg-green-50 text-green-700 hover:bg-green-100'

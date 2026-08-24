@@ -214,7 +214,7 @@ async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
         minute=0,
         outcome="timeout",
         target_language="vi",
-        source_language_declared="vi",
+        source_language_declared="vi-VN",
         source_language_detected=None,
         detect_method="",
         model_served="",
@@ -229,15 +229,14 @@ async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
 
 
 @pytest.mark.asyncio
-async def test_a_different_language_failure_with_no_model_stays_in_pairs_but_not_models(
+async def test_a_different_language_timeout_is_not_a_completed_pair_or_model(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """A timeout on a genuine `en->vi` attempt spent real time trying, so it
-    still belongs in `language_pairs` — unlike the same-language case above,
-    nothing here says the attempt was pointless. `models_served` is narrower
-    still: nothing captured which model was mid-flight when it timed out, so
-    there is no model to credit or blame, and no `"(none)"` bucket to stand in
-    for one."""
+    """A timeout is operational data, not a completed translation pair.
+
+    It remains visible in totals/outcomes for reliability monitoring, but is
+    neutral for pair success/failure and completed-translation latency.
+    """
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await add_message(
         test_db, conversation_id=conversation.id, sender_id=test_user.id
@@ -259,9 +258,10 @@ async def test_a_different_language_failure_with_no_model_stays_in_pairs_but_not
     summary = await summarize_attempts(test_db)
 
     assert summary.total == 1
-    assert list(summary.language_pairs) == ["en->vi"]
-    assert summary.language_pairs["en->vi"].count == 1
+    assert summary.outcomes == {"timeout": 1}
+    assert summary.language_pairs == {}
     assert summary.models_served == {}
+    assert summary.total_ms_p50 == 0
 
 
 @pytest.mark.asyncio
