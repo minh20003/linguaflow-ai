@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,7 @@ from src.database.models import (
     TranslationAttempt,
     TranslationResult,
     User,
+    UserSettings,
 )
 from src.schemas.chat import TranslationCompletedEvent
 from src.services.context_provider import DatabaseContextProvider
@@ -59,7 +60,7 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 # calls for common short phrases without turning translation delivery into a
 # cache dependency or changing the persistence contract.
 _CACHE_MAX_SIZE = 200
-_translation_cache: dict[tuple[str, str, str, str, str], str] = {}
+_translation_cache: dict[tuple[str, str, str, str, str, str], str] = {}
 
 
 def _normalize_cache_text(text: str) -> str:
@@ -79,7 +80,8 @@ def _cache_key(
     source_language: str,
     target_language: str,
     honorific_profile: str,
-) -> tuple[str, str, str, str, str]:
+    translation_tone: str = "natural",
+) -> tuple[str, str, str, str, str, str]:
     """Build a case-preserving key scoped to the conversation and the standing.
 
     The standing is part of the key and cannot be left out. `_is_cacheable`
@@ -96,6 +98,7 @@ def _cache_key(
         source_language,
         target_language,
         honorific_profile,
+        translation_tone,
     )
 
 
@@ -128,6 +131,7 @@ def _cache_primary_translation(
     snapshot: Mapping[str, Any],
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
     source_language: str,
     translated_text: str,
 ) -> None:
@@ -145,6 +149,7 @@ def _cache_primary_translation(
                 source_language,
                 target_language,
                 honorific_profile,
+                translation_tone,
             )
         ] = translated_text
     except Exception as exc:
@@ -210,6 +215,44 @@ def schedule_translations(
     task.add_done_callback(_log_task_failure)
 
 
+def schedule_translation_retry(
+    *,
+    message: Message,
+    reader_id: str,
+    publisher: EventPublisher,
+    session_factory: Callable[[], AsyncSession] | None = None,
+    graph_factory: Callable[[AsyncSession, str], Any] | None = None,
+) -> None:
+    """Retry exactly one authenticated reader's translation bucket.
+
+    The caller has already established membership and that the message is live.
+    The task rechecks both facts in its own session, because it may start after
+    someone leaves the conversation or withdraws the message.  A retry skips
+    the short-phrase cache and replaces the existing bucket row in place, so
+    feedback and reader edits keep their valid translation id.
+    """
+    snapshot = {
+        "message_id": message.id,
+        "conversation_id": message.conversation_id,
+        "sender_id": message.sender_id,
+        "original_text": message.original_text,
+        "source_language": message.source_language,
+        "edited_at": message.edited_at,
+    }
+    task = asyncio.create_task(
+        _retry_translation_for_reader(
+            snapshot=snapshot,
+            reader_id=reader_id,
+            publisher=publisher,
+            session_factory=session_factory or get_async_session_maker(),
+            graph_factory=graph_factory or _default_graph_factory,
+        )
+    )
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    task.add_done_callback(_log_task_failure)
+
+
 def _default_graph_factory(session: AsyncSession, message_id: str) -> Any:
     """Build a graph reading context and audience from the database.
 
@@ -261,20 +304,63 @@ async def _translate_message(
                 snapshot=snapshot,
                 target_language=language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 user_ids=user_ids,
                 publisher=publisher,
                 session_factory=session_factory,
                 graph_factory=graph_factory,
             )
-            for (language, honorific_profile), user_ids in recipients_by_bucket.items()
+            for (language, honorific_profile, translation_tone), user_ids in recipients_by_bucket.items()
         )
+    )
+
+
+async def _retry_translation_for_reader(
+    *,
+    snapshot: Mapping[str, Any],
+    reader_id: str,
+    publisher: EventPublisher,
+    session_factory: Callable[[], AsyncSession],
+    graph_factory: Callable[[AsyncSession, str], Any],
+) -> None:
+    """Resolve a current reader bucket, then force one fresh model run."""
+    async with session_factory() as session:
+        message = await session.get(Message, snapshot["message_id"])
+        membership = await session.get(
+            ConversationMember, (snapshot["conversation_id"], reader_id)
+        )
+        reader = await session.get(User, reader_id)
+        if message is None or message.deleted_at is not None or membership is None or reader is None:
+            return
+        if message.original_text != snapshot["original_text"]:
+            return
+        profile = await session.scalar(
+            select(ParticipantProfile.honorific_profile).where(
+                ParticipantProfile.conversation_id == snapshot["conversation_id"],
+                ParticipantProfile.user_id == reader_id,
+            )
+        )
+        settings = await session.get(UserSettings, reader_id)
+        target_language = reader.preferred_language
+        translation_tone = settings.translation_tone if settings else "natural"
+
+    await _translate_into(
+        snapshot=snapshot,
+        target_language=target_language,
+        honorific_profile=profile or DEFAULT_HONORIFIC_PROFILE,
+        translation_tone=translation_tone,
+        user_ids=[reader_id],
+        publisher=publisher,
+        session_factory=session_factory,
+        graph_factory=graph_factory,
+        force=True,
     )
 
 
 async def _recipients_by_bucket(
     session: AsyncSession,
     conversation_id: str,
-) -> tuple[str | None, dict[tuple[str, str], list[str]]]:
+) -> tuple[str | None, dict[tuple[str, str, str], list[str]]]:
     """Group a conversation's members by the language *and standing* they read at.
 
     One query answers everything the fan-out needs: which buckets are in play,
@@ -309,6 +395,8 @@ async def _recipients_by_bucket(
             User.preferred_language,
             Conversation.type,
             ParticipantProfile.honorific_profile,
+            UserSettings.auto_translate,
+            UserSettings.translation_tone,
         )
         .join(User, User.id == ConversationMember.user_id)
         .join(Conversation, Conversation.id == ConversationMember.conversation_id)
@@ -317,14 +405,17 @@ async def _recipients_by_bucket(
             (ParticipantProfile.conversation_id == ConversationMember.conversation_id)
             & (ParticipantProfile.user_id == ConversationMember.user_id),
         )
+        .outerjoin(UserSettings, UserSettings.user_id == ConversationMember.user_id)
         .where(ConversationMember.conversation_id == conversation_id)
     )
 
     conversation_type: str | None = None
-    grouped: dict[tuple[str, str], list[str]] = {}
-    for user_id, language, row_type, profile in rows:
+    grouped: dict[tuple[str, str, str], list[str]] = {}
+    for user_id, language, row_type, profile, auto_translate, tone in rows:
         conversation_type = row_type
-        bucket = (language, profile or DEFAULT_HONORIFIC_PROFILE)
+        if auto_translate is False:
+            continue
+        bucket = (language, profile or DEFAULT_HONORIFIC_PROFILE, tone or "natural")
         grouped.setdefault(bucket, []).append(user_id)
     return conversation_type, grouped
 
@@ -333,8 +424,8 @@ def _include_direct_sender(
     *,
     conversation_type: str | None,
     sender_id: str,
-    recipients_by_bucket: dict[tuple[str, str], list[str]],
-) -> dict[tuple[str, str], list[str]]:
+    recipients_by_bucket: dict[tuple[str, str, str], list[str]],
+) -> dict[tuple[str, str, str], list[str]]:
     """Let a one-to-one sender receive the translation of their own message.
 
     Grouping by reading language puts the sender in the bucket for the language
@@ -363,6 +454,9 @@ def _include_direct_sender(
     if conversation_type != "direct":
         return recipients_by_bucket
 
+    if not any(sender_id in user_ids for user_ids in recipients_by_bucket.values()):
+        return recipients_by_bucket
+
     return {
         bucket: user_ids if sender_id in user_ids else [*user_ids, sender_id]
         for bucket, user_ids in recipients_by_bucket.items()
@@ -374,17 +468,19 @@ async def _translate_into(
     snapshot: Mapping[str, Any],
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
     user_ids: list[str],
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
     graph_factory: Callable[[AsyncSession, str], Any],
+    force: bool = False,
 ) -> None:
     """Run the agent for one bucket, then persist and publish."""
     from src.config import get_settings
 
     cacheable = _is_cacheable(str(snapshot["original_text"]))
     confirmed_source = _confirmed_cache_source(snapshot) if cacheable else None
-    if confirmed_source:
+    if confirmed_source and not force:
         try:
             cached_text = _translation_cache.get(
                 _cache_key(
@@ -393,6 +489,7 @@ async def _translate_into(
                     confirmed_source,
                     target_language,
                     honorific_profile,
+                    translation_tone,
                 )
             )
         except Exception as exc:
@@ -404,6 +501,7 @@ async def _translate_into(
                 snapshot=snapshot,
                 target_language=target_language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 source_language=confirmed_source,
                 translated_text=cached_text,
                 user_ids=user_ids,
@@ -433,6 +531,7 @@ async def _translate_into(
                 snapshot=snapshot,
                 target_language=target_language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 outcome=outcome,
                 telemetry=(result or {}).get("telemetry") or {},
                 source_language=(result or {}).get("source_language") or "",
@@ -453,6 +552,7 @@ async def _translate_into(
             # Carried now so the graph, the persisted row and the measurement
             # row all describe the same bucket from this point on.
             "honorific_profile": honorific_profile,
+            "translation_tone": translation_tone,
         }
 
         try:
@@ -466,6 +566,7 @@ async def _translate_into(
                         # Without this, the traces for a message translated into
                         # four standings are indistinguishable in Langfuse.
                         honorific_profile=honorific_profile,
+                        translation_tone=translation_tone,
                         attempt_id=attempt_id,
                         # One of the three keys Langfuse promotes to a
                         # first-class attribute; as ordinary metadata the
@@ -534,10 +635,12 @@ async def _translate_into(
             message_id=snapshot["message_id"],
             target_language=target_language,
             honorific_profile=honorific_profile,
+            translation_tone=translation_tone,
             translated_text=translated_text,
             model=str(result.get("model") or ""),
             latency_ms=int(result.get("latency_ms") or 0),
             is_fallback=bool(result.get("is_fallback")),
+            force=force,
         )
         if translation is None:
             return
@@ -553,6 +656,7 @@ async def _translate_into(
                 snapshot=snapshot,
                 target_language=target_language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 source_language=str(result["source_language"]),
                 translated_text=translated_text,
             )
@@ -573,6 +677,7 @@ async def _translate_into(
             # and the two must name the same bucket or a reload would replace
             # the message with a different rendering of it.
             honorific_profile=translation.honorific_profile,
+            translation_tone=translation.translation_tone,
             translated_text=translation.translated_text,
             model=translation.model,
             latency_ms=translation.latency_ms,
@@ -598,6 +703,7 @@ async def _serve_cached_translation(
     snapshot: Mapping[str, Any],
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
     source_language: str,
     translated_text: str,
     user_ids: list[str],
@@ -627,6 +733,7 @@ async def _serve_cached_translation(
                 message_id=snapshot["message_id"],
                 target_language=target_language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 translated_text=translated_text,
                 model="cache",
                 latency_ms=0,
@@ -642,6 +749,7 @@ async def _serve_cached_translation(
                 source_language=source_language,
                 target_language=target_language,
                 honorific_profile=translation.honorific_profile,
+                translation_tone=translation.translation_tone,
                 translated_text=translation.translated_text,
                 model=translation.model,
                 latency_ms=translation.latency_ms,
@@ -666,6 +774,7 @@ async def record_attempt(
     snapshot: Mapping[str, Any],
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
     outcome: str,
     telemetry: Mapping[str, Any],
     source_language: str,
@@ -697,6 +806,7 @@ async def record_attempt(
                 message_id=snapshot["message_id"],
                 target_language=target_language,
                 honorific_profile=honorific_profile,
+                translation_tone=translation_tone,
                 source_language_declared=snapshot["source_language"],
                 source_language_detected=detected,
                 outcome=outcome,
@@ -748,44 +858,104 @@ async def _persist_translation(
     message_id: str,
     target_language: str,
     honorific_profile: str,
+    translation_tone: str = "natural",
     translated_text: str,
     model: str,
     latency_ms: int,
     is_fallback: bool,
+    force: bool = False,
 ) -> TranslationResult | None:
     """Store one translation, or return the existing row if it is already there.
 
-    The unique constraint on (message_id, target_language, honorific_profile)
-    means a retry cannot create a second row, so members sharing a language and
-    a standing keep sharing one `translation_id` (docs/CONTRACT.md section 4.4).
+    When force=True (Translate Again retry), a new translation row with an
+    incremented version number is created to preserve previous translation history
+    and associated feedback/edits.
+    When force=False, returns the existing translation if already present or creates
+    version 1 idempotently.
     """
-    translation = TranslationResult(
-        message_id=message_id,
-        target_language=target_language,
-        honorific_profile=honorific_profile,
-        translated_text=translated_text,
-        model=model,
-        latency_ms=latency_ms,
-        is_fallback=is_fallback,
+    filters = (
+        TranslationResult.message_id == message_id,
+        TranslationResult.target_language == target_language,
+        TranslationResult.honorific_profile == honorific_profile,
+        TranslationResult.translation_tone == translation_tone,
     )
-    session.add(translation)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        # The standing has to be in this filter. `scalar()` does not raise on
-        # several rows, it returns the first, so without it a retry would hand
-        # back another bucket's row — and that id travels straight into the
-        # WebSocket event and into `record_attempt`, attaching the reader's
-        # rating and edits to a translation they never saw.
+    if not force:
         existing = await session.scalar(
-            select(TranslationResult).where(
-                TranslationResult.message_id == message_id,
-                TranslationResult.target_language == target_language,
-                TranslationResult.honorific_profile == honorific_profile,
+            select(TranslationResult)
+            .where(*filters)
+            .order_by(
+                TranslationResult.version.desc(),
+                TranslationResult.created_at.desc(),
+                TranslationResult.id.desc(),
             )
+            .limit(1)
         )
-        return existing
+        if existing is not None:
+            return existing
 
-    await session.refresh(translation)
-    return translation
+        translation = TranslationResult(
+            message_id=message_id,
+            target_language=target_language,
+            honorific_profile=honorific_profile,
+            translation_tone=translation_tone,
+            version=1,
+            translated_text=translated_text,
+            model=model,
+            latency_ms=latency_ms,
+            is_fallback=is_fallback,
+        )
+        session.add(translation)
+        try:
+            await session.commit()
+            await session.refresh(translation)
+            return translation
+        except IntegrityError:
+            await session.rollback()
+            return await session.scalar(
+                select(TranslationResult)
+                .where(*filters)
+                .order_by(
+                    TranslationResult.version.desc(),
+                    TranslationResult.created_at.desc(),
+                    TranslationResult.id.desc(),
+                )
+                .limit(1)
+            )
+
+    # For user retries (force=True), loop through collision attempts to increment version
+    for _ in range(5):
+        max_version = await session.scalar(
+            select(func.max(TranslationResult.version)).where(*filters)
+        )
+        target_version = (max_version or 0) + 1
+
+        translation = TranslationResult(
+            message_id=message_id,
+            target_language=target_language,
+            honorific_profile=honorific_profile,
+            translation_tone=translation_tone,
+            version=target_version,
+            translated_text=translated_text,
+            model=model,
+            latency_ms=latency_ms,
+            is_fallback=is_fallback,
+        )
+        session.add(translation)
+        try:
+            await session.commit()
+            await session.refresh(translation)
+            return translation
+        except IntegrityError:
+            await session.rollback()
+
+    # Fallback if multiple concurrent collisions occurred: return latest version
+    return await session.scalar(
+        select(TranslationResult)
+        .where(*filters)
+        .order_by(
+            TranslationResult.version.desc(),
+            TranslationResult.created_at.desc(),
+            TranslationResult.id.desc(),
+        )
+        .limit(1)
+    )

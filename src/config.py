@@ -110,6 +110,14 @@ class Settings(BaseSettings):
     fallback_translator_enabled: bool = True
     fallback_translator_timeout_seconds: int = Field(default=5, ge=1, le=30)
 
+    # Ordinary direct RTC calls.  The Daily server API key never reaches the
+    # frontend; the browser receives only a short-lived meeting token.
+    rtc_provider: Literal["daily", "disabled"] = "daily"
+    daily_api_key: str = ""
+    daily_api_base: str = "https://api.daily.co/v1"
+    call_ring_timeout_seconds: int = Field(default=45, ge=10, le=300)
+    call_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
     # Observability — Langfuse (F-03.4). Empty keys disable tracing.
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

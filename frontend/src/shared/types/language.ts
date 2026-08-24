@@ -8,7 +8,11 @@ export type LanguageCode =
   | "fr"
   | "de"
   | "th"
-  | "id";
+  | "id"
+  | "pt"
+  | "ru"
+  | "ar"
+  | "hi";
 
 export interface LanguageOption {
   code: LanguageCode;

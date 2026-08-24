@@ -4,7 +4,9 @@ import { ChatHeader } from './ChatHeader';
 import { MessageList } from './MessageList';
 import { MessageComposer } from './MessageComposer';
 import { ConversationDetailsDrawer } from './ConversationDetailsDrawer';
+import { MessageSearchPanel, type ConversationSearchResult } from './MessageSearchPanel';
 import { MessageSquare, Sparkles, Plus, Globe } from 'lucide-react';
+import { emptyChatText } from '../i18n';
 
 interface ChatViewProps {
   conversation: Conversation | null;
@@ -21,8 +23,12 @@ interface ChatViewProps {
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
+  onSaveMessage: (messageId: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   onToggleMute: (conversationId: string) => void;
+  onTogglePin: (conversationId: string) => void;
+  onBlockContact: (conversationId: string) => void;
+  onSearchMessages: (query: string) => Promise<ConversationSearchResult[]>;
   onOpenNewChat: () => void;
   onStartCall: (type: 'voice' | 'video') => void;
   language: User['nativeLanguage'];
@@ -55,8 +61,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onRateTranslation,
   onEditTranslation,
   onForward,
+  onSaveMessage,
   onDeleteMessage,
   onToggleMute,
+  onTogglePin,
+  onBlockContact,
+  onSearchMessages,
   onOpenNewChat,
   onStartCall,
   language,
@@ -74,10 +84,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onUpdateGroup,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
 
   // If no conversation is active, render the clean centered empty state
   if (!conversation) {
+    const [emptyTitle, emptyDescription, startConversation] = emptyChatText(language);
     return (
       <div
         id="empty-chat-state"
@@ -88,10 +100,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
 
         <h2 className="text-xl font-bold text-[#1E2230] dark:text-[#F5F6FA] mb-1.5">
-          Your conversations live here
+          {emptyTitle}
         </h2>
         <p className="text-sm text-[#74798C] dark:text-[#9DA3B4] max-w-sm mb-6 leading-relaxed">
-          Chat naturally across languages with AI-assisted instant translation and real-time smart suggestions.
+          {emptyDescription}
         </p>
 
         <button
@@ -99,7 +111,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#2563EB] text-white font-semibold text-sm hover:bg-[#1D4ED8] shadow-md shadow-[#2563EB]/25 hover:scale-105 active:scale-95 transition-all"
         >
           <Plus className="w-4 h-4" />
-          <span>Start a conversation</span>
+          <span>{startConversation}</span>
         </button>
       </div>
     );
@@ -120,7 +132,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
       {/* Main Active Chat Column - Stretches to fill entire available width */}
       <main
         id="active-chat-panel"
-        className="flex-1 flex flex-col h-screen min-w-0 bg-[#F7F8FC] dark:bg-[#14161C] transition-colors"
+        className="relative flex-1 flex flex-col h-screen min-w-0 bg-[#F7F8FC] dark:bg-[#14161C] transition-colors"
       >
         {/* Full-width Chat Header */}
         <ChatHeader
@@ -129,9 +141,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onToggleDetails={() => setIsDetailsOpen(!isDetailsOpen)}
           isDetailsOpen={isDetailsOpen}
           onStartCall={onStartCall}
-          onSearchInChat={() => {}}
+          onSearchInChat={() => setIsSearchOpen(true)}
           language={language}
         />
+
+        {isSearchOpen && (
+          <MessageSearchPanel
+            onClose={() => setIsSearchOpen(false)}
+            onSearch={onSearchMessages}
+            onSelect={(messageId) => {
+              document.getElementById(`message-${messageId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              setIsSearchOpen(false);
+            }}
+          />
+        )}
 
         {/* Full-width Messages Container */}
         <MessageList
@@ -146,6 +169,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onRateTranslation={onRateTranslation}
           onEditTranslation={onEditTranslation}
           onForward={onForward}
+          onSaveMessage={onSaveMessage}
           onDeleteMessage={onDeleteMessage}
           onDownloadAttachment={onDownloadAttachment}
           onLoadAttachmentPreview={onLoadAttachmentPreview}
@@ -170,10 +194,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         onToggleMute={onToggleMute}
+        onTogglePin={onTogglePin}
+        onLeaveGroup={onLeaveGroup}
+        onBlockContact={onBlockContact}
         language={language}
         attachments={attachments}
         onDownloadAttachment={onDownloadAttachment}
-        onLeaveGroup={onLeaveGroup}
         onDeleteGroup={onDeleteGroup}
         currentUserId={currentUser.id}
         availableUsers={availableUsers}

@@ -402,6 +402,7 @@ async def translate(state: AgentState) -> dict:
             domain=state.get("domain", ""),
             audience=state.get("audience", ""),
             honorific_profile=state.get("honorific_profile", ""),
+            translation_tone=state.get("translation_tone", "natural"),
         ),
     )
     user_prompt = build_user_prompt(

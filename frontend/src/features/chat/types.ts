@@ -63,6 +63,7 @@ export interface Message {
   replyTo?: MessageReply;
   forwardedFromMessageId?: string;
   reactions?: MessageReaction[];
+  isSaved?: boolean;
   attachments?: MessageAttachment[];
   dateDivider?: string;
 }
@@ -83,6 +84,8 @@ export interface Conversation {
   typingUser?: string;
   isMuted?: boolean;
   isPinned?: boolean;
+  pinnedAt?: string | null;
+  createdAt?: string | null;
   description?: string;
   createdBy?: string;
   currentUserRole?: 'owner' | 'admin' | 'member';
