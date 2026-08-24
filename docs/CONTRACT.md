@@ -391,9 +391,9 @@ Tệp được tải lên **trước**, sau đó mới gửi tin nhắn kèm `at
 
 ### 3.9. Đặt lại mật khẩu
 
-`POST /auth/password/forgot` **luôn** trả `200` kèm cùng một câu trả lời chung, dù địa chỉ có tồn tại hay không — trả `404` cho địa chỉ lạ sẽ biến endpoint này thành công cụ dò tài khoản không cần đăng nhập.
+`POST /auth/password/forgot` **luôn** trả `200` kèm cùng một câu trả lời chung, dù địa chỉ có tồn tại hay không — trả `404` cho địa chỉ lạ sẽ biến endpoint này thành công cụ dò tài khoản không cần đăng nhập. Với tài khoản tồn tại, server tạo một token dùng một lần, vô hiệu hoá các token reset còn mở trước đó, rồi gửi liên kết `FRONTEND_URL/reset-password?token=...` bằng SMTP. Liên kết dùng ngôn ngữ giao diện đã lưu của tài khoản.
 
-Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=development`, để lập trình viên chạy trọn luồng trên một màn hình. **Ở mọi môi trường khác, trường này là `null` và mã đặt lại chỉ được ghi vào log của server** (mức `WARNING`), do dự án chưa gắn dịch vụ gửi email — xem `docs/DEPLOY.md`. Client vì thế phải cho người dùng **nhập tay mã đặt lại** khi phản hồi không kèm token, chứ không được coi đó là lỗi.
+Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=development`, để lập trình viên chạy trọn luồng mà không cần SMTP. **Ở mọi môi trường khác, trường này là `null`; token không bao giờ được ghi vào log server.** Nếu SMTP gặp sự cố, server chỉ ghi lỗi vận hành an toàn và vẫn trả phản hồi chung để không biến lỗi gửi mail thành kênh dò tài khoản.
 
 `POST /auth/password/reset` tiêu thụ mã đó, đổi mật khẩu và **thu hồi toàn bộ phiên** của tài khoản. Mã dùng một lần và hết hạn sau `PASSWORD_RESET_EXPIRE_MINUTES` phút.
 

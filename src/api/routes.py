@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import (
@@ -151,7 +152,11 @@ from src.services.connection_manager import ConnectionManager
 from src.services.conversation_intelligence import ConversationIntelligenceService
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
-from src.services.email import EmailDeliveryError, send_registration_otp_email
+from src.services.email import (
+    EmailDeliveryError,
+    send_password_reset_email,
+    send_registration_otp_email,
+)
 from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
 from src.services.profiles import (
     profile_for,
@@ -1032,35 +1037,52 @@ async def forgot_password(
     request: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ForgotPasswordResponse:
-    """Create a short-lived reset token without revealing account existence."""
+    """Email a short-lived reset link without revealing account existence."""
     result = await db.execute(select(User).where(User.email == request.email))
     user = result.scalar_one_or_none()
-    generic = "If the account exists, password reset instructions are ready."
+    generic = "If an account exists for that email, a password reset link will be sent shortly."
     if user is None:
         return ForgotPasswordResponse(message=generic)
 
+    settings = get_settings()
+    now = datetime.now(UTC)
     raw_token = create_refresh_token()
+    # Only the newest link remains usable. This limits the impact of a link
+    # sitting in an old inbox while retaining the single-use token guarantee.
+    await db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=now)
+    )
     db.add(PasswordResetToken(
         user_id=user.id,
         token_hash=hash_refresh_token(raw_token),
-        expires_at=datetime.now(UTC) + timedelta(minutes=get_settings().password_reset_expire_minutes),
+        expires_at=now + timedelta(minutes=settings.password_reset_expire_minutes),
     ))
     await db.commit()
-    # There is no mail provider yet (docs/DEPLOY.md). In development the token
-    # comes back in the response so the flow is testable in one screen; anywhere
-    # else it goes to the server log only, for an administrator to read out to
-    # the person who asked. It is never both — a reset token in an HTTP response
-    # is a password anyone who can reach the endpoint may claim.
-    if get_settings().app_env == "development":
-        return ForgotPasswordResponse(message=generic, reset_token=raw_token)
 
-    logger.warning(
-        "Password reset requested for %s. Reset token: %s (valid %s minutes)",
-        user.email,
-        raw_token,
-        get_settings().password_reset_expire_minutes,
+    reset_url = f"{settings.frontend_url}/reset-password?{urlencode({'token': raw_token})}"
+    try:
+        await send_password_reset_email(
+            to_email=user.email,
+            reset_url=reset_url,
+            expires_in_minutes=settings.password_reset_expire_minutes,
+            language=user.interface_language,
+        )
+    except EmailDeliveryError as exc:
+        # Preserve the same response for existing and unknown emails. Returning
+        # an SMTP error only for real accounts would reintroduce account probing.
+        logger.error("Password-reset email delivery failed for user %s: %s", user.id, type(exc).__name__)
+
+    # Development keeps the opaque token available for automated tests and
+    # offline work. Production never exposes it through the API response.
+    return ForgotPasswordResponse(
+        message=generic,
+        reset_token=raw_token if settings.app_env == "development" else None,
     )
-    return ForgotPasswordResponse(message=generic)
 
 
 @router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
