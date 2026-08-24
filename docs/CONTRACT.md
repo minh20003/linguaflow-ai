@@ -173,7 +173,11 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `POST` | `/admin/glossary/proposals/{proposal_id}/reject` | `{"reason": str}` | `GlossaryProposalDTO`, §3.12 | Đã hiện thực |
 | `GET` | `/admin/glossary?include_retired=&limit=` | — | `[GlossaryEntryDTO]`, §3.12 | Đã hiện thực |
 | `POST` | `/admin/glossary` | `{"source_term", "target_term", "source_language", "target_language", "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, `201` — §3.12 | Đã hiện thực |
+| `PATCH` | `/admin/glossary/{entry_id}` | `{"source_term"?, "target_term"?, "domain"?, "audience"?, "keep_verbatim"?}` | `GlossaryEntryDTO`, §3.12 | Đã hiện thực |
 | `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
+| `POST` | `/admin/glossary/{entry_id}/restore` | — | `GlossaryEntryDTO` với `status = "active"`, §3.12 | Đã hiện thực |
+| `DELETE` | `/admin/glossary/{entry_id}/permanent` | — | `GlossaryEntryDTO` của dòng vừa bị xoá, `409` nếu mục còn `active` — §3.12 | Đã hiện thực |
+| `GET` | `/admin/feedback?limit=` | — | `FeedbackOverviewDTO`, §3.13 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -450,7 +454,7 @@ Người gửi ở `direct` có đủ bộ điều khiển vì hội thoại ch�
 
 Nút gạt bản gốc/bản dịch không gọi API nào — nó chỉ đổi văn bản đang hiển thị trong bóng chat, dữ liệu đã có sẵn ở client.
 
-**`consent_to_share` (thêm 20/08).** Mặc định `false`, và phải được hỏi tường minh chứ không suy đoán. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
+**`consent_to_share` (thêm 20/08, đổi cách hỏi 24/08).** Trường vẫn nằm nguyên trong thân yêu cầu và server vẫn xử đúng cả hai giá trị — `false` là trạng thái có thật, và một client khác vẫn gửi được. Đổi là ở chỗ **hỏi thế nào**: giao diện chat không còn ô tích riêng mà đặt ngay dưới ô soạn một câu nói rõ rằng gửi góp ý đồng nghĩa với đồng ý chia sẻ tin nhắn này để cải thiện hệ thống, và gửi kèm `true`. Lý do là số liệu chứ không phải tiện tay: gần như không ai tích ô đó, nên miner gần như không nhận được gì và hàng đợi duyệt trống — một cơ chế đồng ý không ai dùng thì không bảo vệ được ai mà cũng chẳng dạy được điều gì. Câu thông báo vì thế phải đứng **trước** nút gửi, lúc quyết định còn mở. Khi `true`, ngoài dòng `translation_edits` như cũ, hệ thống ghi thêm **một bản dẫn xuất hẹp hơn nhiều** vào `correction_log`: cụm từ máy dùng, cụm người dùng thay vào, và vài từ xung quanh đã bỏ email, link, dãy số dài. Chỉ bản dẫn xuất đó mới được khai thác để đề xuất glossary (ADR-28); `translation_edits` **vẫn riêng tư tuyệt đối với người viết** đúng như ADR-19 quy định, và không quy trình nào đọc nó. Cờ này khoá **cả dòng** `correction_log` chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó.
 
 **Góp ý nhiều lần.** Mỗi lần gọi ghi thêm một dòng vào `translation_edits`, không ghi đè. Bản có `created_at` mới nhất **của chính người đó** là bản có hiệu lực và là bản duy nhất xuất hiện trong `MessageDTO`; các bản trước vẫn nằm trong bảng, dành cho tính năng quản trị về sau. Không có endpoint xoá.
 
@@ -508,7 +512,7 @@ Quy trình đăng ký tài khoản được bảo vệ qua 2 bước bằng mã 
 
 ### 3.12. Glossary và hàng đợi duyệt (chỉ quản trị viên)
 
-Sáu endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
+Mọi endpoint dưới tiền tố `/admin/` đều gác bằng `get_admin_user`; tài khoản `member`
 nhận `403 Forbidden`. Gác đặt trên **từng** endpoint chứ không dựa vào tiền tố đường dẫn:
 `users.role` so với chuỗi `"admin"` là toàn bộ mô hình phân quyền của dự án (§5 ghi chú 1),
 không có middleware nào đứng sau, nên một dependency bị quên trông y hệt mã đang chạy đúng.
@@ -556,6 +560,91 @@ cùng làm hàng đợi sẽ đều tin mình là người đã duyệt, và quy
 giao tháng trước được định hình bởi thuật ngữ đang active lúc đó; xoá dòng là xoá mất lời
 giải thích duy nhất cho câu chữ người đọc đang nhìn. Nghỉ hưu thì nó thôi định hình những
 bản dịch mới (§5 ghi chú 16).
+
+**`keep_verbatim = true` nghĩa là thuật ngữ không được dịch**, và prompt khi đó ghi
+`"<thuật ngữ>": leave untranslated, exactly as written` chứ **không** đọc tới `target_term`.
+Cột `target_term` vẫn `NOT NULL` nên vẫn phải có giá trị, và quy ước — do chính prompt đề xuất
+thuật ngữ đặt ra — là **lặp lại đúng thuật ngữ nguồn**. Màn hình quản trị vì thế tự điền và khoá
+ô bản dịch khi ô "giữ nguyên" được tích: trước 22/08 biểu mẫu vẫn đòi một bản dịch mà nó sắp
+bỏ qua, và không có gì trên màn hình nói ra điều đó.
+
+**`DELETE /admin/glossary/{id}/permanent` xoá thật, và chỉ xoá được mục đã nghỉ hưu (24/08).**
+Server trả `409 Conflict` cho một mục còn `active`: mục đang có hiệu lực thì theo định nghĩa
+là đang định hình bản dịch, nên câu trả lời cho "xoá cái này" luôn là "cho nghỉ hưu trước đã
+rồi xem". Phần còn lại mới là việc endpoint này làm: một thuật ngữ gõ nhầm chưa từng định
+hình gì thì cũng không giải thích được gì, mà dòng của nó vẫn giữ chỗ trong ràng buộc duy
+nhất `(source_term, source_language, target_language, domain, audience)` — thêm lại bản đã
+sửa sẽ nhận `409` chừng nào dòng cũ còn đó. Phản hồi là dòng **trước khi** bị xoá, vì sau lời
+gọi này không còn chỗ nào tra lại. Hai bước hỏi trên giao diện quản trị là một phần của thiết
+kế chứ không phải trang trí: đây là thao tác duy nhất trong màn hình không hoàn tác được.
+
+**`POST /admin/glossary/{id}/restore` là chiều ngược lại của việc nghỉ hưu (22/08).** Vì
+không có gì bị xoá nên khôi phục chỉ là đổi `status` về `active`: mục giữ nguyên `id`,
+embedding và ngày được duyệt lần đầu, thay vì được tạo lại thành một dòng thứ hai mà người
+đọc phải đối chiếu mới biết máy đang dùng dòng nào.
+
+**`PATCH /admin/glossary/{id}` sửa một mục đang có hiệu lực (22/08).** Chỉ những trường được
+gửi mới thay đổi, nên một màn hình chưa biết tới cột thêm về sau không thể xoá trắng cột đó
+bằng cách bỏ sót. **Cặp ngôn ngữ không sửa được**: một mục sai cặp ngôn ngữ là một mục khác
+chứ không phải một mục gõ nhầm, và cả embedding lẫn ràng buộc duy nhất đều gắn với cặp ấy.
+Khi `source_term` đổi, server **tính lại embedding** — không có vector mới thì tầng khớp ngữ
+nghĩa vẫn khớp theo cách viết cũ, im lặng, và triệu chứng duy nhất là một thuật ngữ bỗng
+không còn được tìm thấy. Sửa được là cần thiết vì phương án còn lại tệ hơn: sửa một lỗi gõ
+bằng cách cho mục cũ nghỉ hưu rồi thêm một mục gần giống sẽ để lại hai dòng vĩnh viễn.
+
+### 3.13. Tổng quan góp ý của người đọc (chỉ quản trị viên, 24/08)
+
+`GET /admin/feedback?limit=` trả về **một** phản hồi cho cả tab góp ý, thay vì ba endpoint:
+ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn hình có ba vòng quay chờ.
+
+```json
+{
+  "votes": {
+    "up": 12,
+    "down": 3,
+    "neutral": 1,
+    "total": 16,
+    "up_rate": 0.75,
+    "ratings": {"5": 12, "3": 1, "1": 3}
+  },
+  "shared_corrections": [
+    {
+      "source_phrase": "staging environment",
+      "corrected_target": "môi trường staging",
+      "source_language": "en",
+      "target_language": "vi",
+      "domain": "engineering",
+      "audience": "internal",
+      "anonymized_snippet": "… deploy lên staging environment trước …",
+      "observed_at": "2026-08-24T09:04:00Z"
+    }
+  ],
+  "shared_total": 41,
+  "withheld_total": 7
+}
+```
+
+**`votes` là histogram của `feedbacks.rating`.** Giao diện chỉ gửi 5 cho ngón cái lên và 1 cho
+ngón cái xuống, nên hai ô đó được gọi tên; mọi giá trị khác vào `neutral` chứ không bị bỏ, và
+`ratings` giữ nguyên histogram 1–5 để một giá trị lạ hiện ra thay vì lẫn vào một ô nào đó mà
+không ai biết giao diện đã đổi. `up_rate` làm tròn 4 chữ số, bằng 0 khi chưa có lượt nào.
+
+**`shared_corrections` chỉ gồm các dòng `correction_log` có `consent_to_share = true`,** mới
+nhất trước, cắt theo `limit`. Mỗi dòng đúng bằng những cột miner đọc, và đó chính là điểm của
+màn hình này: trước khi có nó, đầu ra nhìn thấy được của cả đường ống góp ý chỉ là một đề xuất
+— thứ chỉ xuất hiện khi đã có vài người độc lập sửa giống nhau — nên mọi thứ dưới ngưỡng ấy
+đều vô hình, kể cả trường hợp không có gì đang chảy về.
+
+**Ranh giới đọc giống hệt §3.12:** không người gửi, không `conversation_id`, không
+`message_id`, và **không** câu chữ của một tin nhắn mà người viết không đồng ý chia sẻ.
+`anonymized_snippet` là văn bản duy nhất phái sinh từ tin nhắn xuất hiện ở đây, đã bỏ tên
+riêng và các con số ngay lúc ghi, và nó cần có vì một cặp thuật ngữ không kèm ngữ cảnh dùng
+thì không phán xét được.
+
+**`withheld_total` là số dòng `correction_log` mà người viết không đồng ý chia sẻ** — một con
+số, không kèm gì khác. Nó tồn tại để việc "đang bị bỏ ra ngoài" nhìn thấy được, thay vì trông
+như chưa từng có. `shared_total` là tổng số dòng đã đồng ý chia sẻ, khác với độ dài mảng ở
+trên khi `limit` cắt bớt.
 
 ## 4. WebSocket Protocol
 
@@ -676,7 +765,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 13. `users.interface_language` (§1.2) `NOT NULL`; migration lấp giá trị ban đầu bằng chính `preferred_language` của từng dòng, nên không tài khoản nào thấy giao diện đổi ngôn ngữ sau khi nâng cấp. Không có ràng buộc khoá ngoại tới danh sách ngôn ngữ: danh sách đó là allowlist ở tầng ứng dụng (`GET /languages`), không phải bảng.
 14. `translation_attempts.total_ms` đo bằng wall clock ở tầng service, bao trùm cả truy vấn ngữ cảnh và overhead LangGraph, nên **rộng hơn** `translation_results.latency_ms` (chỉ tính thời gian gọi model). Ngữ nghĩa của `latency_ms` giữ nguyên vì nó đã nằm trong sự kiện WebSocket và REST history; NFR-01 nói về `total_ms`.
 15. `conversation_profiles` và `participant_profiles` giữ kết quả suy luận của LLM về **lĩnh vực**, **đối tượng** của hội thoại và **vị thế** của từng thành viên. Suy luận không chạy theo từng tin nhắn: chờ đủ 5 tin mới chạy lần đầu, sau đó lặp lại mỗi 20 tin, và dừng hẳn khi 3 lần liên tiếp cho cùng kết quả — lúc đó `locked_at` được đóng dấu. Cách này chặn hạn mức ở vài lượt gọi cho mỗi hội thoại, đồng thời không để đối tượng nhấp nháy giữa các tin nhắn, thứ mà người đọc sẽ thấy thành giọng văn đổi giữa chừng (ADR-24). `participant_profiles.honorific_profile` nhận đúng bốn giá trị có `CheckConstraint`: `senior`, `peer`, `junior`, `client`; `peer` là bậc trung tính và là bậc mặc định khi chưa suy ra được gì. Khoá theo `(conversation_id, user_id)` chứ không theo người: cùng một tài khoản là `junior` với quản lý của mình và là `client` trong hội thoại với nhà cung cấp.
-16. `glossary_entries` là bảng ánh xạ thuật ngữ nguồn → đích, tồn tại để ép **tính nhất quán**: nếu để tự do, model dịch `staging environment` lúc thì "môi trường staging" lúc thì "môi trường dàn dựng", và người đọc không biết hai câu có nói về cùng một thứ không. `domain` và `audience` là thứ làm cùng một thuật ngữ ra hai kết quả — dòng gắn `audience` nội bộ giữ nguyên `UI`, dòng gắn `audience` khách hàng cho ra "giao diện". Chuỗi rỗng nghĩa là "áp dụng ở mọi nơi" và đóng vai trò bậc dự phòng, nên **cả hai cột đều nằm trong ràng buộc duy nhất và không được phép `NULL`**: `NULL` không so bằng `NULL` nên bản trùng sẽ lọt lưới. `status` nhận `active` hoặc `retired`; **không xoá dòng bao giờ** — một bản dịch giao tháng trước được định hình bởi thuật ngữ đang active lúc đó, xoá đi là xoá mất lời giải thích duy nhất cho câu chữ người đọc đang nhìn.
+16. `glossary_entries` là bảng ánh xạ thuật ngữ nguồn → đích, tồn tại để ép **tính nhất quán**: nếu để tự do, model dịch `staging environment` lúc thì "môi trường staging" lúc thì "môi trường dàn dựng", và người đọc không biết hai câu có nói về cùng một thứ không. `domain` và `audience` là thứ làm cùng một thuật ngữ ra hai kết quả — dòng gắn `audience` nội bộ giữ nguyên `UI`, dòng gắn `audience` khách hàng cho ra "giao diện". Chuỗi rỗng nghĩa là "áp dụng ở mọi nơi" và đóng vai trò bậc dự phòng, nên **cả hai cột đều nằm trong ràng buộc duy nhất và không được phép `NULL`**: `NULL` không so bằng `NULL` nên bản trùng sẽ lọt lưới. `status` nhận `active` hoặc `retired`; **không xoá dòng bao giờ** — một bản dịch giao tháng trước được định hình bởi thuật ngữ đang active lúc đó, xoá đi là xoá mất lời giải thích duy nhất cho câu chữ người đọc đang nhìn. **Từ vựng của hai cột là danh sách đóng (22/08):** `audience` nhận `internal` hoặc `client`, `domain` nhận `engineering`, `commercial` hoặc `support`, ngoài ra là chuỗi rỗng. Danh sách khai báo ở `src/database/models.py` (`GLOSSARY_AUDIENCES`, `GLOSSARY_DOMAINS`) và là **cùng bộ từ** mà lượt suy luận hồ sơ hội thoại bị buộc phải trả lời, vì tra cứu so hai bên bằng phép bằng — một hội thoại ghi là "an external client" không bao giờ gặp một mục xếp dưới `client` (ADR-24). Không đặt CheckConstraint: chuỗi rỗng là một giá trị thật, và quản trị viên vẫn được nhập tay một phạm vi mà danh sách chưa biết tới.
 17. `correction_log` **tách riêng khỏi `translation_edits` một cách có chủ ý**. `translation_edits` giữ nguyên đúng những gì ADR-19 quy định: chỉ ghi thêm, riêng tư tuyệt đối với người viết, không ai khác đọc được. Khai thác thẳng bảng đó là âm thầm rút lại lời hứa ấy. `correction_log` chỉ giữ phần **dẫn xuất** — máy viết gì, người sửa thành gì — và chỉ những dòng mà tác giả đã đồng ý chia sẻ. `consent_to_share` khoá cả dòng chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó. `glossary_proposals` dòng `rejected` **không bao giờ bị xoá**: chúng mang embedding để bộ khai thác đối chiếu ứng viên mới, nếu không thì tuần sau đúng thuật ngữ đó quay lại với cách viết hơi khác và hàng đợi duyệt biến thành nhiễu không ai đọc.
 18. `message_embeddings` là bảng riêng chứ không phải một cột trên `messages`: `messages` là bảng nóng, được liệt kê từng trường trong §5 này, còn đây là dữ liệu dẫn xuất tính lại lúc nào cũng được — đúng cách tách và đúng lý do mà ADR-16 đã áp dụng cho `translation_attempts`. `conversation_id` được lặp lại ở đây để tìm kiếm láng giềng gần nhất giới hạn được trong một hội thoại mà không phải join: một index vector chỉ được dùng khi bộ lọc đi kèm là rẻ, và việc truy hồi **tuyệt đối không được** với sang hội thoại khác. Bốn cột `embedding` trong schema dùng kiểu `vector` của pgvector với index HNSW `vector_cosine_ops`, và mỗi bảng lưu kèm `embedding_model` để một vector do model khác sinh ra nhận ra được thay vì bị âm thầm so trong sai không gian (ADR-25).
 

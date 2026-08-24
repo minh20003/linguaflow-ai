@@ -2,6 +2,16 @@
 
 Realtime multilingual chat with context-aware AI translation. Users chat in their preferred language while the system automatically translates messages between participants.
 
+## Live Demo
+
+| | |
+|---|---|
+| App | https://linguaflow-4-u3.vercel.app |
+| API health | https://linguaflow-api-production.up.railway.app/health |
+
+Sign up with your own email — registration sends a one-time code — or use the
+seeded demo accounts in [Development Accounts](#development-accounts) below.
+
 ## What LinguaFlow Does
 
 - Realtime direct and group messaging
@@ -52,7 +62,7 @@ User → WebSocket → FastAPI → Translation Service → LangGraph Agent → L
 - Alembic migrations
 
 ### Observability
-- Langfuse (optional)
+- Braintrust (optional, default), or Langfuse — set `OBSERVABILITY_PROVIDER`
 
 ## Prerequisites
 
@@ -215,7 +225,7 @@ Summary:
 - **Frontend**: Vercel (root directory: `frontend/`)
 - **Backend**: Railway with Docker
 - **Database**: Railway PostgreSQL
-- **Observability**: Langfuse (optional)
+- **Observability**: Braintrust (optional, default) or Langfuse
 
 ## Security Note
 

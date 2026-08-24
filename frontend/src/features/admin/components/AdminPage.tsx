@@ -6,18 +6,20 @@ import { BarChart3, MessagesSquare, Settings as SettingsIcon } from "lucide-reac
 import { getStoredUser } from "@/shared/lib/auth-session";
 import { useDocumentMetadata, useUiText } from "@/shared/lib/use-ui-text";
 import Logo from "@/shared/ui/Logo";
+import FeedbackPanel from "./FeedbackPanel";
 import GlossaryPanel from "./GlossaryPanel";
 import StatsPanel from "./StatsPanel";
 import styles from "./AdminPage.module.css";
 
-type Tab = "stats" | "glossary";
+type Tab = "stats" | "glossary" | "feedback";
 
 /**
- * The administrator screen: what the agent did, and the terms it is bound by.
+ * The administrator screen: what the agent did, what readers said about it, and
+ * the terms it is bound by.
  *
- * Two tabs rather than two routes. They are read by the same person in the same
- * sitting — a term is approved because of what the numbers say about it — and a
- * route change would drop the fetched state of whichever one is left behind.
+ * Tabs rather than routes. They are read by the same person in the same sitting
+ * — a term is approved because of what the numbers say about it — and a route
+ * change would drop the fetched state of whichever one is left behind.
  *
  * `users.role === "admin"` is the entire permission model; there is no
  * middleware behind it. This screen therefore checks twice: once here so a
@@ -92,18 +94,35 @@ export default function AdminPage() {
           >
             {t("admin.tab.glossary")}
           </button>
+          <button
+            type="button"
+            role="tab"
+            id="admin-tab-feedback"
+            className={styles.tab}
+            aria-selected={tab === "feedback"}
+            aria-controls="admin-panel-feedback"
+            onClick={() => setTab("feedback")}
+          >
+            {t("admin.tab.feedback")}
+          </button>
         </div>
 
         {/* Only the selected panel is mounted. Each tab fetches on mount, and
-            keeping both alive would mean two loads on arrival for one that is
-            not being looked at. */}
-        {tab === "stats" ? (
+            keeping them all alive would mean three loads on arrival for two
+            that are not being looked at. */}
+        {tab === "stats" && (
           <div role="tabpanel" id="admin-panel-stats" aria-labelledby="admin-tab-stats">
             <StatsPanel />
           </div>
-        ) : (
+        )}
+        {tab === "glossary" && (
           <div role="tabpanel" id="admin-panel-glossary" aria-labelledby="admin-tab-glossary">
             <GlossaryPanel />
+          </div>
+        )}
+        {tab === "feedback" && (
+          <div role="tabpanel" id="admin-panel-feedback" aria-labelledby="admin-tab-feedback">
+            <FeedbackPanel />
           </div>
         )}
       </div>

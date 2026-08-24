@@ -4,10 +4,13 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   approveGlossaryProposal,
   createGlossaryEntry,
+  deleteGlossaryEntry,
   fetchGlossaryEntries,
   fetchGlossaryProposals,
   rejectGlossaryProposal,
+  restoreGlossaryEntry,
   retireGlossaryEntry,
+  updateGlossaryEntry,
   type GlossaryEntry,
   type GlossaryProposal,
   type ProposalStatus,
@@ -16,6 +19,7 @@ import type { UiTextKey } from "@/shared/lib/ui-text";
 import { formatUiText } from "@/shared/lib/ui-text";
 import { useInterfaceLanguage, useUiText } from "@/shared/lib/use-ui-text";
 import LanguagePicker from "@/shared/ui/LanguagePicker";
+import ScopeField from "./ScopeField";
 import styles from "./AdminPage.module.css";
 
 const STATUSES: ProposalStatus[] = ["pending", "approved", "rejected"];
@@ -26,6 +30,120 @@ function messageKeyFor(error: unknown): UiTextKey {
   if (code === "glossary_conflict") return "glossary.error.conflict";
   if (code === "glossary_missing") return "glossary.error.missing";
   return "glossary.error.failed";
+}
+
+/** The five fields that make a term, wherever it is being written. */
+type TermDraft = {
+  sourceTerm: string;
+  targetTerm: string;
+  domain: string;
+  audience: string;
+  keepVerbatim: boolean;
+};
+
+type ChangeTermField = <K extends keyof TermDraft>(key: K, value: TermDraft[K]) => void;
+
+/**
+ * A term being written, with the one rule that ties two of its fields together.
+ *
+ * "Keep as is" means the model is told to leave the term in the source
+ * language, so the target term stops being a translation and becomes a copy of
+ * the source — which is what the miner is asked to produce for such terms, and
+ * what the column has to hold either way because it is not nullable. Keeping
+ * the two in step here is what makes the checkbox comprehensible: before this,
+ * the form asked for a translation it was about to ignore.
+ */
+function useTermDraft(initial: TermDraft) {
+  const [draft, setDraft] = useState(initial);
+
+  const change = useCallback<ChangeTermField>((key, value) => {
+    setDraft((current) => {
+      const next = { ...current, [key]: value };
+      if (next.keepVerbatim) next.targetTerm = next.sourceTerm;
+      return next;
+    });
+  }, []);
+
+  return [draft, change, setDraft] as const;
+}
+
+type TermFieldsProps = {
+  idPrefix: string;
+  draft: TermDraft;
+  change: ChangeTermField;
+  disabled?: boolean;
+};
+
+/**
+ * The editable body of a term, shared by every screen that writes one.
+ *
+ * One component rather than three copies because the rule above only holds if
+ * every form obeys it, and a form that forgot would store a translation for a
+ * term nothing translates.
+ */
+function TermFields({ idPrefix, draft, change, disabled }: TermFieldsProps) {
+  const t = useUiText();
+
+  return (
+    <>
+      <div className={styles.fieldGrid}>
+        <div className={styles.field}>
+          <label htmlFor={`${idPrefix}-source`}>{t("glossary.field.sourceTerm")}</label>
+          <input
+            id={`${idPrefix}-source`}
+            value={draft.sourceTerm}
+            onChange={(event) => change("sourceTerm", event.target.value)}
+            disabled={disabled}
+            required
+          />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor={`${idPrefix}-target`}>{t("glossary.field.targetTerm")}</label>
+          {/* Locked, not hidden, while the term is kept as is: the value is
+              still what gets stored, and hiding it would leave a reader unable
+              to see what the entry says. */}
+          <input
+            id={`${idPrefix}-target`}
+            value={draft.targetTerm}
+            onChange={(event) => change("targetTerm", event.target.value)}
+            disabled={disabled || draft.keepVerbatim}
+            required
+          />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor={`${idPrefix}-domain`}>{t("glossary.field.domain")}</label>
+          <ScopeField
+            id={`${idPrefix}-domain`}
+            kind="domain"
+            value={draft.domain}
+            onChange={(value) => change("domain", value)}
+            disabled={disabled}
+          />
+        </div>
+        <div className={styles.field}>
+          <label htmlFor={`${idPrefix}-audience`}>{t("glossary.field.audience")}</label>
+          <ScopeField
+            id={`${idPrefix}-audience`}
+            kind="audience"
+            value={draft.audience}
+            onChange={(value) => change("audience", value)}
+            disabled={disabled}
+          />
+        </div>
+      </div>
+      <p className={styles.hint}>{t("glossary.scope.hint")}</p>
+      <label className={styles.checkRow}>
+        <input
+          type="checkbox"
+          checked={draft.keepVerbatim}
+          onChange={(event) => change("keepVerbatim", event.target.checked)}
+          disabled={disabled}
+        />
+        <span>{t("glossary.field.keepVerbatim")}</span>
+      </label>
+      <p className={styles.hint}>{t("glossary.field.keepVerbatimHint")}</p>
+    </>
+  );
 }
 
 type ProposalCardProps = {
@@ -50,11 +168,13 @@ type ProposalCardProps = {
 function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
   const t = useUiText();
   const language = useInterfaceLanguage();
-  const [sourceTerm, setSourceTerm] = useState(proposal.source_term);
-  const [targetTerm, setTargetTerm] = useState(proposal.target_term);
-  const [domain, setDomain] = useState(proposal.domain);
-  const [audience, setAudience] = useState(proposal.audience);
-  const [keepVerbatim, setKeepVerbatim] = useState(proposal.keep_verbatim);
+  const [draft, change] = useTermDraft({
+    sourceTerm: proposal.source_term,
+    targetTerm: proposal.target_term,
+    domain: proposal.domain,
+    audience: proposal.audience,
+    keepVerbatim: proposal.keep_verbatim,
+  });
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,11 +188,11 @@ function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
     setBusy(true);
     try {
       await approveGlossaryProposal(proposal.id, {
-        source_term: sourceTerm.trim(),
-        target_term: targetTerm.trim(),
-        domain: domain.trim(),
-        audience: audience.trim(),
-        keep_verbatim: keepVerbatim,
+        source_term: draft.sourceTerm.trim(),
+        target_term: draft.targetTerm.trim(),
+        domain: draft.domain.trim(),
+        audience: draft.audience.trim(),
+        keep_verbatim: draft.keepVerbatim,
       });
       onDecided();
     } catch (caught) {
@@ -199,30 +319,14 @@ function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
         </form>
       ) : (
         <>
-          <div className={styles.fieldGrid}>
-            <div className={styles.field}>
-              <label htmlFor={`src-${proposal.id}`}>{t("glossary.field.sourceTerm")}</label>
-              <input id={`src-${proposal.id}`} value={sourceTerm} onChange={(event) => setSourceTerm(event.target.value)} />
-            </div>
-            <div className={styles.field}>
-              <label htmlFor={`tgt-${proposal.id}`}>{t("glossary.field.targetTerm")}</label>
-              <input id={`tgt-${proposal.id}`} value={targetTerm} onChange={(event) => setTargetTerm(event.target.value)} />
-            </div>
-            <div className={styles.field}>
-              <label htmlFor={`dom-${proposal.id}`}>{t("glossary.field.domain")}</label>
-              <input id={`dom-${proposal.id}`} value={domain} onChange={(event) => setDomain(event.target.value)} placeholder={t("glossary.scopeAny")} />
-            </div>
-            <div className={styles.field}>
-              <label htmlFor={`aud-${proposal.id}`}>{t("glossary.field.audience")}</label>
-              <input id={`aud-${proposal.id}`} value={audience} onChange={(event) => setAudience(event.target.value)} placeholder={t("glossary.scopeAny")} />
-            </div>
-          </div>
-          <label className={styles.checkRow}>
-            <input type="checkbox" checked={keepVerbatim} onChange={(event) => setKeepVerbatim(event.target.checked)} />
-            <span>{t("glossary.field.keepVerbatim")}</span>
-          </label>
+          <TermFields idPrefix={`proposal-${proposal.id}`} draft={draft} change={change} disabled={busy} />
           <div className={styles.actions}>
-            <button type="button" className={`${styles.action} ${styles.actionPrimary}`} onClick={approve} disabled={!sourceTerm.trim() || !targetTerm.trim() || busy}>
+            <button
+              type="button"
+              className={`${styles.action} ${styles.actionPrimary}`}
+              onClick={approve}
+              disabled={!draft.sourceTerm.trim() || !draft.targetTerm.trim() || busy}
+            >
               {t("glossary.approve")}
             </button>
             <button type="button" className={`${styles.action} ${styles.actionDanger}`} onClick={() => setRejecting(true)} disabled={busy}>
@@ -232,6 +336,204 @@ function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
         </>
       )}
     </article>
+  );
+}
+
+type EntryRowProps = {
+  entry: GlossaryEntry;
+  onChanged: (key: UiTextKey) => void;
+  onFailed: (key: UiTextKey) => void;
+};
+
+/**
+ * One entry in force, and the three things that can happen to it.
+ *
+ * Retirement and restoration are a pair rather than a delete: a translation
+ * delivered last month was shaped by whatever was active then, so the row is
+ * the only explanation for wording somebody may still be reading. Editing
+ * exists so a typo in an approved term does not have to be fixed by retiring it
+ * and adding a near-identical row — which would leave two rows, permanently,
+ * for a reader to compare.
+ *
+ * Deleting is the exception, and it is why the two states offer different
+ * buttons: a retired term that never shaped anything explains nothing, and
+ * while its row exists it keeps holding the scope against a corrected version
+ * of itself. It is asked about twice before it happens.
+ */
+function EntryRow({ entry, onChanged, onFailed }: EntryRowProps) {
+  const t = useUiText();
+  const language = useInterfaceLanguage();
+  const [editing, setEditing] = useState(false);
+  // Two steps for the one action that cannot be undone. The row is where the
+  // question is asked, so the term being deleted stays on screen while it is.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [draft, change, setDraft] = useTermDraft({
+    sourceTerm: entry.source_term,
+    targetTerm: entry.target_term,
+    domain: entry.domain,
+    audience: entry.audience,
+    keepVerbatim: entry.keep_verbatim,
+  });
+
+  const when = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
+
+  // The row survives the reload that follows a change — it is keyed by entry id
+  // and the entry is still there — so unlike a decided proposal it has to put
+  // itself back in order rather than relying on being unmounted.
+  const run = async (action: () => Promise<unknown>, notice: UiTextKey) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await action();
+      setEditing(false);
+      setConfirmingDelete(false);
+      onChanged(notice);
+    } catch (caught) {
+      onFailed(messageKeyFor(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    return run(
+      () =>
+        updateGlossaryEntry(entry.id, {
+          source_term: draft.sourceTerm.trim(),
+          target_term: draft.targetTerm.trim(),
+          domain: draft.domain.trim(),
+          audience: draft.audience.trim(),
+          keep_verbatim: draft.keepVerbatim,
+        }),
+      "glossary.updated",
+    );
+  };
+
+  const cancel = () => {
+    // Back to what the server last said, not to whatever was typed: the row is
+    // reloaded after every successful change, so this is the only copy of it.
+    setDraft({
+      sourceTerm: entry.source_term,
+      targetTerm: entry.target_term,
+      domain: entry.domain,
+      audience: entry.audience,
+      keepVerbatim: entry.keep_verbatim,
+    });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <tr>
+        <td colSpan={7}>
+          <form onSubmit={save}>
+            <TermFields idPrefix={`entry-${entry.id}`} draft={draft} change={change} disabled={busy} />
+            <div className={styles.actions}>
+              <button
+                type="submit"
+                className={`${styles.action} ${styles.actionPrimary}`}
+                disabled={!draft.sourceTerm.trim() || !draft.targetTerm.trim() || busy}
+              >
+                {t("glossary.entries.save")}
+              </button>
+              <button type="button" className={styles.action} onClick={cancel} disabled={busy}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        </td>
+      </tr>
+    );
+  }
+
+  const retired = entry.status === "retired";
+
+  return (
+    <tr>
+      <td className={styles.term}>
+        {entry.source_term}
+        {entry.keep_verbatim && <> <span className={`${styles.badge} ${styles.badgeVerbatim}`}>{t("glossary.verbatim")}</span></>}
+      </td>
+      <td className={styles.term}>{entry.target_term}</td>
+      <td>{entry.domain || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
+      <td>{entry.audience || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
+      {/* Whether this term is binding translations right now, in its own column
+          rather than as a badge among the buttons. Every row answers it, and a
+          column is where a reader looks for an answer every row gives. */}
+      <td>
+        <span className={`${styles.badge} ${retired ? styles.badgeRetired : styles.badgeActive}`}>
+          {t(retired ? "glossary.entries.retiredBadge" : "glossary.entries.activeBadge")}
+        </span>
+      </td>
+      <td>{when.format(new Date(entry.created_at))}</td>
+      <td>
+        {confirmingDelete ? (
+          /* Asked in the row rather than in a browser dialog: the question is
+             about this term, so it should be readable next to it, and the
+             answer that destroys something is never the one already focused. */
+          <div className={styles.rowActions}>
+            <span className={styles.confirmQuestion}>{t("glossary.entries.deleteConfirm")}</span>
+            <button
+              type="button"
+              className={`${styles.action} ${styles.actionDanger}`}
+              onClick={() => run(() => deleteGlossaryEntry(entry.id), "glossary.deleted")}
+              disabled={busy}
+            >
+              {t("glossary.entries.deleteConfirmYes")}
+            </button>
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => setConfirmingDelete(false)}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        ) : (
+          <div className={styles.rowActions}>
+            <button type="button" className={styles.action} onClick={() => setEditing(true)} disabled={busy}>
+              {t("glossary.entries.edit")}
+            </button>
+            {retired ? (
+              <>
+                <button
+                  type="button"
+                  className={styles.action}
+                  onClick={() => run(() => restoreGlossaryEntry(entry.id), "glossary.restored")}
+                  disabled={busy}
+                >
+                  {t("glossary.entries.restore")}
+                </button>
+                {/* Offered only here, and the server agrees: deleting an active
+                    entry is refused with a 409, because a term in use is the
+                    only explanation for wording somebody may still be reading.
+                    What is left is the term typed in by mistake. */}
+                <button
+                  type="button"
+                  className={`${styles.action} ${styles.actionDanger}`}
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy}
+                >
+                  {t("glossary.entries.delete")}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={`${styles.action} ${styles.actionDanger}`}
+                onClick={() => run(() => retireGlossaryEntry(entry.id), "glossary.retired")}
+                disabled={busy}
+              >
+                {t("glossary.entries.retire")}
+              </button>
+            )}
+          </div>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -245,7 +547,6 @@ function ProposalCard({ proposal, onDecided, onFailed }: ProposalCardProps) {
  */
 export default function GlossaryPanel() {
   const t = useUiText();
-  const language = useInterfaceLanguage();
   const [status, setStatus] = useState<ProposalStatus>("pending");
   const [proposals, setProposals] = useState<GlossaryProposal[]>([]);
   const [entries, setEntries] = useState<GlossaryEntry[]>([]);
@@ -254,8 +555,6 @@ export default function GlossaryPanel() {
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState<UiTextKey | "">("");
   const [notice, setNotice] = useState<UiTextKey | "">("");
-
-  const when = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
 
   // Both lists come from one effect keyed on what selects them, plus a counter
   // for "fetch again with the same selection". The spinner is turned on by
@@ -287,17 +586,13 @@ export default function GlossaryPanel() {
   const afterDecision = useCallback((key: UiTextKey) => {
     setNotice(key);
     setError("");
+    // Retiring a term while the list is filtered to active ones would make the
+    // row vanish at the moment it changed state, which reads as a deletion —
+    // the one thing retirement is not. Show retired terms from here on, so what
+    // happened stays on screen with its status and its way back.
+    if (key === "glossary.retired") setIncludeRetired(true);
     reload();
   }, [reload]);
-
-  const retire = async (entry: GlossaryEntry) => {
-    try {
-      await retireGlossaryEntry(entry.id);
-      afterDecision("glossary.retired");
-    } catch (caught) {
-      setError(messageKeyFor(caught));
-    }
-  };
 
   return (
     <>
@@ -364,31 +659,19 @@ export default function GlossaryPanel() {
                   <th scope="col">{t("glossary.field.targetTerm")}</th>
                   <th scope="col">{t("glossary.field.domain")}</th>
                   <th scope="col">{t("glossary.field.audience")}</th>
+                  <th scope="col">{t("glossary.entries.status")}</th>
                   <th scope="col">{t("glossary.entries.added")}</th>
-                  <th scope="col"><span className="sr-only">{t("glossary.entries.retire")}</span></th>
+                  <th scope="col">{t("glossary.entries.actions")}</th>
                 </tr>
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td className={styles.term}>
-                      {entry.source_term}
-                      {entry.keep_verbatim && <> <span className={`${styles.badge} ${styles.badgeVerbatim}`}>{t("glossary.verbatim")}</span></>}
-                    </td>
-                    <td className={styles.term}>{entry.target_term}</td>
-                    <td>{entry.domain || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
-                    <td>{entry.audience || <span className={styles.arrow}>{t("glossary.scopeAny")}</span>}</td>
-                    <td>{when.format(new Date(entry.created_at))}</td>
-                    <td>
-                      {entry.status === "retired" ? (
-                        <span className={`${styles.badge} ${styles.badgeRetired}`}>{t("glossary.entries.retiredBadge")}</span>
-                      ) : (
-                        <button type="button" className={`${styles.action} ${styles.actionDanger}`} onClick={() => retire(entry)}>
-                          {t("glossary.entries.retire")}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                  <EntryRow
+                    key={entry.id}
+                    entry={entry}
+                    onChanged={afterDecision}
+                    onFailed={setError}
+                  />
                 ))}
               </tbody>
             </table>
@@ -416,34 +699,38 @@ type AddEntryFormProps = {
  */
 function AddEntryForm({ onAdded, onFailed }: AddEntryFormProps) {
   const t = useUiText();
-  const [sourceTerm, setSourceTerm] = useState("");
-  const [targetTerm, setTargetTerm] = useState("");
+  const [draft, change, setDraft] = useTermDraft({
+    sourceTerm: "",
+    targetTerm: "",
+    domain: "",
+    audience: "",
+    keepVerbatim: false,
+  });
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [targetLanguage, setTargetLanguage] = useState("vi");
-  const [domain, setDomain] = useState("");
-  const [audience, setAudience] = useState("");
-  const [keepVerbatim, setKeepVerbatim] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !sourceTerm.trim() || !targetTerm.trim()) return;
+    if (busy || !draft.sourceTerm.trim() || !draft.targetTerm.trim()) return;
     setBusy(true);
     try {
       await createGlossaryEntry({
-        source_term: sourceTerm.trim(),
-        target_term: targetTerm.trim(),
+        source_term: draft.sourceTerm.trim(),
+        target_term: draft.targetTerm.trim(),
         source_language: sourceLanguage,
         target_language: targetLanguage,
-        domain: domain.trim(),
-        audience: audience.trim(),
-        keep_verbatim: keepVerbatim,
+        domain: draft.domain.trim(),
+        audience: draft.audience.trim(),
+        keep_verbatim: draft.keepVerbatim,
       });
-      setSourceTerm("");
-      setTargetTerm("");
-      setDomain("");
-      setAudience("");
-      setKeepVerbatim(false);
+      setDraft({
+        sourceTerm: "",
+        targetTerm: "",
+        domain: "",
+        audience: "",
+        keepVerbatim: false,
+      });
       onAdded();
     } catch (caught) {
       onFailed(messageKeyFor(caught));
@@ -459,14 +746,6 @@ function AddEntryForm({ onAdded, onFailed }: AddEntryFormProps) {
       <form onSubmit={submit}>
         <div className={styles.fieldGrid}>
           <div className={styles.field}>
-            <label htmlFor="add-source-term">{t("glossary.field.sourceTerm")}</label>
-            <input id="add-source-term" value={sourceTerm} onChange={(event) => setSourceTerm(event.target.value)} required />
-          </div>
-          <div className={styles.field}>
-            <label htmlFor="add-target-term">{t("glossary.field.targetTerm")}</label>
-            <input id="add-target-term" value={targetTerm} onChange={(event) => setTargetTerm(event.target.value)} required />
-          </div>
-          <div className={styles.field}>
             <label htmlFor="add-source-language">{t("glossary.field.sourceLanguage")}</label>
             <LanguagePicker id="add-source-language" value={sourceLanguage} onChange={setSourceLanguage} label={t("glossary.field.sourceLanguage")} disabled={busy} />
           </div>
@@ -474,21 +753,14 @@ function AddEntryForm({ onAdded, onFailed }: AddEntryFormProps) {
             <label htmlFor="add-target-language">{t("glossary.field.targetLanguage")}</label>
             <LanguagePicker id="add-target-language" value={targetLanguage} onChange={setTargetLanguage} label={t("glossary.field.targetLanguage")} disabled={busy} />
           </div>
-          <div className={styles.field}>
-            <label htmlFor="add-domain">{t("glossary.field.domain")}</label>
-            <input id="add-domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder={t("glossary.scopeAny")} />
-          </div>
-          <div className={styles.field}>
-            <label htmlFor="add-audience">{t("glossary.field.audience")}</label>
-            <input id="add-audience" value={audience} onChange={(event) => setAudience(event.target.value)} placeholder={t("glossary.scopeAny")} />
-          </div>
         </div>
-        <label className={styles.checkRow}>
-          <input type="checkbox" checked={keepVerbatim} onChange={(event) => setKeepVerbatim(event.target.checked)} />
-          <span>{t("glossary.field.keepVerbatim")}</span>
-        </label>
+        <TermFields idPrefix="add" draft={draft} change={change} disabled={busy} />
         <div className={styles.actions}>
-          <button type="submit" className={`${styles.action} ${styles.actionPrimary}`} disabled={!sourceTerm.trim() || !targetTerm.trim() || busy}>
+          <button
+            type="submit"
+            className={`${styles.action} ${styles.actionPrimary}`}
+            disabled={!draft.sourceTerm.trim() || !draft.targetTerm.trim() || busy}
+          >
             {t("glossary.add.submit")}
           </button>
         </div>

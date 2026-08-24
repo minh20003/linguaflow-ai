@@ -10,10 +10,16 @@ type LoadState = "loading" | "ready" | "error";
 /**
  * What the agent actually did: attempts, fallbacks, tokens, latency.
  *
- * Lifted out of the admin page unchanged in behaviour when the glossary queue
- * arrived and the page grew tabs. It reads `/stats`, which is a different
- * endpoint from the glossary one, so each tab fetches on its own and a failure
- * in one leaves the other readable.
+ * It reads `/stats`, which is a different endpoint from the glossary one, so
+ * each tab fetches on its own and a failure in one leaves the other readable.
+ *
+ * The headline figures are tiles rather than a two-column table of row
+ * headings and values. Six numbers of four different kinds — a count, a
+ * proportion, two durations, two token totals — read as one undifferentiated
+ * list when they are stacked in a table, and the two that matter on a bad day
+ * (the fallback rate and the slow tail) were the hardest to find. A tile gives
+ * each one a size of its own and puts the unit next to the figure instead of
+ * inside it.
  */
 export default function StatsPanel() {
   const t = useUiText();
@@ -23,6 +29,9 @@ export default function StatsPanel() {
 
   const number = new Intl.NumberFormat(language);
   const percent = new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 2 });
+  // Tokens run to six figures and the exact count is never the question, so
+  // the tile carries a shortened form and the full number stays in `title`.
+  const compact = new Intl.NumberFormat(language, { notation: "compact", maximumFractionDigits: 1 });
 
   useEffect(() => {
     let active = true;
@@ -50,17 +59,48 @@ export default function StatsPanel() {
     <>
       <section className={styles.card} aria-labelledby="admin-stats-summary">
         <h2 id="admin-stats-summary">{t("stats.title")}</h2>
-        <div className={styles.tableScroll}>
-          <table className={styles.table}>
-            <tbody>
-              <tr><th scope="row">{t("stats.totalAttempts")}</th><td>{number.format(stats.total_attempts)}</td></tr>
-              <tr><th scope="row">{t("stats.fallbackRate")}</th><td>{percent.format(stats.fallback_rate)}</td></tr>
-              <tr><th scope="row">{t("stats.inputTokens")}</th><td>{number.format(stats.input_tokens)}</td></tr>
-              <tr><th scope="row">{t("stats.outputTokens")}</th><td>{number.format(stats.output_tokens)}</td></tr>
-              <tr><th scope="row">{t("stats.totalLatencyP50")}</th><td>{number.format(stats.total_ms_p50)} {t("stats.milliseconds")}</td></tr>
-              <tr><th scope="row">{t("stats.totalLatencyP95")}</th><td>{number.format(stats.total_ms_p95)} {t("stats.milliseconds")}</td></tr>
-            </tbody>
-          </table>
+        <p className={styles.hint}>{t("stats.summaryHint")}</p>
+
+        <div className={styles.tiles}>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.totalAttempts")}</span>
+            <strong className={styles.tileValue}>{number.format(stats.total_attempts)}</strong>
+          </div>
+          {/* The one figure that is bad when it is high, so it says so in
+              colour as well as in the number — but only once there is anything
+              to fall back from, since 0 of 0 is not a warning. */}
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.fallbackRate")}</span>
+            <strong className={`${styles.tileValue} ${stats.fallback_rate > 0 ? styles.tileValueWarn : ""}`}>
+              {percent.format(stats.fallback_rate)}
+            </strong>
+          </div>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.totalLatencyP50")}</span>
+            <strong className={styles.tileValue}>
+              {number.format(stats.total_ms_p50)}
+              <span className={styles.tileUnit}>{t("stats.milliseconds")}</span>
+            </strong>
+          </div>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.totalLatencyP95")}</span>
+            <strong className={styles.tileValue}>
+              {number.format(stats.total_ms_p95)}
+              <span className={styles.tileUnit}>{t("stats.milliseconds")}</span>
+            </strong>
+          </div>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.inputTokens")}</span>
+            <strong className={styles.tileValue} title={number.format(stats.input_tokens)}>
+              {compact.format(stats.input_tokens)}
+            </strong>
+          </div>
+          <div className={styles.tile}>
+            <span className={styles.tileLabel}>{t("stats.outputTokens")}</span>
+            <strong className={styles.tileValue} title={number.format(stats.output_tokens)}>
+              {compact.format(stats.output_tokens)}
+            </strong>
+          </div>
         </div>
       </section>
 
@@ -68,14 +108,28 @@ export default function StatsPanel() {
         <h2 id="admin-stats-pairs">{t("stats.languagePairs")}</h2>
         {pairs.length ? (
           <div className={styles.tableScroll}>
+            {/* One column per number instead of one sentence per row: the
+                question a reader brings here is which pair is the slow one,
+                and that can only be seen when the figures line up. */}
             <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th scope="col">{t("stats.pair")}</th>
+                  <th scope="col" className={styles.numericHead}>{t("stats.count")}</th>
+                  <th scope="col" className={styles.numericHead}>{t("stats.p50")}</th>
+                  <th scope="col" className={styles.numericHead}>{t("stats.p95")}</th>
+                </tr>
+              </thead>
               <tbody>
                 {pairs.map(([pair, value]) => (
                   <tr key={pair}>
                     <th scope="row" className={styles.term}>{pair}</th>
-                    <td>
-                      {number.format(value.count)} · {t("stats.p50")} {number.format(value.p50_ms)} {t("stats.milliseconds")}
-                      {" · "}{t("stats.p95")} {number.format(value.p95_ms)} {t("stats.milliseconds")}
+                    <td className={styles.numeric}>{number.format(value.count)}</td>
+                    <td className={styles.numeric}>
+                      {number.format(value.p50_ms)} <span className={styles.unit}>{t("stats.milliseconds")}</span>
+                    </td>
+                    <td className={styles.numeric}>
+                      {number.format(value.p95_ms)} <span className={styles.unit}>{t("stats.milliseconds")}</span>
                     </td>
                   </tr>
                 ))}
@@ -90,9 +144,18 @@ export default function StatsPanel() {
         {models.length ? (
           <div className={styles.tableScroll}>
             <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th scope="col">{t("stats.model")}</th>
+                  <th scope="col" className={styles.numericHead}>{t("stats.count")}</th>
+                </tr>
+              </thead>
               <tbody>
                 {models.map(([name, count]) => (
-                  <tr key={name}><th scope="row" className={styles.term}>{name}</th><td>{number.format(count)}</td></tr>
+                  <tr key={name}>
+                    <th scope="row" className={styles.term}>{name}</th>
+                    <td className={styles.numeric}>{number.format(count)}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>

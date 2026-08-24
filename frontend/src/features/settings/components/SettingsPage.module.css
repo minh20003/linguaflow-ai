@@ -10,8 +10,16 @@
 }
 
 /* Same rail as the chat screen so moving between the two does not shift the
-   one element that is meant to stay put. */
+   one element that is meant to stay put — including when the page scrolls,
+   which is what the sticky block is for. A grid item stretches to the full row
+   by default, so the explicit viewport height is what gives `top: 0` something
+   to slide against. */
 .navRail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  z-index: 2;
+  height: 100svh;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -148,6 +156,7 @@
   .navRail {
     flex-direction: row;
     justify-content: center;
+    height: auto;
     padding-block: var(--s-2);
   }
   .navRailLogo { margin-bottom: 0; }

@@ -52,6 +52,24 @@ def normalize_term(text: str) -> str:
     return _WHITESPACE.sub(" ", (text or "").strip()).casefold()
 
 
+def normalize_scope(value: Any, allowed: tuple[str, ...]) -> str:
+    """Hold a model-supplied scope to the closed vocabulary, or drop it.
+
+    Anything off the list becomes `""`, which means "applies everywhere" — the
+    fallback rank the lookup already has a rule for, and the safer of the two
+    ways to be wrong.
+
+    The vocabulary is closed because `_scope_rank` below compares scopes by
+    equality. A free-text "an external client" is not a slightly worse label
+    than "client"; it is a scope no glossary entry is ever filed under, so
+    every scoped entry silently stops applying (ADR-24, ADR-26).
+    """
+    if not isinstance(value, str):
+        return ""
+    cleaned = value.strip().casefold()
+    return cleaned if cleaned in allowed else ""
+
+
 def _scope_rank(entry: GlossaryEntry, domain: str, audience: str) -> int:
     """Score how specifically an entry matches this conversation.
 

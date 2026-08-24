@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { MessagesSquare, Settings as SettingsIcon } from "lucide-react";
+import { BarChart3, MessagesSquare, Settings as SettingsIcon } from "lucide-react";
 import {
   linkGoogle,
   listLanguages,
@@ -317,6 +317,20 @@ export default function SettingsPage() {
         >
           <SettingsIcon size={20} strokeWidth={1.8} aria-hidden="true" />
         </Link>
+        {/* The rail is meant to be the same three destinations on every screen
+            it appears on. It was not: this one omitted the administrator link,
+            so opening Settings took the way back to it off the page and the
+            only route left was the browser's back button. */}
+        {user?.role === "admin" && (
+          <Link
+            className={styles.navRailButton}
+            href="/admin"
+            aria-label={t("nav.admin")}
+            title={t("nav.admin")}
+          >
+            <BarChart3 size={20} strokeWidth={1.8} aria-hidden="true" />
+          </Link>
+        )}
       </nav>
 
       <div className={styles.content}>

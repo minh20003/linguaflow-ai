@@ -140,6 +140,39 @@ class GlossaryEntryRequest(BaseModel):
         return cleaned
 
 
+class GlossaryEntryUpdateRequest(BaseModel):
+    """A correction to an entry that is already in force.
+
+    Every field is optional and only what is sent is changed, so a screen that
+    knows nothing about a column added later cannot blank it by omission.
+
+    Editing exists because the alternative is worse. Without it a typo in an
+    approved term is fixed by retiring the row and adding a near-identical one,
+    which leaves two rows a reader has to compare to work out which one the
+    machine is using — and the retired one is kept forever (§16), so the
+    confusion is permanent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_term: str | None = Field(default=None, min_length=1, max_length=200)
+    target_term: str | None = Field(default=None, min_length=1, max_length=200)
+    domain: str | None = Field(default=None, max_length=50)
+    audience: str | None = Field(default=None, max_length=50)
+    keep_verbatim: bool | None = None
+
+    @field_validator("source_term", "target_term")
+    @classmethod
+    def term_must_not_be_blank(cls, value: str | None) -> str | None:
+        """Whitespace would store as set and read as empty."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Terms must not be blank")
+        return cleaned
+
+
 class GlossaryApprovalRequest(BaseModel):
     """An approval, optionally correcting the proposal on the way through.
 

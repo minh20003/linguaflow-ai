@@ -82,6 +82,15 @@ export interface GlossaryApproval {
   keep_verbatim?: boolean;
 }
 
+/** The fields an edit may change. The language pair is deliberately not one. */
+export interface GlossaryEntryPatch {
+  source_term?: string;
+  target_term?: string;
+  domain?: string;
+  audience?: string;
+  keep_verbatim?: boolean;
+}
+
 export interface GlossaryEntryDraft {
   source_term: string;
   target_term: string;
@@ -170,6 +179,23 @@ export function createGlossaryEntry(draft: GlossaryEntryDraft): Promise<Glossary
 }
 
 /**
+ * Correct an entry that is already in force.
+ *
+ * Only the fields sent are changed. The language pair is not among them: an
+ * entry with the wrong pair is a different entry rather than a mistyped one,
+ * and both the embedding and the uniqueness rule are scoped to the pair.
+ */
+export function updateGlossaryEntry(
+  entryId: string,
+  changes: GlossaryEntryPatch,
+): Promise<GlossaryEntry> {
+  return request(`/admin/glossary/${encodeURIComponent(entryId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+}
+
+/**
  * Take an entry out of use.
  *
  * The verb is DELETE and the effect is retirement: a translation delivered last
@@ -178,4 +204,34 @@ export function createGlossaryEntry(draft: GlossaryEntryDraft): Promise<Glossary
  */
 export function retireGlossaryEntry(entryId: string): Promise<GlossaryEntry> {
   return request(`/admin/glossary/${encodeURIComponent(entryId)}`, { method: "DELETE" });
+}
+
+/**
+ * Put a retired entry back into use.
+ *
+ * The counterpart of `retireGlossaryEntry`, and possible only because nothing
+ * was deleted: the entry keeps its id, its embedding and the date it was first
+ * approved instead of coming back as a second row.
+ */
+export function restoreGlossaryEntry(entryId: string): Promise<GlossaryEntry> {
+  return request(`/admin/glossary/${encodeURIComponent(entryId)}/restore`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Remove a retired entry from the glossary for good.
+ *
+ * The one thing `retireGlossaryEntry` cannot do, and deliberately narrow: the
+ * server refuses this for an active entry with a 409, because an entry in use
+ * has shaped translations people may still be reading and the row is the only
+ * explanation for their wording. What is left is the case retirement reads
+ * wrong for — a term typed in by mistake, which explains nothing because it
+ * never shaped anything anybody saw, and whose scope stays taken by the
+ * uniqueness rule until the row is gone.
+ */
+export function deleteGlossaryEntry(entryId: string): Promise<GlossaryEntry> {
+  return request(`/admin/glossary/${encodeURIComponent(entryId)}/permanent`, {
+    method: "DELETE",
+  });
 }

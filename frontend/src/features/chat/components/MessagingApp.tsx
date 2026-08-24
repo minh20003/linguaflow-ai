@@ -449,11 +449,6 @@ type TranslationEditFormProps = {
 function TranslationEditForm({ message, lang, onSaveEdit, onClose }: TranslationEditFormProps) {
   const saved = message.myEdit?.editedText ?? "";
   const [draft, setDraft] = useState(saved);
-  // Starts unticked every time the panel opens, including for someone who
-  // ticked it on their last correction. Consent is given for a wording, not
-  // switched on for an account, and a box that remembers would collect it for
-  // sentences its owner never considered.
-  const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -463,7 +458,9 @@ function TranslationEditForm({ message, lang, onSaveEdit, onClose }: Translation
     if (!editedText || saving) return;
     setError("");
     setSaving(true);
-    const stored = await onSaveEdit(message, editedText, consent);
+    // Consent travels with the act of sending, which is what the notice under
+    // the box states. It is no longer a separate switch to forget to read.
+    const stored = await onSaveEdit(message, editedText, true);
     setSaving(false);
     if (stored) onClose();
     else setError(uiText(lang, "chat.saveEditFailed"));
@@ -486,18 +483,13 @@ function TranslationEditForm({ message, lang, onSaveEdit, onClose }: Translation
         rows={2}
         autoFocus
       />
-      {/* The one thing on this panel that leaves the account, so it is opt-in
-          and says what it opts into. Without it nothing reaches the term miner
-          and the review queue stays empty — but a box that defaults to on would
-          be collecting consent rather than asking for it. */}
-      <label className={styles.consentRow}>
-        <input
-          type="checkbox"
-          checked={consent}
-          onChange={(event) => setConsent(event.target.checked)}
-        />
-        <span>{uiText(lang, "chat.shareCorrection")}</span>
-      </label>
+      {/* Sending is the consent, and this is where that is said. It replaced a
+          tick box: almost nobody ticked it, so the term miner received almost
+          nothing and the review queue stayed empty — a consent control that is
+          never used protects nobody and teaches nothing. Stated before the
+          button rather than after it, so it is read while the decision is
+          still open. */}
+      <p className={styles.consentNotice}>{uiText(lang, "chat.shareCorrectionNotice")}</p>
       <p className={styles.correctionHint}>{uiText(lang, "chat.shareCorrectionHint")}</p>
       {message.myEdit && (
         <p className={styles.correctionHint}>
