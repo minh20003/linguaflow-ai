@@ -100,11 +100,20 @@ export function verifyRegisterOtp(pendingId: string, otp: string): Promise<AuthS
 }
 
 export function resendRegisterOtp(pendingId: string): Promise<{ pending_id: string; expires_in_seconds: number; cooldown_seconds: number; message: string }> {
+  const normalizedPendingId = pendingId?.trim();
+  if (!normalizedPendingId) {
+    // JSON.stringify omits properties whose value is undefined. Failing here
+    // makes the recovery action clear instead of issuing a guaranteed 422 with
+    // an opaque `{}` request body.
+    return Promise.reject(
+      new Error("Your registration session is no longer available. Please return to the details form and register again."),
+    );
+  }
   return request(
     "/api/v1/auth/register/resend",
     {
       method: "POST",
-      body: JSON.stringify({ pending_id: pendingId }),
+      body: JSON.stringify({ pending_id: normalizedPendingId }),
     },
     "Unable to resend verification code.",
   );

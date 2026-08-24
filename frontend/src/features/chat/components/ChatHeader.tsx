@@ -6,7 +6,6 @@ import {
   Phone,
   Video,
   Info,
-  MoreVertical,
   ChevronLeft,
   UsersRound,
   Globe
@@ -113,23 +112,23 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           <Search className="w-5 h-5" />
         </button>
 
-        <button
+        {!isGroup && <button
           id="chat-action-voice-call"
           onClick={() => onStartCall('voice')}
           aria-label="Voice Call"
           className="p-2 rounded-xl text-[#74798C] dark:text-[#9DA3B4] hover:text-[#1E2230] dark:hover:text-[#F5F6FA] hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors"
         >
           <Phone className="w-5 h-5" />
-        </button>
+        </button>}
 
-        <button
+        {!isGroup && <button
           id="chat-action-video-call"
           onClick={() => onStartCall('video')}
           aria-label="Video Call"
           className="p-2 rounded-xl text-[#74798C] dark:text-[#9DA3B4] hover:text-[#1E2230] dark:hover:text-[#F5F6FA] hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors"
         >
           <Video className="w-5 h-5" />
-        </button>
+        </button>}
 
         <button
           id="chat-action-info-toggle"

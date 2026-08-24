@@ -8,6 +8,38 @@ import { AuthScreen, UserProfile } from '../types';
 import { signUp, verifyRegisterOtp, resendRegisterOtp, signInWithGoogle } from '../api/auth-api';
 import { saveSession } from '@/shared/lib/session';
 
+const PENDING_REGISTRATION_STORAGE_KEY = 'linguaflow.pending-registration';
+
+interface StoredPendingRegistration {
+  pendingId: string;
+  email: string;
+}
+
+function loadPendingRegistration(): StoredPendingRegistration | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed: unknown = JSON.parse(window.sessionStorage.getItem(PENDING_REGISTRATION_STORAGE_KEY) ?? 'null');
+    if (
+      typeof parsed === 'object' && parsed !== null
+      && typeof (parsed as StoredPendingRegistration).pendingId === 'string'
+      && typeof (parsed as StoredPendingRegistration).email === 'string'
+    ) {
+      return parsed as StoredPendingRegistration;
+    }
+  } catch {
+    // A malformed stale browser value should never prevent registration.
+  }
+  return null;
+}
+
+function storePendingRegistration(registration: StoredPendingRegistration): void {
+  window.sessionStorage.setItem(PENDING_REGISTRATION_STORAGE_KEY, JSON.stringify(registration));
+}
+
+function clearPendingRegistration(): void {
+  window.sessionStorage.removeItem(PENDING_REGISTRATION_STORAGE_KEY);
+}
+
 interface SignUpFormProps {
   onNavigate: (screen: AuthScreen) => void;
   onSuccess: (user: Partial<UserProfile>) => void;
@@ -37,6 +69,21 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
   });
 
   const [formError, setFormError] = useState<string | null>(null);
+
+  // A page refresh or development HMR must not discard the opaque identifier
+  // that the resend/verify APIs use to locate the pending OTP record.
+  useEffect(() => {
+    const pending = loadPendingRegistration();
+    if (!pending) return;
+    // Defer the restoration until hydration has finished. This avoids a
+    // server/client initial-render mismatch while still retaining OTP state
+    // after a browser refresh or HMR update.
+    queueMicrotask(() => {
+      setPendingId(pending.pendingId);
+      setEmail(pending.email);
+      setStep('otp');
+    });
+  }, []);
 
   // Countdown timer for OTP resend
   useEffect(() => {
@@ -94,6 +141,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
         preferredLanguage: 'vi',
       });
       setPendingId(pending.pending_id);
+      storePendingRegistration({ pendingId: pending.pending_id, email: pending.email });
       setCooldown(pending.cooldown_seconds || 60);
       setStep('otp');
     } catch (error) {
@@ -115,6 +163,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
 
     try {
       const session = await verifyRegisterOtp(pendingId, otp);
+      clearPendingRegistration();
       saveSession(session, true);
       onSuccess({
         name: session.user.display_name,
@@ -131,10 +180,17 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
 
   const handleResendOtp = async () => {
     if (cooldown > 0 || resending) return;
+    const activePendingId = pendingId || loadPendingRegistration()?.pendingId || '';
+    if (!activePendingId) {
+      setFormError('Your registration session is no longer available. Please return to the details form and register again.');
+      return;
+    }
     setResending(true);
     setFormError(null);
     try {
-      const res = await resendRegisterOtp(pendingId);
+      const res = await resendRegisterOtp(activePendingId);
+      setPendingId(res.pending_id);
+      storePendingRegistration({ pendingId: res.pending_id, email });
       setCooldown(res.cooldown_seconds || 60);
       setOtp('');
     } catch (error) {
@@ -171,6 +227,8 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
         <button
           type="button"
           onClick={() => {
+            clearPendingRegistration();
+            setPendingId('');
             setStep('form');
             setFormError(null);
           }}

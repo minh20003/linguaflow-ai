@@ -20,6 +20,8 @@ interface ConversationDetailsDrawerProps {
   onClose: () => void;
   onToggleMute: (conversationId: string) => void;
   onTogglePin?: (conversationId: string) => void;
+  onLeaveGroup: (conversationId: string) => void;
+  onBlockContact: (conversationId: string) => void;
   language: LanguageCode;
   attachments: MessageAttachment[];
   onDownloadAttachment: (attachment: MessageAttachment) => void;
@@ -31,6 +33,8 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   onClose,
   onToggleMute,
   onTogglePin,
+  onLeaveGroup,
+  onBlockContact,
   language,
   attachments,
   onDownloadAttachment,
@@ -219,12 +223,12 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
       {/* Danger Zone */}
       <div className="p-4 border-t border-[#E8EAF0] dark:border-[#232630] mt-auto">
         {isGroup ? (
-          <button className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
+          <button onClick={() => onLeaveGroup(conversation.id)} className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
             <LogOut className="w-4 h-4" />
             <span>{tx(language, 'Leave Group')}</span>
           </button>
         ) : (
-          <button className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
+          <button onClick={() => onBlockContact(conversation.id)} className="w-full flex items-center justify-center gap-2 py-2.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors">
             <ShieldAlert className="w-4 h-4" />
             <span>{tx(language, 'Block Contact')}</span>
           </button>

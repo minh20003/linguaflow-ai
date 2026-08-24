@@ -25,6 +25,7 @@ from src.schemas.chat import (
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
     ChatService,
     ClientMessageIdConflictError,
@@ -285,6 +286,10 @@ async def websocket_endpoint(
                     "not_conversation_member",
                     "You are not a member of this conversation",
                 )
+                continue
+            except DirectMessagingBlockedError:
+                await db.rollback()
+                await _send_error(websocket, "direct_messaging_blocked", "Direct messaging is unavailable")
                 continue
             except ClientMessageIdConflictError:
                 await db.rollback()

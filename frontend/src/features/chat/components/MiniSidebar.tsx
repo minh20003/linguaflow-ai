@@ -8,6 +8,7 @@ import {
   Globe2
 } from 'lucide-react';
 import { UserProfileMenu } from './UserProfileMenu';
+import { t, tx } from '../i18n';
 
 interface MiniSidebarProps {
   activeTab: SidebarTab;
@@ -33,22 +34,23 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
   unreadChatsCount,
 }) => {
   const [profileOpen, setProfileOpen] = useState(false);
+  const interfaceLanguage = settings.interfaceLanguage;
 
   const navItems = [
     {
       id: 'chats' as SidebarTab,
-      label: 'Chats',
+      label: t(interfaceLanguage, 'chats'),
       icon: MessageSquare,
       badge: unreadChatsCount > 0 ? unreadChatsCount : null,
     },
     {
       id: 'contacts' as SidebarTab,
-      label: 'Contacts',
+      label: tx(interfaceLanguage, 'Contacts'),
       icon: BookUser,
     },
     {
       id: 'groups' as SidebarTab,
-      label: 'Groups',
+      label: t(interfaceLanguage, 'groups'),
       icon: UsersRound,
     },
   ];
@@ -160,7 +162,7 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
             <Settings className="w-5 h-5 transition-transform group-hover:rotate-45" />
           </button>
           <div className="absolute left-[68px] top-1/2 -translate-y-1/2 px-2.5 py-1 bg-[#1E2230] dark:bg-[#2A2E3D] text-white text-xs font-medium rounded-lg shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
-            Settings
+            {t(interfaceLanguage, 'settings')}
           </div>
         </div>
 

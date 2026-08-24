@@ -37,6 +37,7 @@ interface MessageBubbleProps {
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
+  onSaveMessage: (messageId: string) => void;
   onDeleteMessage?: (messageId: string) => void;
   onDownloadAttachment: (attachment: MessageAttachment) => void;
   onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
@@ -59,6 +60,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onRateTranslation,
   onEditTranslation,
   onForward,
+  onSaveMessage,
   onDeleteMessage,
   onDownloadAttachment,
   onLoadAttachmentPreview,
@@ -529,11 +531,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 </button>
 
                 <button
-                  onClick={() => setShowMoreMenu(false)}
+                  onClick={() => {
+                    onSaveMessage(message.id);
+                    setShowMoreMenu(false);
+                  }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#1E2230] dark:text-[#E2E5F0] hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left"
                 >
                   <Bookmark className="w-3 h-3 text-[#74798C]" />
-                  <span>{interactionText(language, 'Save message')}</span>
+                  <span>{interactionText(language, message.isSaved ? 'Unsave message' : 'Save message')}</span>
                 </button>
 
                 {onDeleteMessage && (
