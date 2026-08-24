@@ -27,8 +27,8 @@ from src.database.models import (
     User,
 )
 from src.schemas.chat import ConversationType
-from src.services.llm import LLMConfigError, extract_text, get_llm
 from src.services.blocking import DirectMessagingBlockedError, is_blocked_between
+from src.services.llm import LLMConfigError, extract_text, get_llm
 from src.services.profiles import profile_for, select_for_reader
 
 logger = logging.getLogger(__name__)
