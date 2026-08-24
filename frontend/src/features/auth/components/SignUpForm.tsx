@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useState } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 import { GoogleSignInButton } from './GoogleSignInButton';
@@ -21,6 +22,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
 
   // Field touched states for responsive inline validation
   const [touched, setTouched] = useState({
@@ -65,6 +67,11 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
 
     if (password !== confirmPassword) {
       setFormError('Passwords do not match.');
+      return;
+    }
+
+    if (!hasAcceptedTerms) {
+      setFormError('Bạn cần đồng ý với Điều khoản dịch vụ và Chính sách riêng tư để tạo tài khoản.');
       return;
     }
 
@@ -328,6 +335,29 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             </div>
           )}
         </div>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-xl px-1 py-1 text-xs leading-relaxed text-slate-500">
+          <input
+            id="signup-accept-terms"
+            type="checkbox"
+            checked={hasAcceptedTerms}
+            onChange={(event) => {
+              setHasAcceptedTerms(event.target.checked);
+              if (formError) setFormError(null);
+            }}
+            className="peer sr-only"
+          />
+          <span
+            aria-hidden="true"
+            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-[11px] font-bold leading-none text-transparent transition-colors peer-checked:border-[#2563EB] peer-checked:bg-[#2563EB] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-[#2563EB]/30"
+          >✓</span>
+          <span>
+            Tôi đồng ý với{' '}
+            <Link href="/terms" target="_blank" className="font-semibold text-indigo-600 hover:underline">Điều khoản dịch vụ</Link>{' '}
+            và{' '}
+            <Link href="/privacy" target="_blank" className="font-semibold text-indigo-600 hover:underline">Chính sách riêng tư</Link>.
+          </span>
+        </label>
 
         {/* Primary Submit Button */}
         <button

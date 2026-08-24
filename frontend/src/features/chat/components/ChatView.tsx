@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Conversation, Message, User, MessageReply, MessageAttachment } from '../types';
+import { Conversation, Message, User, MessageMention, MessageReply, MessageAttachment } from '../types';
 import { ChatHeader } from './ChatHeader';
 import { MessageList } from './MessageList';
 import { MessageComposer } from './MessageComposer';
@@ -11,7 +11,7 @@ interface ChatViewProps {
   messages: Message[];
   currentUser: User;
   onBack?: () => void;
-  onSendMessage: (text: string, replyToMessageId?: string) => void;
+  onSendMessage: (text: string, replyToMessageId?: string, mentions?: MessageMention[]) => void;
   onSendAttachment?: (file: File) => void;
   onTyping?: (isTyping: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
@@ -38,6 +38,8 @@ interface ChatViewProps {
   onSearchUsers?: (query: string) => void;
   onTransferOwnership?: (conversationId: string, userId: string) => void;
   onUpdateGroup?: (conversationId: string, title: string, description: string) => void;
+  onStartDirectChat?: (userId: string) => void;
+  assistantMode?: boolean;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -72,6 +74,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onSearchUsers,
   onTransferOwnership,
   onUpdateGroup,
+  onStartDirectChat,
+  assistantMode = false,
 }) => {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
@@ -131,6 +135,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onStartCall={onStartCall}
           onSearchInChat={() => {}}
           language={language}
+          assistantMode={assistantMode}
         />
 
         {/* Full-width Messages Container */}
@@ -149,6 +154,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onDeleteMessage={onDeleteMessage}
           onDownloadAttachment={onDownloadAttachment}
           onLoadAttachmentPreview={onLoadAttachmentPreview}
+          onStartDirectChat={onStartDirectChat}
           language={language}
         />
 
@@ -160,12 +166,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onCancelReply={() => setReplyTo(null)}
           onSendAttachment={onSendAttachment}
           onTyping={onTyping}
+          mentionCandidates={assistantMode ? [] : conversation.type === 'group'
+            ? (conversation.members || []).filter((member) => member.id !== currentUser.id)
+            : (conversation.recipient ? [conversation.recipient] : [])}
           language={language}
         />
       </main>
 
       {/* Temporary Conversation Details Drawer */}
-      <ConversationDetailsDrawer
+      {!assistantMode && <ConversationDetailsDrawer
         conversation={conversation}
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
@@ -183,7 +192,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
         onSearchUsers={onSearchUsers}
         onTransferOwnership={onTransferOwnership}
         onUpdateGroup={onUpdateGroup}
-      />
+        onStartDirectChat={onStartDirectChat}
+      />}
     </div>
   );
 };

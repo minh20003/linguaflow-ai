@@ -11,7 +11,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.database.models import Message, TranslationAttempt
-from src.services.metrics import group_scores, percentile, summarize_attempts
+from src.services.metrics import (
+    estimate_model_cost_usd,
+    group_scores,
+    percentile,
+    summarize_attempts,
+)
 
 BASE_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
@@ -69,6 +74,18 @@ def test_percentile_of_one_value_is_that_value():
 def test_percentile_interpolates_between_neighbours():
     """p50 of an even-length series falls between the two middle values."""
     assert percentile([10, 20, 30, 40], 50) == 25.0
+
+
+def test_estimated_cost_supports_dated_model_snapshots():
+    """A served snapshot uses the price of its model family."""
+    cost = estimate_model_cost_usd("gpt-4o-mini-2024-07-18", 1_000_000, 1_000_000)
+
+    assert cost == pytest.approx(0.75)
+
+
+def test_estimated_cost_ignores_unknown_models():
+    """Unknown providers must not silently inherit an OpenAI price."""
+    assert estimate_model_cost_usd("(none)", 1_000, 100) is None
 
 
 def test_group_scores_reports_count_mean_and_passes():

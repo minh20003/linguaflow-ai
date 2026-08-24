@@ -4,6 +4,7 @@ import {
   MessageSquare,
   BookUser,
   UsersRound,
+  CalendarDays,
   Settings,
   Globe2
 } from 'lucide-react';
@@ -51,6 +52,11 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
       label: 'Groups',
       icon: UsersRound,
     },
+    {
+      id: 'calendar' as SidebarTab,
+      label: 'Personal calendar',
+      icon: CalendarDays,
+    },
   ];
 
   return (
@@ -61,11 +67,11 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
     >
       {/* Top Section: Brand Logo & Navigation */}
       <div className="flex flex-col items-center w-full gap-5">
-        {/* LinguaChat Logo Symbol */}
+        {/* LinguaFlow Logo Symbol */}
         <button
           id="sidebar-logo-button"
           onClick={() => onTabChange('chats')}
-          aria-label="LinguaChat Home"
+          aria-label="LinguaFlow Home"
           className="group relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#2563EB] to-[#60A5FA] text-white shadow-md shadow-[#2563EB]/25 hover:scale-105 active:scale-95 transition-all"
         >
           {/* Logo SVG: Speech bubble with global connection accent */}
@@ -92,7 +98,7 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
 
           {/* Logo Tooltip */}
           <div className="absolute left-[78px] px-2.5 py-1 bg-[#1E2230] text-white text-xs font-semibold rounded-lg shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
-            LinguaChat
+            LinguaFlow
           </div>
         </button>
 

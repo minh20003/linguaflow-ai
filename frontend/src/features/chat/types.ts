@@ -50,6 +50,11 @@ export interface MessageAttachment {
   createdAt?: string;
 }
 
+export interface MessageMention {
+  type: 'user' | 'assistant';
+  userId?: string;
+}
+
 export interface Message {
   id: string;
   senderId: string;
@@ -59,11 +64,14 @@ export interface Message {
   content: string;
   translation?: TranslationData;
   timestamp: string;
+  createdAt?: string;
   status: 'sending' | 'sent' | 'delivered' | 'read';
   replyTo?: MessageReply;
   forwardedFromMessageId?: string;
   reactions?: MessageReaction[];
   attachments?: MessageAttachment[];
+  mentions?: MessageMention[];
+  isAssistant?: boolean;
   dateDivider?: string;
 }
 
@@ -92,7 +100,6 @@ export interface AppSettings {
   preferredLanguage: LanguageCode;
   interfaceLanguage: LanguageCode;
   autoTranslate: boolean;
-  showOriginalByDefault: boolean;
   translationTone: 'natural' | 'formal' | 'casual' | 'friendly';
   theme: 'light' | 'dark';
   soundEnabled: boolean;
@@ -109,4 +116,4 @@ export interface ToastItem {
   timestamp?: number;
 }
 
-export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'settings';
+export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'settings';

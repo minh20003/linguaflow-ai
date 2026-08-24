@@ -3,10 +3,10 @@
    Ràng buộc cứng: không gradient, không bóng mờ, không animation vô hạn,
    cỡ chữ trần 26px, bo góc trần 4px, chuyển động trần 160ms. */
 
-body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)),
-body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *,
-body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::before,
-body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)) *::after {
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)):not(:has(#admin-app-shell)),
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)):not(:has(#admin-app-shell)) *,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)):not(:has(#admin-app-shell)) *::before,
+body:not(:has(#linguachat-app-shell)):not(:has(#auth-app-shell)):not(:has(#admin-app-shell)) *::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
