@@ -6,18 +6,20 @@ import {
   X,
   Image as ImageIcon,
   Paperclip,
-  Reply
+  Reply,
+  Bot,
 } from 'lucide-react';
-import { LanguageCode, MessageReply } from '../types';
+import { LanguageCode, MessageMention, MessageReply, User } from '../types';
 import { interactionText } from '../i18n';
 
 interface MessageComposerProps {
   recipientName: string;
-  onSendMessage: (text: string, replyToMessageId?: string) => void;
+  onSendMessage: (text: string, replyToMessageId?: string, mentions?: MessageMention[]) => void;
   replyTo: MessageReply | null;
   onCancelReply: () => void;
   onSendAttachment?: (file: File) => void;
   onTyping?: (isTyping: boolean) => void;
+  mentionCandidates: User[];
   language: LanguageCode;
 }
 
@@ -30,11 +32,14 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   onCancelReply,
   onSendAttachment,
   onTyping,
+  mentionCandidates,
   language,
 }) => {
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [activeMention, setActiveMention] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,7 +55,12 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
 
   const handleSend = () => {
     if (!text.trim()) return;
-    onSendMessage(text.trim(), replyTo?.id);
+    const mentions: MessageMention[] = [];
+    for (const user of mentionCandidates) {
+      if (new RegExp(`(^|\\s)@${user.username.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}(?=\\s|$)`, 'i').test(text)) mentions.push({ type: 'user', userId: user.id });
+    }
+    if (/(^|\s)@assistant(?=\s|$)/i.test(text)) mentions.push({ type: 'assistant' });
+    onSendMessage(text.trim(), replyTo?.id, mentions);
     setText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -58,10 +68,37 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOptions.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      setActiveMention((current) => (current + (e.key === 'ArrowDown' ? 1 : mentionOptions.length - 1)) % mentionOptions.length);
+      return;
+    }
+    if (mentionOptions.length && e.key === 'Tab') {
+      e.preventDefault();
+      insertMention(mentionOptions[activeMention]);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const mentionMatch = text.slice(0, cursorPosition).match(/(^|\s)@([^\s@]*)$/);
+  const mentionQuery = mentionMatch?.[2].toLocaleLowerCase() ?? '';
+  const mentionOptions = mentionMatch ? [
+    ...mentionCandidates.filter((user) => `${user.name} ${user.username}`.toLocaleLowerCase().includes(mentionQuery)).map((user) => ({ type: 'user' as const, user })),
+    ...('trợ lý thông minh assistant ai'.includes(mentionQuery) ? [{ type: 'assistant' as const }] : []),
+  ] : [];
+  const insertMention = (option: typeof mentionOptions[number]) => {
+    const cursor = textareaRef.current?.selectionStart ?? text.length;
+    const before = text.slice(0, cursor);
+    const start = before.lastIndexOf('@');
+    const token = option.type === 'assistant' ? '@assistant ' : `@${option.user.username} `;
+    setText(`${text.slice(0, start)}${token}${text.slice(cursor)}`);
+    setCursorPosition(start + token.length);
+    setActiveMention(0);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -156,13 +193,27 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             value={text}
             onChange={(e) => {
               setText(e.target.value);
+              setActiveMention(0);
+              setCursorPosition(e.target.selectionStart);
               onTyping?.(e.target.value.trim().length > 0);
             }}
+            onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+            onClick={(event) => setCursorPosition(event.currentTarget.selectionStart)}
             onBlur={() => onTyping?.(false)}
             onKeyDown={handleKeyDown}
             placeholder={`${interactionText(language, 'Message')} ${recipientName}...`}
             className="w-full bg-transparent resize-none text-sm text-[#1E2230] dark:text-[#F5F6FA] placeholder-[#8A8F9E] dark:placeholder-[#74798C] focus:outline-none max-h-32 py-0.5 px-1 leading-relaxed"
           />
+          {mentionOptions.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-3 w-72 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-xl dark:border-[#2A2E3D] dark:bg-[#232630] z-40">
+              <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">Gợi ý tag</p>
+              {mentionOptions.map((option, index) => option.type === 'assistant' ? (
+                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><span className="flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300"><Bot className="h-4 w-4" /></span><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">Trợ lý thông minh</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">Phản hồi ngay trong luồng</span></span></button>
+              ) : (
+                <button key={option.user.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={option.user.avatar} alt="" className="h-7 w-7 rounded-full" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{option.user.name}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">@{option.user.username}</span></span></button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Right Action Icons: Emoji and Send */}

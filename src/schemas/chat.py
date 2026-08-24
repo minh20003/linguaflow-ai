@@ -227,6 +227,13 @@ class AttachmentResponse(BaseModel):
         return f"/api/v1/conversations/{self.conversation_id}/attachments/{self.id}"
 
 
+class MentionSummary(BaseModel):
+    """A durable mention target, validated server-side against the thread."""
+
+    type: Literal["user", "assistant"]
+    user_id: str | None = None
+
+
 class MessageResponse(BaseModel):
     """Persisted message representation used by REST history."""
 
@@ -238,6 +245,8 @@ class MessageResponse(BaseModel):
     sender_id: str
     original_text: str
     source_language: str
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
     # Carrying translations here is what makes a socket that dropped mid
     # translation a non-event: the client recovers them on reconnect rather
     # than waiting for a `translation_completed` that was already sent.
@@ -444,6 +453,8 @@ class RealtimeMessage(BaseModel):
     sender_id: str
     original_text: str
     created_at: UtcDatetime
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None
@@ -473,6 +484,7 @@ class SendMessageEvent(BaseModel):
     attachment_id: str | None = Field(default=None, max_length=255)
     reply_to_message_id: str | None = Field(default=None, max_length=36)
     forwarded_from_message_id: str | None = Field(default=None, max_length=36)
+    mentions: list[MentionSummary] = []
 
     @field_validator("client_message_id", "conversation_id")
     @classmethod
@@ -530,6 +542,15 @@ class MessageReceivedEvent(BaseModel):
 
     type: Literal["message_received"] = "message_received"
     message: RealtimeMessage
+
+
+class MentionNotificationEvent(BaseModel):
+    """Realtime cue for a member explicitly tagged in a message."""
+
+    type: Literal["mention"] = "mention"
+    message_id: str
+    conversation_id: str
+    sender_id: str
 
 
 class TranslationCompletedEvent(BaseModel):

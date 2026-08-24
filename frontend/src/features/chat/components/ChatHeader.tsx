@@ -19,6 +19,7 @@ interface ChatHeaderProps {
   onStartCall: (type: 'voice' | 'video') => void;
   onSearchInChat: () => void;
   language: User['nativeLanguage'];
+  assistantMode?: boolean;
 }
 
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
@@ -29,8 +30,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onStartCall,
   onSearchInChat,
   language,
+  assistantMode = false,
 }) => {
-  const isGroup = conversation.type === 'group';
+  const isGroup = conversation.type === 'group' && !assistantMode;
 
   return (
     <header
@@ -51,7 +53,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         )}
 
         {/* Avatar with Status */}
-        <div className="relative flex-shrink-0 cursor-pointer" onClick={onToggleDetails}>
+        <div className={`relative flex-shrink-0 ${assistantMode ? '' : 'cursor-pointer'}`} onClick={assistantMode ? undefined : onToggleDetails}>
           <img
             src={conversation.avatar}
             alt={conversation.name}
@@ -84,7 +86,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           </div>
 
           <div className="flex items-center gap-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
-            {isGroup ? (
+            {assistantMode ? (
+              <span>Không gian riêng tư của bạn</span>
+            ) : isGroup ? (
               <span>{conversation.memberCount || 8} {tx(language, 'Members').toLowerCase()}</span>
             ) : conversation.isTyping ? (
               <span className="text-[#2563EB] font-medium animate-pulse">
@@ -102,7 +106,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
       </div>
 
       {/* Right: Actions (Search, Call, Video, Info) */}
-      <div className="flex items-center gap-1 md:gap-1.5">
+      {!assistantMode && <div className="flex items-center gap-1 md:gap-1.5">
         <button
           id="chat-action-search"
           onClick={onSearchInChat}
@@ -142,7 +146,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         >
           <Info className="w-5 h-5" />
         </button>
-      </div>
+      </div>}
     </header>
   );
 };

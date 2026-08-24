@@ -56,6 +56,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
         name: session.user.display_name,
         email: session.user.email,
         preferredLanguage: session.user.preferred_language,
+        role: session.user.role,
       });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in. Please try again.');
@@ -70,7 +71,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
     try {
       const session = await signInWithGoogle(credential, rememberMe);
       saveSession(session, rememberMe);
-      onSuccess({ name: session.user.display_name, email: session.user.email, preferredLanguage: session.user.preferred_language });
+      onSuccess({ name: session.user.display_name, email: session.user.email, preferredLanguage: session.user.preferred_language, role: session.user.role });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in with Google.');
     } finally {
@@ -89,7 +90,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       {/* Title & Subtitle */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
-        <p className="text-sm text-slate-500 mt-1">Sign in to continue to LinguaChat.</p>
+        <p className="text-sm text-slate-500 mt-1">Sign in to continue to LinguaFlow.</p>
       </div>
 
       {/* Error Alert */}

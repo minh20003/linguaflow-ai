@@ -29,6 +29,24 @@ from src.database.models import TranslationAttempt
 # `translation_results` alone, which is why the fallback rate is computed here.
 FALLBACK_OUTCOMES = frozenset({"secondary", "original"})
 
+# Reference text-token prices in USD per one million tokens. This dashboard
+# labels the result as an estimate because provider pricing can change and
+# attempts without a recorded model are deliberately excluded.
+MODEL_TOKEN_PRICES_USD: dict[str, tuple[float, float]] = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+}
+
+
+def estimate_model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
+    """Estimate token cost for a known served model, including dated snapshots."""
+    normalized = (model or "").lower()
+    family = next((name for name in MODEL_TOKEN_PRICES_USD if normalized.startswith(name)), None)
+    if family is None:
+        return None
+    input_price, output_price = MODEL_TOKEN_PRICES_USD[family]
+    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+
 
 def percentile(values: list[int], pct: float) -> float:
     """Percentile of a sequence, safe on empty and single-element input.
@@ -84,6 +102,8 @@ class LanguagePairStats:
     count: int
     p50_ms: float
     p95_ms: float
+    avg_input_tokens: float
+    avg_output_tokens: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +139,8 @@ class AttemptSummary:
     language_pairs: dict[str, LanguagePairStats] = field(default_factory=dict)
     input_tokens: int = 0
     output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    priced_attempts: int = 0
     # The plain arithmetic mean, alongside the percentiles below. A mean is
     # what most readers of a latency figure expect "the average" to mean, and
     # it is easy to confuse with `total_ms_p50` — which is the *median*, the
@@ -211,9 +233,13 @@ async def summarize_attempts(
     model_input_tokens: Counter[str] = Counter()
     model_output_tokens: Counter[str] = Counter()
     durations_by_pair: dict[str, list[int]] = {}
+    input_tokens_by_pair: dict[str, list[int]] = {}
+    output_tokens_by_pair: dict[str, list[int]] = {}
     all_durations: list[int] = []
     input_tokens = 0
     output_tokens = 0
+    estimated_cost_usd = 0.0
+    priced_attempts = 0
 
     for row in rows:
         outcomes[row.outcome] += 1
@@ -222,6 +248,10 @@ async def summarize_attempts(
             fallback_reasons[row.fallback_reason] += 1
         input_tokens += row.input_tokens
         output_tokens += row.output_tokens
+        attempt_cost = estimate_model_cost_usd(row.model_served, row.input_tokens, row.output_tokens)
+        if attempt_cost is not None:
+            estimated_cost_usd += attempt_cost
+            priced_attempts += 1
 
         # The detected language is the one the translation was actually
         # performed from; the declared one is a guess from the sender's profile
@@ -246,6 +276,8 @@ async def summarize_attempts(
 
         pair = f"{source}->{row.target_language}"
         durations_by_pair.setdefault(pair, []).append(row.total_ms)
+        input_tokens_by_pair.setdefault(pair, []).append(row.input_tokens)
+        output_tokens_by_pair.setdefault(pair, []).append(row.output_tokens)
         all_durations.append(row.total_ms)
 
     fallback_count = sum(outcomes[outcome] for outcome in FALLBACK_OUTCOMES)
@@ -270,11 +302,15 @@ async def summarize_attempts(
                 count=len(durations),
                 p50_ms=percentile(durations, 50),
                 p95_ms=percentile(durations, 95),
+                avg_input_tokens=sum(input_tokens_by_pair[pair]) / len(input_tokens_by_pair[pair]),
+                avg_output_tokens=sum(output_tokens_by_pair[pair]) / len(output_tokens_by_pair[pair]),
             )
             for pair, durations in sorted(durations_by_pair.items())
         },
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        estimated_cost_usd=estimated_cost_usd,
+        priced_attempts=priced_attempts,
         total_ms_mean=statistics.mean(all_durations) if all_durations else 0.0,
         total_ms_p50=percentile(all_durations, 50),
         total_ms_p95=percentile(all_durations, 95),

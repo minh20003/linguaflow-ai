@@ -3,7 +3,7 @@ import { AppShell } from "@/features/chat/components/AppShell";
 import "@/features/chat/styles/chat.css";
 
 export const metadata: Metadata = {
-  title: "Tin nhắn — LinguaChat",
+  title: "Tin nhắn — LinguaFlow",
   description: "Trò chuyện và dịch tin nhắn theo thời gian thực.",
 };
 

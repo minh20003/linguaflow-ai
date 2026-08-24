@@ -108,7 +108,7 @@ export const LanguageOnboarding: React.FC<LanguageOnboardingProps> = ({
         onClick={onContinue}
         className="w-full h-11 mt-5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all shadow-sm shadow-indigo-600/25 active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer"
       >
-        <span>Continue to LinguaChat</span>
+        <span>Continue to LinguaFlow</span>
         <ArrowRight className="w-4 h-4" />
       </button>
     </motion.div>

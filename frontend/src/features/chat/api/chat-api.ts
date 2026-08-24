@@ -3,6 +3,11 @@ import { getApiErrorMessage, parseJson, type ApiErrorBody } from "@/shared/api/r
 import type { AuthUser } from "@/shared/types/auth";
 import type { Conversation, Message, MessageAttachment, User } from "../types";
 
+interface ApiMention {
+  type: "user" | "assistant";
+  user_id?: string | null;
+}
+
 export interface ApiUser {
   id: string;
   email: string;
@@ -55,6 +60,8 @@ export interface ApiMessage {
   reply_to_message_id: string | null;
   forwarded_from_message_id?: string | null;
   attachment?: ApiAttachment | null;
+  mentions?: ApiMention[];
+  assistant_generated?: boolean;
   is_saved?: boolean;
   reactions?: ApiMessageReaction[];
 }
@@ -119,7 +126,14 @@ export interface ApiCall {
 }
 
 function avatar(seed: string): string {
-  return `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=eff6ff`;
+  return `https://api.dicebear.com/9.x/initials/svg?seed=${encodeURIComponent(seed)}&backgroundColor=bfdbfe&fontColor=1d4ed8`;
+}
+
+export const ASSISTANT_AVATAR_URL = "https://api.dicebear.com/9.x/bottts-neutral/svg?seed=linguachat-assistant&backgroundColor=ede9fe";
+export const ASSISTANT_CONVERSATION_TITLE = "__linguachat_assistant__";
+
+function assistantAvatar(): string {
+  return ASSISTANT_AVATAR_URL;
 }
 
 export function toLanguageCode(value: string): User["nativeLanguage"] {
@@ -200,12 +214,15 @@ export function compareConversations(a: Conversation, b: Conversation): number {
 
 export function toMessage(item: ApiMessage, users: Map<string, User>, preferredLanguage: string): Message {
   const sender = users.get(item.sender_id);
-  const translation = item.translations.find((entry) => entry.target_language === preferredLanguage);
+  const isAssistant = Boolean(item.assistant_generated);
+  // Agent responses are already authored for the user-facing flow. Keep them
+  // out of the per-message translation review pipeline entirely.
+  const translation = isAssistant ? undefined : item.translations.find((entry) => entry.target_language === preferredLanguage);
   return {
     id: item.id,
     senderId: item.sender_id,
-    senderName: sender?.name,
-    senderAvatar: sender?.avatar,
+    senderName: isAssistant ? 'Trợ lý thông minh' : sender?.name,
+    senderAvatar: isAssistant ? assistantAvatar() : sender?.avatar,
     conversationId: item.conversation_id,
     content: item.deleted_at ? "This message was deleted" : item.original_text,
     translation: translation ? {
@@ -220,10 +237,13 @@ export function toMessage(item: ApiMessage, users: Map<string, User>, preferredL
       editedText: translation.my_edit?.edited_text,
     } : undefined,
     timestamp: time(item.created_at),
+    createdAt: item.created_at,
     status: "delivered",
     replyTo: item.reply_to_message_id ? { id: item.reply_to_message_id, senderName: "Reply", content: "" } : undefined,
     forwardedFromMessageId: item.forwarded_from_message_id ?? undefined,
     attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
+    mentions: item.mentions?.map((mention) => ({ type: mention.type, userId: mention.user_id ?? undefined })),
+    isAssistant,
     isSaved: item.is_saved ?? false,
     reactions: item.reactions?.map((reaction) => ({
       emoji: reaction.emoji,
@@ -286,6 +306,7 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
 export function getMe(token: string) { return request<AuthUser>("/api/v1/auth/me", token); }
 export function listUsers(token: string, query: string) { return request<ApiUser[]>(`/api/v1/users?q=${encodeURIComponent(query)}`, token); }
 export function listConversations(token: string) { return request<ApiConversation[]>("/api/v1/conversations", token); }
+export function getAssistantConversation(token: string) { return request<ApiConversation>("/api/v1/assistant/conversation", token, { method: "POST" }); }
 export function getMessages(token: string, conversationId: string) { return request<ApiMessage[]>(`/api/v1/conversations/${conversationId}/messages`, token); }
 export function searchMessages(token: string, conversationId: string, query: string) {
   return request<ApiMessageSearchResponse>(

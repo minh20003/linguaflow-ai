@@ -9,11 +9,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.deps import get_admin_user
 from src.database import get_db
-from src.database.models import User
+from src.database.models import TranslationAttempt, User
 from src.services.llm_pricing import PRICE_PER_MILLION_TOKENS_USD, estimate_cost_usd
 from src.services.metrics import summarize_attempts
 
@@ -90,12 +91,47 @@ async def read_stats(
                 "count": stats.count,
                 "p50_ms": round(stats.p50_ms),
                 "p95_ms": round(stats.p95_ms),
+                "avg_input_tokens": round(stats.avg_input_tokens),
+                "avg_output_tokens": round(stats.avg_output_tokens),
             }
             for pair, stats in summary.language_pairs.items()
         },
         "input_tokens": summary.input_tokens,
         "output_tokens": summary.output_tokens,
+        "estimated_cost_usd": round(summary.estimated_cost_usd, 6),
+        "cost_coverage_rate": round(summary.priced_attempts / summary.total, 4) if summary.total else 0.0,
         "total_ms_mean": round(summary.total_ms_mean),
         "total_ms_p50": round(summary.total_ms_p50),
         "total_ms_p95": round(summary.total_ms_p95),
     }
+
+
+@router.get("/stats/attempts")
+async def read_recent_attempts(
+    days: int | None = Query(default=None, ge=1, le=MAX_WINDOW_DAYS),
+    limit: int = Query(default=20, ge=1, le=100),
+    session: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> list[dict]:
+    """Return recent operational translation attempts without message content."""
+    query = select(TranslationAttempt).order_by(desc(TranslationAttempt.created_at)).limit(limit)
+    if days:
+        since = datetime.now(UTC) - timedelta(days=days)
+        query = query.where(TranslationAttempt.created_at >= since)
+
+    attempts = (await session.scalars(query)).all()
+    return [
+        {
+            "id": attempt.id,
+            "created_at": attempt.created_at,
+            "source_language": attempt.source_language_detected or attempt.source_language_declared,
+            "target_language": attempt.target_language,
+            "model": attempt.model_served or attempt.model_configured or "(none)",
+            "outcome": attempt.outcome,
+            "fallback_reason": attempt.fallback_reason,
+            "total_ms": attempt.total_ms,
+            "input_tokens": attempt.input_tokens,
+            "output_tokens": attempt.output_tokens,
+        }
+        for attempt in attempts
+    ]
