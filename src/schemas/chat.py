@@ -398,10 +398,9 @@ class TranslationEditRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edited_text: str = Field(min_length=1, max_length=5000)
-    # Whether this wording may be used to improve the system. Defaults to false
-    # and has to be asked for explicitly: ADR-19 made these rows private to
-    # their author, and consent is what makes a derived record of one legitimate
-    # rather than an exception to that rule (docs/NewFeature.md 3.1, option A).
+    # Whether this wording may feed the glossary-mining pipeline. It defaults
+    # to false and must be explicitly requested. It does not control the
+    # separate, identity-free admin quality-review queue.
     consent_to_share: bool = False
 
     @field_validator("edited_text")

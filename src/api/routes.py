@@ -2746,8 +2746,10 @@ async def submit_translation_edit(
     """Store the caller's own wording for a translation (docs/CONTRACT.md §3.10).
 
     Each call appends, so editing again keeps the earlier attempt. The text is
-    private to its author and no WebSocket event follows: nobody else's screen
-    changes because of it.
+    private to its author among conversation members and no WebSocket event
+    follows: nobody else's screen changes because of it. Administrators may
+    read an anonymous source/machine/edit comparison in the quality-review
+    queue, but never the editor or conversation that produced it.
 
     With `consent_to_share`, and only with it, a second and much narrower record
     is written in the background: the term the machine used, the term this
