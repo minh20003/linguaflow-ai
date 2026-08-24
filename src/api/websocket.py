@@ -25,12 +25,14 @@ from src.schemas.chat import (
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
     ChatService,
     ClientMessageIdConflictError,
     ConversationMembershipError,
     ConversationNotFoundError,
 )
+from src.services.commitment_detection import schedule_commitment_detection
 from src.services.connection_manager import ConnectionManager
 from src.services.message_memory import schedule_message_embedding
 from src.services.profile_inference import schedule_profile_inference
@@ -271,6 +273,7 @@ async def websocket_endpoint(
                     text=event.text,
                     attachment_id=event.attachment_id,
                     reply_to_message_id=event.reply_to_message_id,
+                    forwarded_from_message_id=event.forwarded_from_message_id,
                 )
             except ConversationNotFoundError:
                 await db.rollback()
@@ -283,6 +286,10 @@ async def websocket_endpoint(
                     "not_conversation_member",
                     "You are not a member of this conversation",
                 )
+                continue
+            except DirectMessagingBlockedError:
+                await db.rollback()
+                await _send_error(websocket, "direct_messaging_blocked", "Direct messaging is unavailable")
                 continue
             except ClientMessageIdConflictError:
                 await db.rollback()
@@ -322,6 +329,14 @@ async def websocket_endpoint(
                 # Fire and forget. Guarded by `created` so an idempotent resend
                 # does not translate the same message twice.
                 schedule_translations(message=result.message, publisher=manager)
+                # Commitment detection deliberately receives primitive IDs and
+                # opens its own session; it never delays message delivery.
+                schedule_commitment_detection(
+                    message_id=result.message.id,
+                    conversation_id=result.message.conversation_id,
+                    sender_id=result.message.sender_id,
+                    publisher=manager,
+                )
                 # Also fire and forget, and separate on purpose: this asks a
                 # question about the whole conversation rather than about this
                 # message, and it answers at most once every twenty of them

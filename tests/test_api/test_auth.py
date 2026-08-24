@@ -338,3 +338,59 @@ async def test_user_id_from_token_not_request(client, test_user, test_admin, tes
     # Should return admin's info, not test_user's
     assert data["email"] == "admin@example.com"
     assert data["role"] == "admin"
+
+
+@pytest.mark.asyncio
+async def test_patch_user_settings_rejects_explicit_null(client, test_user, test_user_headers):
+    """Explicit null for non-nullable boolean/tone fields returns 422, not 500."""
+    response = await client.patch(
+        "/api/v1/auth/me/settings",
+        headers=test_user_headers,
+        json={"auto_translate": None},
+    )
+    assert response.status_code == 422
+
+    response2 = await client.patch(
+        "/api/v1/auth/me/settings",
+        headers=test_user_headers,
+        json={"sound_enabled": None},
+    )
+    assert response2.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_user_settings_rejects_empty_body(client, test_user, test_user_headers):
+    """Empty PATCH {} must return 422 validation error."""
+    response = await client.patch(
+        "/api/v1/auth/me/settings",
+        headers=test_user_headers,
+        json={},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_user_settings_updates_and_preserves_omitted(client, test_user, test_user_headers):
+    """Partial update updates only specified fields and preserves existing ones."""
+    res1 = await client.patch(
+        "/api/v1/auth/me/settings",
+        headers=test_user_headers,
+        json={"auto_translate": False, "translation_tone": "formal"},
+    )
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert data1["auto_translate"] is False
+    assert data1["translation_tone"] == "formal"
+    assert data1["show_original_by_default"] is False
+
+    # Partial update sound_enabled only
+    res2 = await client.patch(
+        "/api/v1/auth/me/settings",
+        headers=test_user_headers,
+        json={"sound_enabled": False},
+    )
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["sound_enabled"] is False
+    assert data2["auto_translate"] is False  # preserved
+    assert data2["translation_tone"] == "formal"  # preserved

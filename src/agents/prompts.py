@@ -190,6 +190,13 @@ HONORIFIC_DIRECTIVES = {
     ),
 }
 
+TONE_DIRECTIVES = {
+    "natural": "Preserve the source tone and register naturally; do not add stylistic rewriting.",
+    "formal": "Use a professional, formal rendering while preserving meaning and relationship constraints.",
+    "casual": "Use a relaxed conversational rendering without adding slang absent from the meaning.",
+    "friendly": "Use warm, friendly wording without changing the sender's intent.",
+}
+
 # Applies to every standing, and it is the guard rail rather than the
 # instruction: a language that does not mark the distinction grammatically is
 # exactly where a model starts inventing "Dear Sir" and "I would be most
@@ -279,6 +286,7 @@ def build_audience_block(
     audience: str = "",
     honorific_profile: str = "",
     sender_honorific_profile: str = "",
+    translation_tone: str = "natural",
 ) -> str:
     """Render the section describing who the translation is for.
 
@@ -298,6 +306,7 @@ def build_audience_block(
             reader's into the *relationship* between them, because that is what
             a language marks — see `relative_standing`. Empty leaves the
             reader's standing to speak for itself, as it did before.
+        translation_tone: Desired translation tone style.
 
     Returns:
         The rendered section, or "" when there is nothing to say.
@@ -314,6 +323,11 @@ def build_audience_block(
     if directive:
         lines.append(f"- {directive}")
         lines.append(f"- {_HONORIFIC_FLOOR}")
+
+    tone_directive = TONE_DIRECTIVES.get(translation_tone)
+    if tone_directive and (translation_tone != "natural" or domain or audience or directive):
+        lines.append(f"- Style: {tone_directive}")
+        lines.append("- Meaning and required relationship/honorific forms always take priority over style.")
 
     if not lines:
         return ""

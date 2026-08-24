@@ -53,6 +53,40 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class GroupMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_ids: list[str] = Field(min_length=1)
+
+
+class GroupRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["admin", "member"]
+
+
+class GroupTransferOwnerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1)
+
+
+class GroupUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Group name must not be blank")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
 class ConversationMemberSummary(BaseModel):
     """Enough about a member to render them and to know what they read."""
 
@@ -66,6 +100,7 @@ class ConversationMemberSummary(BaseModel):
     username: str | None = None
     display_name: str | None = None
     preferred_language: str
+    group_role: Literal["owner", "admin", "member"] = "member"
     # The standing this member holds in *this* conversation, which is why it
     # cannot be validated straight off the User row: the same account is a
     # junior colleague in one thread and a client in another.
@@ -92,6 +127,7 @@ class ConversationResponse(BaseModel):
     id: str
     type: ConversationType
     title: str | None
+    description: str | None = None
     created_by: str
     created_at: UtcDatetime
     member_ids: list[str]
@@ -109,6 +145,24 @@ class ConversationResponse(BaseModel):
     online_member_ids: list[str] = []
     # Messages from other people newer than this reader's last_read_at (§3.8).
     unread_count: int = 0
+    is_pinned: bool = False
+    pinned_at: UtcDatetime | None = None
+    is_muted: bool = False
+
+
+class ConversationPreferencesUpdate(BaseModel):
+    """Explicit desired per-member state; never a blind server-side toggle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_pinned: bool | None = None
+    is_muted: bool | None = None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "ConversationPreferencesUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one preference must be provided")
+        return self
 
 
 class TranslationEditSummary(BaseModel):
@@ -137,6 +191,7 @@ class TranslationSummary(BaseModel):
     # `honorific_profile` joined the unique key, `target_language` alone no
     # longer identifies a row (docs/CONTRACT.md section 5, note 6).
     honorific_profile: str
+    translation_tone: Literal["natural", "formal", "casual", "friendly"] = "natural"
     translated_text: str
     model: str
     latency_ms: int
@@ -158,6 +213,7 @@ class AttachmentResponse(BaseModel):
     filename: str
     content_type: str
     size: int
+    created_at: datetime
 
     @computed_field
     @property
@@ -193,6 +249,84 @@ class MessageResponse(BaseModel):
     # The file this message carries, and the message it answers (§3.7).
     attachment: AttachmentResponse | None = None
     reply_to_message_id: str | None = None
+    forwarded_from_message_id: str | None = None
+    is_saved: bool = False
+    reactions: list["MessageReactionSummary"] = []
+
+
+class SavedMessageStateResponse(BaseModel):
+    message_id: str
+    is_saved: bool
+
+
+class SavedMessagesResponse(BaseModel):
+    items: list[MessageResponse]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class MessageReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    user_ids: list[str]
+
+
+class ReactionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emoji: str = Field(min_length=1, max_length=32)
+
+    @field_validator("emoji")
+    @classmethod
+    def emoji_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("emoji must not be blank")
+        return cleaned
+
+
+class ReactionStateResponse(BaseModel):
+    message_id: str
+    reactions: list[MessageReactionSummary]
+
+
+class MessageSearchResult(BaseModel):
+    message: MessageResponse
+    matched_in: Literal["original", "translation"]
+    snippet: str
+
+
+class MessageSearchResponse(BaseModel):
+    items: list[MessageSearchResult]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class TranslationRetryResponse(BaseModel):
+    message_id: str
+    status: Literal["scheduled"] = "scheduled"
+
+
+class CallStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    call_type: Literal["voice", "video"]
+
+
+class CallResponse(BaseModel):
+    call_id: str
+    conversation_id: str
+    caller_id: str
+    callee_id: str
+    call_type: Literal["voice", "video"]
+    status: Literal["ringing", "accepted", "rejected", "ended", "missed", "failed"]
+    room_url: str | None = None
+    join_token: str | None = None
+    created_at: UtcDatetime
+    answered_at: UtcDatetime | None = None
+    ended_at: UtcDatetime | None = None
 
 
 class EditMessageRequest(BaseModel):
@@ -313,6 +447,7 @@ class RealtimeMessage(BaseModel):
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None
+    forwarded_from_message_id: str | None = None
     attachment: AttachmentResponse | None = None
 
 
@@ -337,6 +472,7 @@ class SendMessageEvent(BaseModel):
     # Both optional: a plain message carries neither (docs/CONTRACT.md §4.1).
     attachment_id: str | None = Field(default=None, max_length=255)
     reply_to_message_id: str | None = Field(default=None, max_length=36)
+    forwarded_from_message_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("client_message_id", "conversation_id")
     @classmethod
@@ -420,6 +556,7 @@ class TranslationCompletedEvent(BaseModel):
     source_language: str
     target_language: str
     honorific_profile: str
+    translation_tone: Literal["natural", "formal", "casual", "friendly"] = "natural"
     translated_text: str
     model: str
     latency_ms: int
@@ -448,6 +585,31 @@ class MessageDeletedEvent(BaseModel):
     message_id: str
     conversation_id: str
     deleted_at: UtcDatetime
+
+
+class MessageReactionsUpdatedEvent(BaseModel):
+    type: Literal["message_reactions_updated"] = "message_reactions_updated"
+    conversation_id: str
+    message_id: str
+    reactions: list[MessageReactionSummary]
+
+
+class ConversationMemberLeftEvent(BaseModel):
+    type: Literal["conversation_member_left"] = "conversation_member_left"
+    conversation_id: str
+    user_id: str
+
+
+class CallEvent(BaseModel):
+    """Public call state notification.  Never carries a provider credential."""
+
+    type: Literal["call_incoming", "call_accepted", "call_rejected", "call_ended", "call_failed"]
+    call_id: str
+    conversation_id: str
+    caller_id: str
+    callee_id: str
+    call_type: Literal["voice", "video"]
+    status: Literal["ringing", "accepted", "rejected", "ended", "missed", "failed"]
 
 
 class ErrorEvent(BaseModel):

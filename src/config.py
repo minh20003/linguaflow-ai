@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     mistral_api_key: str = ""
 
+    # Google Identity Services authentication. This is an OAuth client ID, not
+    # a secret; the browser needs the same value to request an ID token.
+    google_oauth_client_id: str = ""
+
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
     # Deadline for one whole translation run, covering detection, the LLM call
@@ -150,6 +154,14 @@ class Settings(BaseSettings):
     fallback_translator_enabled: bool = True
     fallback_translator_timeout_seconds: int = Field(default=5, ge=1, le=30)
 
+    # Ordinary direct RTC calls.  The Daily server API key never reaches the
+    # frontend; the browser receives only a short-lived meeting token.
+    rtc_provider: Literal["daily", "disabled"] = "daily"
+    daily_api_key: str = ""
+    daily_api_base: str = "https://api.daily.co/v1"
+    call_ring_timeout_seconds: int = Field(default=45, ge=10, le=300)
+    call_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+
     # Observability (F-03.4). Which backend receives the traces, or none.
     #
     # A switch rather than a hard-wired vendor because a trace backend is the
@@ -196,6 +208,9 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./data/chroma"
     upload_dir: str = "./data/uploads"
     max_upload_size_bytes: int = Field(default=20 * 1024 * 1024, ge=1)
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "attachments"
 
     # JWT Authentication
     jwt_secret: str = ""  # Required: set in environment
@@ -254,7 +269,7 @@ class Settings(BaseSettings):
         # The browser-facing local development app is part of the documented
         # contract. Keep these origins available even when a machine-level
         # CORS_ORIGINS variable overrides the repository's .env value.
-        for local_origin in ("http://localhost:3000", "http://localhost:3001"):
+        for local_origin in ("http://localhost:3000", "http://localhost:3001", "http://localhost:3002"):
             if local_origin not in origins:
                 origins.append(local_origin)
         if self.public_frontend_origin and self.public_frontend_origin not in origins:

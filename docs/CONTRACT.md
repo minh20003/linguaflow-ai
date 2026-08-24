@@ -96,6 +96,11 @@ class AgentState(TypedDict, total=False):
                                   # GỬI. Rỗng = chưa suy luận. Prompt cần cả hai
                                   # vì xưng hô là quan hệ, không phải thuộc tính
                                   # của một người — xem ghi chú ngay dưới
+    translation_tone: str         # natural | formal | casual | friendly — lấy từ
+                                  # users_settings.translation_tone của NGƯỜI ĐỌC
+                                  # (nửa còn lại của khoá fan-out cùng
+                                  # honorific_profile, xem §4.4). Do máy chủ suy ra
+                                  # từ cài đặt, không phải văn bản do client tự gõ
     domain: str                   # Lĩnh vực hội thoại, do node customize điền từ
     audience: str                 # conversation_profiles. Rỗng = chưa suy luận,
                                   # khi đó prompt bỏ hẳn mục Audience (§5 ghi chú 15)
@@ -177,7 +182,7 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `DELETE` | `/admin/glossary/{entry_id}` | — | `GlossaryEntryDTO` với `status = "retired"`, §3.12 | Đã hiện thực |
 | `POST` | `/admin/glossary/{entry_id}/restore` | — | `GlossaryEntryDTO` với `status = "active"`, §3.12 | Đã hiện thực |
 | `DELETE` | `/admin/glossary/{entry_id}/permanent` | — | `GlossaryEntryDTO` của dòng vừa bị xoá, `409` nếu mục còn `active` — §3.12 | Đã hiện thực |
-| `GET` | `/admin/feedback?limit=` | — | `FeedbackOverviewDTO`, §3.13 | Đã hiện thực |
+| `GET` | `/admin/feedback?limit=` | — | `FeedbackOverviewDTO`, §3.14 | Đã hiện thực |
 | `GET` | `/health` | — | `{"status": "ok", "env": str}` | Đã hiện thực |
 
 ### 3.1. UserDTO
@@ -610,7 +615,35 @@ nghĩa vẫn khớp theo cách viết cũ, im lặng, và triệu chứng duy nh
 không còn được tìm thấy. Sửa được là cần thiết vì phương án còn lại tệ hơn: sửa một lỗi gõ
 bằng cách cho mục cũ nghỉ hưu rồi thêm một mục gần giống sẽ để lại hai dòng vĩnh viễn.
 
-### 3.13. Tổng quan góp ý của người đọc (chỉ quản trị viên, 24/08)
+### 3.13. Tin nhắn đã lưu (Saved Messages)
+
+Quản lý danh sách tin nhắn được người dùng đánh dấu/lưu trữ (bookmark):
+
+- **Lưu/bỏ lưu:** `PUT /conversations/{conversation_id}/messages/{message_id}/saved` và `DELETE /conversations/{conversation_id}/messages/{message_id}/saved` trả về `SavedMessageStateResponse` (`{"message_id": str, "is_saved": bool}`).
+- **Danh sách tin đã lưu:** `GET /api/v1/saved-messages` (hỗ trợ phân trang qua `limit`, `before_created_at`, `before_id`).
+- Phản hồi dạng `SavedMessagesResponse`:
+  ```json
+  {
+    "items": [
+      {
+        "id": "uuid",
+        "conversation_id": "uuid",
+        "sender_id": "uuid",
+        "original_text": "string",
+        "source_language": "vi",
+        "translations": [],
+        "created_at": "2026-08-24T07:00:00Z",
+        "is_saved": true,
+        "reactions": []
+      }
+    ],
+    "has_more": false,
+    "next_before_created_at": null,
+    "next_before_id": null
+  }
+  ```
+
+### 3.14. Tổng quan góp ý của người đọc (chỉ quản trị viên, 24/08)
 
 `GET /admin/feedback?limit=` trả về **một** phản hồi cho cả tab góp ý, thay vì ba endpoint:
 ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn hình có ba vòng quay chờ.
@@ -662,7 +695,7 @@ màn hình này: trước khi có nó, đầu ra nhìn thấy được của c�
 đây — đã bỏ tên riêng và các con số ngay lúc ghi — và cần có cả hai vì một cặp thuật ngữ
 không kèm ngữ cảnh dùng thì không phán xét được.
 
-**`original_snippet` là bổ sung 24/08, mở rộng ranh giới trên một bậc so với khi §3.13 mới
+**`original_snippet` là bổ sung 24/08, mở rộng ranh giới trên một bậc so với khi §3.14 mới
 viết.** `anonymized_snippet` trích từ *bản dịch của máy* (`target_language`) quanh cụm từ bị
 sửa; `original_snippet` là vài từ đầu của *câu người gửi thực sự viết* (`source_language`),
 cùng cách ẩn danh nhưng không có cụm nào để căn giữa — máy dịch xong mới sinh ra thuật ngữ bị
@@ -787,7 +820,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 3. `conversations.type` nhận `direct` hoặc `group`, có `CheckConstraint` ở mức cơ sở dữ liệu.
 4. `messages.client_message_id` do client sinh ra, cùng `sender_id` và `conversation_id` tạo thành ràng buộc duy nhất. Đây là cơ chế cho phép gửi lại an toàn khi mất kết nối — xem `docs/RECONNECT_CONTRACT.md`.
 5. `messages.source_language` khi ghi là **giá trị tạm** (`preferred_language` của người gửi); node `detect_language` của Agent ghi đè bằng kết quả nhận diện thật (§4.3).
-6. `translation_results` có ràng buộc duy nhất `(message_id, target_language, honorific_profile)` — **mở rộng ngày 20/08**, trước đó chỉ gồm hai cột đầu. Ràng buộc này ép quy tắc "thành viên cùng ngôn ngữ **và cùng vị thế** dùng chung một `translation_id`" (§4.4) ở mức schema, đồng thời làm tác vụ dịch chạy nền trở nên idempotent khi phải chạy lại. Lý do thêm chiều thứ ba: tiếng Việt, tiếng Nhật và tiếng Hàn không dựng được câu mà không chọn cách xưng hô với người đọc, và lựa chọn đó khác nhau giữa một quản lý và một khách hàng ngồi trong cùng một nhóm (ADR-23). `honorific_profile` **ghi một lần, không bao giờ ghi đè**: hồ sơ vị thế do LLM suy ra và có thể đổi, nên nếu đường đọc tra theo hồ sơ *hiện tại* thì một lần suy lại sẽ làm biến mất mọi bản dịch đã giao.
+6. `translation_results` có ràng buộc duy nhất `(message_id, target_language, honorific_profile, translation_tone, version)`. Luồng dịch tự động (normal translation) hoạt động idempotent ở `version = 1`, đảm bảo an toàn dưới xử lý đồng thời. Khi người dùng bấm "Dịch lại" (Translate Again), hệ thống tạo một bản ghi dịch mới với phiên bản kế tiếp (`version = max_version + 1`) và `translation_id` (UUID) mới. Các bản ghi đánh giá (`feedbacks`) và bản góp ý riêng tư (`translation_edits`) trong lịch sử vẫn giữ nguyên liên kết tới đúng `translation_id` của phiên bản tương ứng. Khi tải tin nhắn hoặc tìm kiếm, hệ thống sắp xếp theo `version DESC, created_at DESC` để luôn chọn bản dịch mới nhất cho người đọc.
 7. `translation_results.is_fallback` đúng khi văn bản **không** đến từ LLM đã cấu hình, bao gồm cả trường hợp provider dự phòng dịch thành công. `model` để rỗng khi không tầng nào dịch được và hệ thống trả nguyên bản (`ARCHITECTURE.md` §5.1).
 8. **Alembic là nơi duy nhất định nghĩa schema** (sửa 15/08). Ứng dụng không còn tạo bảng lúc khởi động; container chạy `alembic upgrade head` trước `uvicorn`, còn trên máy phát triển là `make migrate`. Đổi schema nghĩa là sinh migration (`make revision m="..."`) rồi đọc lại bản sinh ra. `make reset-db` vẫn còn nhưng nay là `downgrade base` + `upgrade head` và **xoá sạch dữ liệu cục bộ**. Xem ADR-06.
 9. `translation_attempts` là **nhật ký đo lường**, không phải trạng thái ứng dụng (ADR-16). Mỗi cặp (tin nhắn × ngôn ngữ đích) được thử ghi một dòng, **kể cả khi không sinh ra bản dịch nào**. Khác `translation_results` ở ba điểm có chủ đích: không có ràng buộc duy nhất (chạy lại là một lượt thử mới, đáng đếm riêng), `translation_id` cho phép `NULL` với `ON DELETE SET NULL` (xoá bản dịch không được xoá bằng chứng rằng đã dịch), và các cột được tự do thay đổi theo nhu cầu đo — **không** thành phần nào ngoài `src/services/metrics.py` và `scripts/report_metrics.py` được đọc bảng này.
@@ -800,6 +833,37 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 16. `glossary_entries` là bảng ánh xạ thuật ngữ nguồn → đích, tồn tại để ép **tính nhất quán**: nếu để tự do, model dịch `staging environment` lúc thì "môi trường staging" lúc thì "môi trường dàn dựng", và người đọc không biết hai câu có nói về cùng một thứ không. `domain` và `audience` là thứ làm cùng một thuật ngữ ra hai kết quả — dòng gắn `audience` nội bộ giữ nguyên `UI`, dòng gắn `audience` khách hàng cho ra "giao diện". Chuỗi rỗng nghĩa là "áp dụng ở mọi nơi" và đóng vai trò bậc dự phòng, nên **cả hai cột đều nằm trong ràng buộc duy nhất và không được phép `NULL`**: `NULL` không so bằng `NULL` nên bản trùng sẽ lọt lưới. `status` nhận `active` hoặc `retired`; **không xoá dòng bao giờ** — một bản dịch giao tháng trước được định hình bởi thuật ngữ đang active lúc đó, xoá đi là xoá mất lời giải thích duy nhất cho câu chữ người đọc đang nhìn. **Từ vựng của hai cột là danh sách đóng (22/08):** `audience` nhận `internal` hoặc `client`, `domain` nhận `engineering`, `commercial` hoặc `support`, ngoài ra là chuỗi rỗng. Danh sách khai báo ở `src/database/models.py` (`GLOSSARY_AUDIENCES`, `GLOSSARY_DOMAINS`) và là **cùng bộ từ** mà lượt suy luận hồ sơ hội thoại bị buộc phải trả lời, vì tra cứu so hai bên bằng phép bằng — một hội thoại ghi là "an external client" không bao giờ gặp một mục xếp dưới `client` (ADR-24). Không đặt CheckConstraint: chuỗi rỗng là một giá trị thật, và quản trị viên vẫn được nhập tay một phạm vi mà danh sách chưa biết tới.
 17. `correction_log` **tách riêng khỏi `translation_edits` một cách có chủ ý**. `translation_edits` giữ nguyên đúng những gì ADR-19 quy định: chỉ ghi thêm, riêng tư tuyệt đối với người viết, không ai khác đọc được. Khai thác thẳng bảng đó là âm thầm rút lại lời hứa ấy. `correction_log` chỉ giữ phần **dẫn xuất** — máy viết gì, người sửa thành gì — và chỉ những dòng mà tác giả đã đồng ý chia sẻ. `consent_to_share` khoá cả dòng chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó. `glossary_proposals` dòng `rejected` **không bao giờ bị xoá**: chúng mang embedding để bộ khai thác đối chiếu ứng viên mới, nếu không thì tuần sau đúng thuật ngữ đó quay lại với cách viết hơi khác và hàng đợi duyệt biến thành nhiễu không ai đọc.
 18. `message_embeddings` là bảng riêng chứ không phải một cột trên `messages`: `messages` là bảng nóng, được liệt kê từng trường trong §5 này, còn đây là dữ liệu dẫn xuất tính lại lúc nào cũng được — đúng cách tách và đúng lý do mà ADR-16 đã áp dụng cho `translation_attempts`. `conversation_id` được lặp lại ở đây để tìm kiếm láng giềng gần nhất giới hạn được trong một hội thoại mà không phải join: một index vector chỉ được dùng khi bộ lọc đi kèm là rẻ, và việc truy hồi **tuyệt đối không được** với sang hội thoại khác. Bốn cột `embedding` trong schema dùng kiểu `vector` của pgvector với index HNSW `vector_cosine_ops`, và mỗi bảng lưu kèm `embedding_model` để một vector do model khác sinh ra nhận ra được thay vì bị âm thầm so trong sai không gian (ADR-25).
+
+### 5.1. Hoàn thiện các điều khiển hội thoại và cài đặt
+
+Các endpoint sau dùng access token của tài khoản đang thao tác. Mọi endpoint
+theo `conversation_id` đều kiểm tra thành viên trước khi đọc hoặc thay đổi dữ
+liệu.
+
+| Endpoint | Hành vi hợp đồng |
+|---|---|
+| `GET /conversations/{id}/messages/search?q=...&limit=...&before_created_at=...&before_id=...` | Trả `MessageSearchResponse` gồm `items`, `has_more` và cursor kế tiếp. Kết quả không chứa tin đã gỡ. Có thể khớp `original_text` hoặc bản dịch mà **người gọi** được đọc; không trả cách xưng hô/bản dịch của thành viên khác. |
+| `POST /conversations/{id}/messages/{message_id}/translate` | Trả `202 {"message_id", "status":"scheduled"}`. Chỉ thành viên của hội thoại và chỉ tin chưa gỡ. Tác vụ bỏ qua cache, tạo một lượt đo mới và lưu bản dịch mới với phiên bản tăng dần (`version = max_version + 1`) để bảo toàn nguyên vẹn bản dịch lịch sử cùng các đánh giá (feedback) và bản góp ý (translation edits) gắn với phiên bản cũ. Bản dịch mới nhất được ưu tiên hiển thị cho người đọc. Kết quả gửi về client qua `translation_completed`. |
+| `PATCH /conversations/{id}/preferences` | Nhận ít nhất một trong `is_pinned`, `is_muted`; luôn là trạng thái đích tường minh, không toggle mù. Hai thuộc tính thuộc về chính `conversation_members` của người gọi. |
+| `PUT` / `DELETE /conversations/{id}/messages/{message_id}/saved` | Lưu/bỏ lưu tin nhắn riêng cho người gọi, trả `{message_id, is_saved}`. |
+| `PUT` / `DELETE /conversations/{id}/messages/{message_id}/reactions` | Thêm/bỏ một emoji, trả tổng hợp `reactions`. Sau commit server phát `message_reactions_updated` tới mọi thành viên với `conversation_id`, `message_id`, `reactions`. |
+| `PATCH /auth/me` | Chỉ nhận `display_name` và/hoặc `bio`; đây là cập nhật một phần, không phải thay thế tài khoản. |
+| `GET` / `PATCH /auth/me/settings` | Đọc/cập nhật các cài đặt `auto_translate`, `show_original_by_default`, `translation_tone`, `sound_enabled`, `read_receipts`, `ai_smart_assistance`. `auto_translate` thay đổi bucket nhận bản dịch mới; `read_receipts=false` vẫn cập nhật mốc đã đọc nhưng không phát biên nhận. |
+
+`ConversationDTO` hiện có `is_pinned`, `pinned_at`, `is_muted`; `MessageDTO`
+hiện có `is_saved`, `reactions`. Các trường này là trạng thái của **người gọi**
+khi đọc danh sách/hội thoại và không được cache hoặc dùng chung giữa tài khoản.
+
+### 5.2. Gọi thoại/video trực tiếp
+
+Gọi chỉ hỗ trợ hội thoại `direct`. `POST /conversations/{id}/calls` tạo phiên
+`ringing`, phát `call_incoming` cho đúng người nhận và trả thông tin phiên
+nhưng không trả token phòng. Người nhận gọi `POST /calls/{call_id}/accept` hoặc
+`reject`; người gọi nhận `call_accepted` rồi lấy token riêng qua
+`GET /calls/{call_id}/join`. Cả hai phía kết thúc bằng `POST /calls/{call_id}/end`.
+Các sự kiện `call_rejected`, `call_ended`, `call_failed` chỉ mang trạng thái
+phiên, tuyệt đối không mang API key/token của nhà cung cấp RTC. Đây là media RTC
+bình thường, không có dịch giọng nói, STT, TTS hay phụ đề trực tiếp.
 
 ## 6. Đặc tả lỗi
 

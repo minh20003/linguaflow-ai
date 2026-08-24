@@ -70,6 +70,11 @@ DEFAULT_HONORIFIC_PROFILE = "peer"
 GLOSSARY_AUDIENCES = ("internal", "client")
 GLOSSARY_DOMAINS = ("engineering", "commercial", "support")
 
+# Translation style is an explicit part of a reader's rendering bucket.  Keep
+# this vocabulary here with the persistence constraints so API validation,
+# fan-out and rows cannot silently drift apart.
+TRANSLATION_TONES = ("natural", "formal", "casual", "friendly")
+
 # A glossary entry is never deleted, only retired: a translation delivered last
 # month was shaped by a term that was active then, and dropping the row would
 # erase the only explanation for the wording a reader is looking at.
@@ -126,6 +131,7 @@ class User(Base):
         String(100),
         nullable=True,
     )
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
@@ -304,6 +310,7 @@ class Conversation(Base):
     )
     type: Mapped[str] = mapped_column(String(10), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("users.id", ondelete="RESTRICT"),
@@ -314,6 +321,7 @@ class Conversation(Base):
         nullable=False,
         server_default=func.now(),
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ConversationMember(Base):
@@ -339,12 +347,115 @@ class ConversationMember(Base):
         nullable=False,
         server_default=func.now(),
     )
+    role: Mapped[str] = mapped_column(String(10), nullable=False, default="member", server_default="member")
     # How far this member has read. Null means they have never opened the
     # conversation, so everything in it counts as unread.
     last_read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
+    # These are deliberately membership state: pinning or muting a thread must
+    # never affect what another member sees.
+    is_pinned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_muted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+
+class UserSettings(Base):
+    """Optional per-user UI and translation preferences, created lazily."""
+
+    __tablename__ = "user_settings"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("translation_tone", TRANSLATION_TONES),
+            name="ck_user_settings_translation_tone",
+        ),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    auto_translate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    show_original_by_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
+    )
+    sound_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    read_receipts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    ai_smart_assistance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+
+
+class BlockedUser(Base):
+    """A directional social block between two accounts."""
+
+    __tablename__ = "blocked_users"
+    __table_args__ = (
+        CheckConstraint("blocker_id <> blocked_id", name="ck_blocked_users_not_self"),
+        Index("ix_blocked_users_blocked_id", "blocked_id"),
+    )
+
+    blocker_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    blocked_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class CallSession(Base):
+    """Durable state for a normal direct audio/video call.
+
+    Provider join credentials are intentionally absent.  They are short lived
+    and issued on demand only to a participant after application authorization.
+    """
+
+    __tablename__ = "call_sessions"
+    __table_args__ = (
+        CheckConstraint("call_type IN ('voice', 'video')", name="ck_call_sessions_call_type"),
+        CheckConstraint(
+            "status IN ('ringing', 'accepted', 'rejected', 'ended', 'missed', 'failed')",
+            name="ck_call_sessions_status",
+        ),
+        CheckConstraint("caller_id <> callee_id", name="ck_call_sessions_not_self"),
+        Index("ix_call_sessions_conversation_created", "conversation_id", "created_at"),
+        Index("ix_call_sessions_caller_created", "caller_id", "created_at"),
+        Index("ix_call_sessions_callee_created", "callee_id", "created_at"),
+        Index("ix_call_sessions_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    conversation_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    caller_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    callee_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    call_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_room_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The provider returns the canonical room URL when the room is created.
+    # It can contain a custom Daily domain, so reconstructing it from the room
+    # name would send participants to the wrong place.
+    provider_room_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Message(Base):
@@ -394,6 +505,11 @@ class Message(Base):
         ForeignKey("messages.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # A forward is a new message (and is translated for its new recipients),
+    # while this link lets clients label its provenance.
+    forwarded_from_message_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
     edited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -404,6 +520,49 @@ class Message(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+
+
+class SavedMessage(Base):
+    """A caller-specific bookmark for a durable message."""
+
+    __tablename__ = "saved_messages"
+    __table_args__ = (
+        UniqueConstraint("user_id", "message_id", name="uq_saved_messages_user_message"),
+        Index("ix_saved_messages_user_created_id", "user_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MessageReaction(Base):
+    """One explicit emoji a member attached to a message."""
+
+    __tablename__ = "message_reactions"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", "emoji", name="uq_message_reactions_message_user_emoji"),
+        Index("ix_message_reactions_message_id", "message_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    message_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 
@@ -471,17 +630,29 @@ class TranslationResult(Base):
 
     __tablename__ = "translation_results"
     __table_args__ = (
-        # Enforces the shared-row rule above in the schema rather than in hope,
-        # and makes the background translation task idempotent under retry.
+        CheckConstraint(
+            _in_clause("honorific_profile", HONORIFIC_PROFILES),
+            name="ck_translation_results_honorific_profile",
+        ),
+        CheckConstraint(
+            _in_clause("translation_tone", TRANSLATION_TONES),
+            name="ck_translation_results_translation_tone",
+        ),
         UniqueConstraint(
             "message_id",
             "target_language",
             "honorific_profile",
-            name="uq_translation_results_message_target_profile",
+            "translation_tone",
+            "version",
+            name="uq_translation_results_bucket_version",
         ),
-        CheckConstraint(
-            _in_clause("honorific_profile", HONORIFIC_PROFILES),
-            name="ck_translation_results_honorific_profile",
+        Index(
+            "ix_translation_results_lookup",
+            "message_id",
+            "target_language",
+            "honorific_profile",
+            "translation_tone",
+            "version",
         ),
         Index("ix_translation_results_message_id", "message_id"),
     )
@@ -503,6 +674,12 @@ class TranslationResult(Base):
         String(20),
         nullable=False,
         default=DEFAULT_HONORIFIC_PROFILE,
+    )
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
     )
     translated_text: Mapped[str] = mapped_column(Text, nullable=False)
     # Empty when tier 3 of the fallback chain returned the original untranslated
@@ -670,6 +847,9 @@ class TranslationAttempt(Base):
         String(20),
         nullable=False,
         default=DEFAULT_HONORIFIC_PROFILE,
+    )
+    translation_tone: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="natural", server_default="natural"
     )
     # What the sender's profile claimed, known before the run starts.
     source_language_declared: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -1212,3 +1392,136 @@ class MessageEmbedding(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Action Proposal Domain (B-04, B-05, B-08, B-10)
+# ---------------------------------------------------------------------------
+
+ACTION_PROPOSAL_TYPES = ("task", "appointment")
+ACTION_PROPOSAL_STATUSES = ("needs_clarification", "pending_confirmation", "confirmed", "rejected", "stale")
+ACTION_PROPOSAL_SOURCE_MODES = ("on_demand", "proactive")
+
+
+class ActionProposal(Base):
+    """An AI-proposed action extracted from a message awaiting human confirmation (B-04/B-05)."""
+
+    __tablename__ = "action_proposals"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("action_type", ACTION_PROPOSAL_TYPES),
+            name="ck_action_proposals_action_type",
+        ),
+        CheckConstraint(
+            _in_clause("status", ACTION_PROPOSAL_STATUSES),
+            name="ck_action_proposals_status",
+        ),
+        CheckConstraint(_in_clause("source_mode", ACTION_PROPOSAL_SOURCE_MODES), name="ck_action_proposals_source_mode"),
+        CheckConstraint("confidence_score >= 0 AND confidence_score <= 1", name="ck_action_proposals_confidence"),
+        CheckConstraint("clarification_rounds >= 0", name="ck_action_proposals_clarification_rounds"),
+        Index("ix_action_proposals_conversation_id", "conversation_id"),
+        Index("ix_action_proposals_source_message_id", "source_message_id"),
+        Index("ix_action_proposals_owner_status", "owner_user_id", "status"),
+        Index("ix_action_proposals_status", "status"),
+        UniqueConstraint("idempotency_key", name="uq_action_proposals_idempotency_key"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_message_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    source_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="on_demand")
+    action_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="pending_confirmation",
+    )
+    title: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+    details: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_time_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    scheduled_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    confidence_score: Mapped[float] = mapped_column(
+        nullable=False,
+        default=1.0,
+    )
+    clarification_prompt: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    clarification_question: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    missing_fields: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default="[]")
+    clarification_rounds: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        server_default=func.now(),
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    confirmed_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    stale_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<ActionProposal(id={self.id}, type={self.action_type}, status={self.status}, title={self.title})>"
