@@ -28,6 +28,25 @@ class GlossaryCitationSummary(BaseModel):
     observed_at: datetime
 
 
+class GlossarySimilarEntry(BaseModel):
+    """An entry already in the glossary that covers the same source term.
+
+    Shown beside a proposal so a reviewer approves into a known state rather
+    than a blank one. Without it the queue invites the same term to be approved
+    twice under two scopes with two different renderings, and the lookup then
+    picks between them by scope rank — a decision nobody made on purpose.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_term: str
+    target_term: str
+    domain: str
+    audience: str
+    status: str
+
+
 class GlossaryProposalResponse(BaseModel):
     """A term waiting for a decision, with the evidence behind it."""
 
@@ -51,6 +70,15 @@ class GlossaryProposalResponse(BaseModel):
     reject_reason: str
     created_at: datetime
     citations: list[GlossaryCitationSummary] = Field(default_factory=list)
+    # What the glossary already says about this term. `similar_entries` is the
+    # evidence and `conflicts_with_active` is the verdict a reviewer acts on:
+    # true means an entry is live *now* with a different rendering, so the
+    # machine has been translating this term correctly by the glossary's current
+    # lights and the proposal is asking to change the answer, not to supply a
+    # missing one. Those are different decisions and the queue used to show them
+    # identically.
+    similar_entries: list[GlossarySimilarEntry] = Field(default_factory=list)
+    conflicts_with_active: bool = False
 
 
 class GlossaryEntryResponse(BaseModel):
@@ -106,6 +134,39 @@ class GlossaryEntryRequest(BaseModel):
     @classmethod
     def term_must_not_be_blank(cls, value: str) -> str:
         """Whitespace would store as set and read as empty."""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Terms must not be blank")
+        return cleaned
+
+
+class GlossaryEntryUpdateRequest(BaseModel):
+    """A correction to an entry that is already in force.
+
+    Every field is optional and only what is sent is changed, so a screen that
+    knows nothing about a column added later cannot blank it by omission.
+
+    Editing exists because the alternative is worse. Without it a typo in an
+    approved term is fixed by retiring the row and adding a near-identical one,
+    which leaves two rows a reader has to compare to work out which one the
+    machine is using — and the retired one is kept forever (§16), so the
+    confusion is permanent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_term: str | None = Field(default=None, min_length=1, max_length=200)
+    target_term: str | None = Field(default=None, min_length=1, max_length=200)
+    domain: str | None = Field(default=None, max_length=50)
+    audience: str | None = Field(default=None, max_length=50)
+    keep_verbatim: bool | None = None
+
+    @field_validator("source_term", "target_term")
+    @classmethod
+    def term_must_not_be_blank(cls, value: str | None) -> str | None:
+        """Whitespace would store as set and read as empty."""
+        if value is None:
+            return None
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("Terms must not be blank")

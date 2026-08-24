@@ -5,7 +5,6 @@ import { MessageAttachmentCard } from './MessageAttachmentCard';
 import {
   Check,
   CheckCheck,
-  Languages,
   RotateCw,
   Sparkles,
   Smile,
@@ -14,8 +13,6 @@ import {
   MoreHorizontal,
   Bookmark,
   Trash2,
-  Eye,
-  EyeOff,
   AlertCircle,
   ThumbsDown,
   ThumbsUp,
@@ -41,6 +38,7 @@ interface MessageBubbleProps {
   onDeleteMessage?: (messageId: string) => void;
   onDownloadAttachment: (attachment: MessageAttachment) => void;
   onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
+  onStartDirectChat?: (userId: string) => void;
   language: LanguageCode;
 }
 
@@ -64,6 +62,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onDeleteMessage,
   onDownloadAttachment,
   onLoadAttachmentPreview,
+  onStartDirectChat,
   language,
 }) => {
   const [showActions, setShowActions] = useState(false);
@@ -72,21 +71,31 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const [isEditingTranslation, setIsEditingTranslation] = useState(false);
   const [editedTranslation, setEditedTranslation] = useState("");
 
-  const isOutgoing = message.senderId === currentUser.id;
+  const isOutgoing = message.senderId === currentUser.id && !message.isAssistant;
   const hasAttachments = Boolean(message.attachments?.length);
   const isAttachmentCaption = hasAttachments && /^Shared\s+/i.test(message.content.trim());
   const hasTranslation = !!message.translation;
   // A sender always reads their original wording. Do not surface historical
   // self-translations while the backend stops creating new ones for them.
-  const isTranslated = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'success';
-  const isTranslating = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'pending';
-  const isTranslationFailed = !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'failed';
+  const isTranslated = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'success';
+  const isTranslating = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'pending';
+  const isTranslationFailed = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'failed';
   const isShowingOriginal = message.translation?.showOriginal;
   const showTranslatedAsPrimary = isTranslated && !isShowingOriginal;
-  const showTranslationPreview = isTranslated && isShowingOriginal;
   const canReviewTranslation = Boolean(
-    !isOutgoing && !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
+    !message.isAssistant && !isOutgoing && !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
   );
+  const hasUserMention = message.mentions?.some((mention) => mention.type === 'user');
+  const hasAssistantMention = message.mentions?.some((mention) => mention.type === 'assistant');
+  const renderMessageContent = (value: string) => value.split(/(@[A-Za-z0-9_.-]+)/g).map((part, index) => {
+    if (part.toLowerCase() === '@assistant' && hasAssistantMention) {
+      return <span key={index} className="rounded bg-violet-100 px-1 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">{part}</span>;
+    }
+    if (part.startsWith('@') && hasUserMention) {
+      return <span key={index} className="rounded bg-[#EFF6FF] px-1 text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#93C5FD]">{part}</span>;
+    }
+    return part;
+  });
 
   const beginTranslationEdit = () => {
     setEditedTranslation(message.translation?.editedText || message.translation?.translatedText || '');
@@ -100,26 +109,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     setIsEditingTranslation(false);
   };
 
-  // Language display name helper
-  const getLanguageName = (code?: string) => {
-    switch (code) {
-      case 'vi': return 'Vietnamese';
-      case 'ja': return 'Japanese';
-      case 'ko': return 'Korean';
-      case 'zh': return 'Chinese';
-      case 'es': return 'Spanish';
-      case 'fr': return 'French';
-      case 'de': return 'German';
-      case 'th': return 'Thai';
-      case 'id': return 'Indonesian';
-      default: return 'English';
-    }
-  };
-
   return (
     <div
       id={`message-${message.id}`}
-      onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => {
         setShowActions(false);
         setShowEmojiPicker(false);
@@ -132,17 +124,59 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       {/* Incoming Avatar */}
       {!isOutgoing && (
         <div className="w-8 flex-shrink-0 flex items-end">
-          {showAvatar && message.senderAvatar ? (
-            <img
-              src={message.senderAvatar}
-              alt={message.senderName || 'Sender'}
-              className="w-8 h-8 rounded-full object-cover ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D]"
-              referrerPolicy="no-referrer"
-            />
+          {showAvatar && message.isAssistant ? (
+            message.senderAvatar ? (
+              <img
+                src={message.senderAvatar}
+                alt="Trợ lý thông minh"
+                className="h-8 w-8 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-600 ring-1 ring-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:ring-violet-400/30" aria-label="Trợ lý thông minh">
+                <Sparkles className="h-4 w-4" />
+              </div>
+            )
+          ) : showAvatar && message.senderAvatar ? (
+            isGroup && onStartDirectChat ? (
+              <button
+                type="button"
+                onClick={() => onStartDirectChat(message.senderId)}
+                aria-label={`Open direct chat with ${message.senderName || 'sender'}`}
+                title={`Chat with ${message.senderName || 'sender'}`}
+                className="rounded-full focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:ring-offset-2 dark:focus:ring-offset-[#14161C]"
+              >
+                <img
+                  src={message.senderAvatar}
+                  alt={message.senderName || 'Sender'}
+                  className="w-8 h-8 rounded-full object-cover ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D]"
+                  referrerPolicy="no-referrer"
+                />
+              </button>
+            ) : (
+              <img
+                src={message.senderAvatar}
+                alt={message.senderName || 'Sender'}
+                className="w-8 h-8 rounded-full object-cover ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D]"
+                referrerPolicy="no-referrer"
+              />
+            )
           ) : showAvatar ? (
-            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[10px] font-semibold text-[#2563EB] ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D]">
-              {(message.senderName || "?").slice(0, 2).toUpperCase()}
-            </div>
+            isGroup && onStartDirectChat ? (
+              <button
+                type="button"
+                onClick={() => onStartDirectChat(message.senderId)}
+                aria-label={`Open direct chat with ${message.senderName || 'sender'}`}
+                title={`Chat with ${message.senderName || 'sender'}`}
+                className="flex items-center justify-center w-8 h-8 rounded-full bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[10px] font-semibold text-[#2563EB] ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D] focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:ring-offset-2 dark:focus:ring-offset-[#14161C]"
+              >
+                {(message.senderName || "?").slice(0, 2).toUpperCase()}
+              </button>
+            ) : (
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[10px] font-semibold text-[#2563EB] ring-1 ring-[#E8EAF0] dark:ring-[#2A2E3D]">
+                {(message.senderName || "?").slice(0, 2).toUpperCase()}
+              </div>
+            )
           ) : (
             <div className="w-8" />
           )}
@@ -157,7 +191,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       >
         {/* Sender Name for Group Chats */}
         {isGroup && !isOutgoing && showSenderName && (
-          <span className="text-[11px] font-bold text-[#2563EB] dark:text-[#60A5FA] ml-2 mb-1">
+          <span className="text-[11px] font-bold text-[#1E2230] dark:text-[#F5F6FA] ml-2 mb-1">
             {message.senderName}
           </span>
         )}
@@ -190,11 +224,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
 
         {/* Message Bubble Box */}
         <div
+          onMouseEnter={() => setShowActions(true)}
+          onClick={(event) => {
+            if (event.target instanceof HTMLElement && event.target.closest('button, textarea, input, a')) return;
+            setShowActions((visible) => !visible);
+            setShowEmojiPicker(false);
+            setShowMoreMenu(false);
+          }}
           className={`relative rounded-2xl text-sm leading-relaxed transition-colors select-text ${
             isAttachmentCaption
               ? 'bg-transparent p-0 shadow-none'
               : isOutgoing
-                ? 'bg-[#2563EB] px-4 py-2.5 text-white rounded-br-sm shadow-sm'
+                ? 'bg-[#DBEAFE] px-4 py-2.5 text-[#1E3A8A] rounded-br-sm shadow-sm dark:bg-[#1E40AF]/45 dark:text-[#DBEAFE]'
                 : 'bg-white px-4 py-2.5 dark:bg-[#232630] text-[#1E2230] dark:text-[#F5F6FA] border border-[#E8EAF0] dark:border-[#2E3342] rounded-bl-sm shadow-sm'
           }`}
         >
@@ -209,7 +250,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 onLoadPreview={onLoadAttachmentPreview}
               />
             ))}
-            {!isAttachmentCaption && (showTranslatedAsPrimary ? (
+            {!isAttachmentCaption && (
               isEditingTranslation ? (
                 <div className="space-y-1.5">
                   <textarea
@@ -232,61 +273,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <button type="button" aria-label="Save translation edit" title="Save" onClick={saveTranslationEdit} className="rounded p-1 text-[#2563EB] hover:bg-[#EFF6FF] dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"><Check className="h-3.5 w-3.5" /></button>
                   </div>
                 </div>
+              ) : showTranslatedAsPrimary ? (
+                <p className="whitespace-pre-wrap break-words font-normal">{message.translation?.editedText || message.translation?.translatedText}</p>
               ) : (
-                <button
-                  type="button"
-                  onClick={canReviewTranslation ? beginTranslationEdit : undefined}
-                  title={canReviewTranslation ? 'Click to edit translation' : undefined}
-                  className={`block w-full whitespace-pre-wrap break-words text-left font-normal ${canReviewTranslation ? 'cursor-text rounded -mx-1 px-1 hover:bg-black/[0.03] dark:hover:bg-white/[0.04]' : ''}`}
-                >
-                  {message.translation?.editedText || message.translation?.translatedText}
-                </button>
+                <p className="whitespace-pre-wrap break-words font-normal">{renderMessageContent(message.content)}</p>
               )
-            ) : (
-              <p className="whitespace-pre-wrap break-words font-normal">
-                {message.content}
-              </p>
-            ))}
-
-            {/* Revealed Original (when toggle is active) */}
-            {showTranslationPreview && (
-              <div className="mt-2 pt-2 border-t border-dashed border-[#E8EAF0] dark:border-[#383E50] text-xs">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[#74798C] dark:text-[#9DA3B4] block mb-0.5">
-                  {isOutgoing ? 'Translation preview:' : 'Translated Version:'}
-                </span>
-                {isEditingTranslation ? (
-                  <div className="space-y-1.5">
-                    <textarea
-                      aria-label="Edit translated text"
-                      autoFocus
-                      rows={2}
-                      value={editedTranslation}
-                      onChange={(event) => setEditedTranslation(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape') setIsEditingTranslation(false);
-                        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                          event.preventDefault();
-                          saveTranslationEdit();
-                        }
-                      }}
-                      className="w-full resize-none rounded-md border border-[#2563EB]/60 bg-white/70 px-2 py-1 text-sm leading-relaxed text-[#1E2230] outline-none focus:border-[#2563EB] dark:bg-[#1C1F27] dark:text-[#F5F6FA]"
-                    />
-                    <div className="flex justify-end gap-1">
-                      <button type="button" aria-label="Cancel edit" title="Cancel" onClick={() => setIsEditingTranslation(false)} className="rounded p-1 text-[#74798C] hover:bg-[#F4F5F8] dark:hover:bg-[#2E3342]"><X className="h-3.5 w-3.5" /></button>
-                      <button type="button" aria-label="Save translation edit" title="Save" onClick={saveTranslationEdit} className="rounded p-1 text-[#2563EB] hover:bg-[#EFF6FF] dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"><Check className="h-3.5 w-3.5" /></button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={canReviewTranslation ? beginTranslationEdit : undefined}
-                    title={canReviewTranslation ? 'Click to edit translation' : undefined}
-                    className={`block w-full rounded px-1 -mx-1 text-left text-[#1E2230] dark:text-[#F5F6FA] ${canReviewTranslation ? 'cursor-text hover:bg-black/[0.03] dark:hover:bg-white/[0.04]' : ''}`}
-                  >
-                    {message.translation?.editedText || message.translation?.translatedText}
-                  </button>
-                )}
-              </div>
             )}
 
             {/* Translating Pending State */}
@@ -316,45 +307,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             )}
           </div>
 
-          {/* Translation Footer Metadata */}
-          {isTranslated && (
-            <div
-              className={`flex items-center justify-between gap-3 mt-1.5 pt-1.5 border-t text-[11px] select-none ${
-                isOutgoing
-                  ? 'border-white/20 text-white/80'
-                  : 'border-[#E8EAF0] dark:border-[#2E3342] text-[#74798C] dark:text-[#9DA3B4]'
-              }`}
-            >
-              <div className="flex items-center gap-1">
-                <Languages className="w-3 h-3 text-[#2563EB]" />
-                <span>
-                  {isOutgoing
-                    ? `Translated for ${getLanguageName(message.translation?.targetLanguage)}`
-                    : `Translated from ${getLanguageName(message.translation?.originalLanguage)}`}
-                </span>
-              </div>
-
-              <button
-                onClick={() => onToggleOriginal(message.id)}
-                className="font-medium hover:underline flex items-center gap-0.5 text-[#2563EB] dark:text-[#60A5FA]"
-              >
-                {isShowingOriginal ? (
-                  <>
-                    <EyeOff className="w-2.5 h-2.5" />
-                    <span>{interactionText(language, isOutgoing ? 'Hide translation' : 'Hide original')}</span>
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-2.5 h-2.5" />
-                    <span>{interactionText(language, isOutgoing ? 'Show translation' : 'Show original')}</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-
           {canReviewTranslation && message.translation && (
             <div className="mt-1.5 flex items-center gap-0.5 text-[#74798C] dark:text-[#9DA3B4]">
+                <button
+                  type="button"
+                  onClick={() => onToggleOriginal(message.id)}
+                  className="mr-1 inline-flex rounded-md p-1 text-[11px] font-medium text-[#2563EB] hover:bg-[#EFF6FF] dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"
+                >
+                  <span>{interactionText(language, isShowingOriginal || isOutgoing ? 'Show translation' : 'Show original')}</span>
+                </button>
                 <button
                   type="button"
                   aria-label="Like translation"
@@ -440,11 +401,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         )}
       </div>
 
-      {/* Floating Hover Action Toolbar */}
+      {/* Hover on desktop; tap/click remains available for touch devices. */}
       {showActions && (
         <div
-          className={`absolute top-0 flex items-center gap-0.5 p-1 bg-white dark:bg-[#232630] border border-[#E8EAF0] dark:border-[#2E3342] rounded-xl shadow-lg z-20 transition-all ${
-            isOutgoing ? 'right-0 -top-8' : 'left-8 -top-8'
+          className={`absolute left-1/2 flex items-center gap-0.5 rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-lg transition-all z-20 dark:border-[#2E3342] dark:bg-[#232630] ${
+            isOutgoing ? '-top-9' : 'top-0'
           }`}
         >
           {/* Reaction Picker Button */}

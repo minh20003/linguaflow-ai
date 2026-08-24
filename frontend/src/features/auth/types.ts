@@ -16,4 +16,5 @@ export interface UserProfile {
   email: string;
   preferredLanguage: string; // language id
   avatar?: string;
+  role?: string;
 }

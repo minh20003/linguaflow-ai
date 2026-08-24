@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     # form, and a manager and a client in one group are owed different ones.
     # `peer` is the neutral value and what an unprofiled conversation uses.
     honorific_profile: str
+    sender_honorific_profile: str
     # Reader-selected rendering style. This is server-derived from settings,
     # never client prompt text.
     translation_tone: str

@@ -106,6 +106,10 @@ async def test_consent_records_the_term_the_reader_replaced(
     assert rows[0].consent_to_share is True
     assert rows[0].user_id == test_user.id
     assert "user interface" in rows[0].anonymized_snippet
+    # `original_snippet` previews the sender's own wording — the fixture's
+    # `Message.original_text` — not the reader's edit or the machine's
+    # rendering, which is what `anonymized_snippet` already covers.
+    assert "Please review the user interface" in rows[0].original_snippet
 
 
 @pytest.mark.asyncio

@@ -147,6 +147,7 @@ from src.services.chat import (
     MessageOwnershipError,
     ReferencedUsersNotFoundError,
     TranslationNotFoundError,
+    message_mentions,
 )
 from src.services.connection_manager import ConnectionManager
 from src.services.conversation_intelligence import ConversationIntelligenceService
@@ -1458,6 +1459,21 @@ async def create_conversation(
     )
 
 
+@router.post("/assistant/conversation", response_model=ConversationResponse)
+async def get_or_create_assistant_conversation(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    """Open the caller's durable private thread with the Assistant."""
+    service = ChatService(db)
+    result = await service.get_or_create_assistant_conversation(user_id=current_user.id)
+    return await _conversation_response(
+        service,
+        result.conversation,
+        profiles=await resolve_profiles(db, result.conversation.id),
+    )
+
+
 async def _group_access(db: AsyncSession, conversation_id: str, user_id: str) -> tuple[Conversation, ConversationMember]:
     conversation = await db.get(Conversation, conversation_id)
     if conversation is None or conversation.deleted_at is not None:
@@ -1712,6 +1728,8 @@ def _message_response(
         sender_id=message.sender_id,
         original_text="" if message.deleted_at else message.original_text,
         source_language=message.source_language,
+        mentions=message_mentions(message),
+        assistant_generated=message.assistant_generated,
         translations=translations,
         created_at=message.created_at,
         edited_at=message.edited_at,
@@ -2630,6 +2648,8 @@ async def edit_message(
         sender_id=message.sender_id,
         original_text=message.original_text,
         source_language=message.source_language,
+        mentions=message_mentions(message),
+        assistant_generated=message.assistant_generated,
         translations=[],
         created_at=message.created_at,
         edited_at=message.edited_at,
@@ -2736,7 +2756,7 @@ async def submit_translation_edit(
     """
     service = ChatService(db)
     try:
-        edit, translation = await service.submit_translation_edit(
+        edit, translation, message = await service.submit_translation_edit(
             user_id=current_user.id,
             translation_id=translation_id,
             edited_text=payload.edited_text,
@@ -2767,6 +2787,7 @@ async def submit_translation_edit(
     schedule_correction_record(
         machine_text=translation.translated_text,
         human_text=edit.edited_text,
+        original_text=message.original_text,
         source_language=profile.source_language,
         target_language=translation.target_language,
         domain=profile.domain,

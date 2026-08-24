@@ -1,0 +1,125 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* Hàng nhãn hai tầng (§7.1). min-height cố định: đổi ngôn ngữ không được làm
+   form nhảy, vì chiều cao dòng lệch giữa latin và CJK/Thái. */
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+  min-height: 19px;
+}
+
+.label {
+  font-family: var(--font-body);
+  font-size: var(--fs-label);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-secondary);
+}
+
+.altLabel {
+  flex: 1;
+  font-size: var(--fs-micro);
+  color: var(--ink-muted);
+  text-align: end;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Chữ, không phải icon con mắt. */
+.reveal {
+  font-family: var(--font-body);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: none;
+  color: var(--primary);
+  padding-inline: var(--s-2);
+  transition: color var(--dur-hover) linear;
+}
+
+.reveal:hover {
+  color: var(--ink);
+}
+
+.input {
+  width: 100%;
+  height: 42px;
+  padding-inline: var(--s-4);
+  background: var(--surface-insert);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-1);
+  color: var(--ink);
+  font-size: var(--fs-body);
+  transition:
+    border-color var(--dur-focus) linear,
+    background-color var(--dur-focus) linear;
+}
+
+.input::placeholder {
+  color: var(--ink-placeholder);
+}
+
+.input:hover:not(:disabled) {
+  border-color: var(--rule-strong);
+}
+
+.input:focus-visible {
+  border-color: var(--primary);
+}
+
+.input:disabled {
+  background: var(--surface-sunken);
+  color: var(--ink-disabled);
+  cursor: not-allowed;
+}
+
+.field:has(.error) .input {
+  border-color: var(--danger);
+  background: var(--danger-weak);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  font-size: var(--fs-small);
+  color: var(--danger);
+  animation: fadeInPlace var(--dur-fade) linear;
+}
+
+/* Dấu trong ô vuông hairline — cùng họ với chip mã ngôn ngữ. */
+.errorMark {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-1);
+  font-family: var(--font-body);
+  font-size: 10px;
+  line-height: 1;
+}
+
+@keyframes fadeInPlace {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Ô chạm ≥44px trên màn hình hẹp. */
+@media (max-width: 559px) {
+  .input {
+    height: 46px;
+  }
+}

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Conversation, LanguageCode } from '../types';
+import { ASSISTANT_AVATAR_URL } from '../api/chat-api';
 import { t } from '../i18n';
 import { ConversationItem } from './ConversationItem';
 import {
@@ -18,6 +19,10 @@ interface ConversationPanelProps {
   onSelectConversation: (conversation: Conversation) => void;
   onOpenNewChat: () => void;
   onMarkAllAsRead: () => void;
+  assistantSelected?: boolean;
+  onOpenAssistant?: () => void;
+  assistantLastMessage?: string;
+  assistantLastMessageTime?: string;
   language: LanguageCode;
 }
 
@@ -29,6 +34,10 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   onSelectConversation,
   onOpenNewChat,
   onMarkAllAsRead,
+  assistantSelected = false,
+  onOpenAssistant,
+  assistantLastMessage = 'Chào bạn! Tôi có thể hỗ trợ gì?',
+  assistantLastMessageTime = 'Bây giờ',
   language,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -192,6 +201,17 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
 
       {/* Conversation List */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
+        {!searchQuery && activeFilter === 'all' && onOpenAssistant && (
+          <button
+            type="button"
+            onClick={onOpenAssistant}
+            className={`group relative flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition-all duration-150 ${assistantSelected ? 'bg-[#EFF6FF] text-[#1E2230] dark:bg-[#2563EB]/15 dark:text-[#F5F6FA]' : 'text-[#1E2230] hover:bg-[#F7F8FC] dark:text-[#E2E5F0] dark:hover:bg-[#232630]/70'}`}
+          >
+            {assistantSelected && <span className="absolute left-0 top-3 bottom-3 w-1 rounded-r-full bg-[#2563EB]" />}
+            <img src={ASSISTANT_AVATAR_URL} alt="Trợ lý thông minh" className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" />
+            <span className="min-w-0 flex-1"><span className="mb-1 flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#1E2230] dark:text-[#E2E5F0]">Trợ lý thông minh</span><span className="shrink-0 whitespace-nowrap text-xs text-[#8A8F9E] dark:text-[#74798C]">{assistantLastMessageTime}</span></span><span className="block truncate text-xs text-[#74798C] dark:text-[#9DA3B4]">{assistantLastMessage}</span></span>
+          </button>
+        )}
         {filteredConversations.length > 0 ? (
           filteredConversations.map((conversation) => (
             <ConversationItem

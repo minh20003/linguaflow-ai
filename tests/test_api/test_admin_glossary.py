@@ -303,3 +303,256 @@ async def test_retiring_an_entry_takes_it_out_of_use_without_deleting_it(
         "/api/v1/admin/glossary?include_retired=true", headers=test_admin_headers
     )
     assert len(including.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_edit_an_entry(client, test_db, test_user_headers):
+    """The gate is one string comparison per endpoint, so each new one needs its own."""
+    response = await client.patch(
+        "/api/v1/admin/glossary/does-not-matter",
+        headers=test_user_headers,
+        json={"target_term": "x"},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_editing_an_entry_changes_only_the_fields_that_were_sent(
+    client, test_db, test_admin_headers
+):
+    """A screen that knows nothing about a column added later must not blank it."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "rollback",
+            "target_term": "quay lui",
+            "source_language": "en",
+            "target_language": "vi",
+            "audience": "client",
+        },
+    )
+    entry_id = created.json()["id"]
+
+    response = await client.patch(
+        f"/api/v1/admin/glossary/{entry_id}",
+        headers=test_admin_headers,
+        json={"target_term": "khoi phuc ban truoc"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["target_term"] == "khoi phuc ban truoc"
+    assert body["source_term"] == "rollback"
+    assert body["audience"] == "client"
+
+
+@pytest.mark.asyncio
+async def test_editing_the_source_term_renormalizes_it_for_the_lookup(
+    client, test_db, test_admin_headers
+):
+    """The lookup matches on the normalised column, so an edit that left it
+    behind would fix the display and leave the machine matching the old word."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "staging enviroment",
+            "target_term": "moi truong staging",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+    entry_id = created.json()["id"]
+
+    await client.patch(
+        f"/api/v1/admin/glossary/{entry_id}",
+        headers=test_admin_headers,
+        json={"source_term": "Staging Environment"},
+    )
+
+    entry = await test_db.scalar(
+        select(GlossaryEntry).where(GlossaryEntry.id == entry_id)
+    )
+    await test_db.refresh(entry)
+    assert entry.source_term == "Staging Environment"
+    assert entry.source_term_normalized == "staging environment"
+
+
+@pytest.mark.asyncio
+async def test_editing_an_entry_onto_a_taken_scope_is_refused(
+    client, test_db, test_admin_headers
+):
+    """An edit collides with the unique constraint exactly as an insert does."""
+    common = {"source_language": "en", "target_language": "vi", "audience": "client"}
+    await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={"source_term": "release", "target_term": "phat hanh", **common},
+    )
+    second = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={"source_term": "shipment", "target_term": "chuyen hang", **common},
+    )
+
+    response = await client.patch(
+        f"/api/v1/admin/glossary/{second.json()['id']}",
+        headers=test_admin_headers,
+        json={"source_term": "release"},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_editing_an_entry_that_is_not_there_is_a_404(client, test_admin_headers):
+    response = await client.patch(
+        "/api/v1/admin/glossary/00000000-0000-0000-0000-000000000000",
+        headers=test_admin_headers,
+        json={"target_term": "x"},
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_restoring_a_retired_entry_puts_it_back_into_use(
+    client, test_db, test_admin_headers
+):
+    """Nothing was deleted, so restoring keeps the id and the approval date
+    rather than creating a second row a reader would have to compare."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "changelog",
+            "target_term": "nhat ky thay doi",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+    entry_id = created.json()["id"]
+    await client.delete(f"/api/v1/admin/glossary/{entry_id}", headers=test_admin_headers)
+
+    response = await client.post(
+        f"/api/v1/admin/glossary/{entry_id}/restore", headers=test_admin_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+    assert response.json()["id"] == entry_id
+
+    listed = await client.get("/api/v1/admin/glossary", headers=test_admin_headers)
+    assert [row["id"] for row in listed.json()] == [entry_id]
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_restore_an_entry(client, test_db, test_user_headers):
+    response = await client.post(
+        "/api/v1/admin/glossary/does-not-matter/restore", headers=test_user_headers
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_member_cannot_delete_an_entry_permanently(client, test_user_headers):
+    response = await client.delete(
+        "/api/v1/admin/glossary/does-not-matter/permanent", headers=test_user_headers
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_active_entry_cannot_be_deleted_permanently(
+    client, test_db, test_admin_headers
+):
+    """Retirement stays the way a term in use is stopped. An entry that is
+    active has shaped translations people may still be reading, so the answer
+    to "delete this" is "retire it first and see"."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "canary",
+            "target_term": "ban thu nghiem",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+
+    response = await client.delete(
+        f"/api/v1/admin/glossary/{created.json()['id']}/permanent",
+        headers=test_admin_headers,
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_retired_entry_permanently_removes_the_row(
+    client, test_db, test_admin_headers
+):
+    """The case retirement does not cover: a term typed in by mistake explains
+    nothing, because it never shaped anything anybody saw."""
+    created = await client.post(
+        "/api/v1/admin/glossary",
+        headers=test_admin_headers,
+        json={
+            "source_term": "tpyo",
+            "target_term": "loi go",
+            "source_language": "en",
+            "target_language": "vi",
+        },
+    )
+    entry_id = created.json()["id"]
+    await client.delete(f"/api/v1/admin/glossary/{entry_id}", headers=test_admin_headers)
+
+    response = await client.delete(
+        f"/api/v1/admin/glossary/{entry_id}/permanent", headers=test_admin_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source_term"] == "tpyo"
+
+    gone = await test_db.scalar(
+        select(GlossaryEntry).where(GlossaryEntry.id == entry_id)
+    )
+    assert gone is None
+
+    listed = await client.get(
+        "/api/v1/admin/glossary?include_retired=true", headers=test_admin_headers
+    )
+    assert listed.json() == []
+
+
+@pytest.mark.asyncio
+async def test_the_same_term_can_be_added_again_after_a_permanent_delete(
+    client, test_db, test_admin_headers
+):
+    """The point of deleting rather than retiring: the scope is free again.
+    A retired row still holds the unique constraint, so re-adding the corrected
+    term would answer 409 without this."""
+    payload = {
+        "source_term": "rollout",
+        "target_term": "trien khai dan",
+        "source_language": "en",
+        "target_language": "vi",
+    }
+    first = await client.post(
+        "/api/v1/admin/glossary", headers=test_admin_headers, json=payload
+    )
+    entry_id = first.json()["id"]
+    await client.delete(f"/api/v1/admin/glossary/{entry_id}", headers=test_admin_headers)
+    await client.delete(
+        f"/api/v1/admin/glossary/{entry_id}/permanent", headers=test_admin_headers
+    )
+
+    again = await client.post(
+        "/api/v1/admin/glossary", headers=test_admin_headers, json=payload
+    )
+
+    assert again.status_code == 201

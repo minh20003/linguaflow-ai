@@ -40,6 +40,7 @@ interface ConversationDetailsDrawerProps {
   onSearchUsers?: (query: string) => void;
   onTransferOwnership?: (conversationId: string, userId: string) => void;
   onUpdateGroup?: (conversationId: string, title: string, description: string) => void;
+  onStartDirectChat?: (userId: string) => void;
 }
 
 export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps> = ({
@@ -62,6 +63,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   onSearchUsers,
   onTransferOwnership,
   onUpdateGroup,
+  onStartDirectChat,
 }) => {
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
@@ -71,6 +73,7 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
   if (!isOpen) return null;
 
   const isGroup = conversation.type === 'group';
+  const groupBioText = conversation.description || (language === 'vi' ? 'Chưa có mô tả nhóm' : 'No group description yet');
   const canManageMembers = conversation.currentUserRole === 'owner' || conversation.currentUserRole === 'admin';
   const candidates = availableUsers.filter((user) =>
     !conversation.members?.some((member) => member.id === user.id)
@@ -119,20 +122,26 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
           <div className="flex justify-end gap-2"><button type="button" onClick={() => { setEditingGroup(false); setGroupName(conversation.name); setGroupBio(conversation.description || ''); }} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-[#74798C]">Cancel</button><button type="button" disabled={!groupName.trim()} onClick={() => { onUpdateGroup?.(conversation.id, groupName.trim(), groupBio); setEditingGroup(false); }} className="inline-flex items-center gap-1 rounded-lg bg-[#2563EB] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"><Check className="h-3.5 w-3.5" /> Save</button></div>
         </div> : <div className="flex items-center gap-2"><h4 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">{conversation.name}</h4>{isGroup && canManageMembers && <button type="button" aria-label="Edit group information" onClick={() => setEditingGroup(true)} className="rounded-lg p-1 text-[#2563EB] hover:bg-[#EFF6FF]"><Pencil className="h-4 w-4" /></button>}</div>}
 
-        {conversation.recipient && (
+        {!isGroup && conversation.recipient && (
           <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] mt-0.5">
             @{conversation.recipient.username}
           </p>
         )}
 
-        {!editingGroup && conversation.description && (
+        {!editingGroup && isGroup && (
+          <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] mt-2 max-w-xs leading-relaxed">
+            {groupBioText}
+          </p>
+        )}
+
+        {!editingGroup && !isGroup && conversation.description && (
           <p className="text-xs text-[#74798C] dark:text-[#9DA3B4] mt-2 max-w-xs leading-relaxed">
             {conversation.description}
           </p>
         )}
 
         {/* Language Badge */}
-        {conversation.recipient && (
+        {!isGroup && conversation.recipient && (
           <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB] text-xs font-semibold rounded-full">
             <Globe className="w-3.5 h-3.5" />
             <span>{settingText(language, 'Preferred Language')}: {conversation.recipient.nativeLanguage.toUpperCase()}</span>
@@ -234,12 +243,29 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
             {conversation.members.map((member) => (
               <div key={member.id} className="flex items-center justify-between text-xs py-1">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <img
-                    src={member.avatar}
-                    alt={member.name}
-                    className="w-7 h-7 rounded-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
+                  {member.id !== currentUserId && onStartDirectChat ? (
+                    <button
+                      type="button"
+                      onClick={() => onStartDirectChat(member.id)}
+                      aria-label={`Open direct chat with ${member.name}`}
+                      title={`Chat with ${member.name}`}
+                      className="rounded-full focus:outline-none focus:ring-2 focus:ring-[#2563EB] focus:ring-offset-2 dark:focus:ring-offset-[#1C1F27]"
+                    >
+                      <img
+                        src={member.avatar}
+                        alt={member.name}
+                        className="w-7 h-7 rounded-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </button>
+                  ) : (
+                    <img
+                      src={member.avatar}
+                      alt={member.name}
+                      className="w-7 h-7 rounded-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  )}
                   <div className="min-w-0">
                     <p className="font-semibold text-[#1E2230] dark:text-[#F5F6FA] truncate">
                       {member.name}

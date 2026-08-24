@@ -45,13 +45,15 @@ from src.agents.prompts import PROPOSE_GLOSSARY_TERM_PROMPT  # noqa: E402
 from src.config import configure_logging, get_settings  # noqa: E402
 from src.database import get_async_session_maker  # noqa: E402
 from src.database.models import (  # noqa: E402
+    GLOSSARY_AUDIENCES,
+    GLOSSARY_DOMAINS,
     CorrectionLog,
     GlossaryEntry,
     GlossaryProposal,
     GlossaryProposalCitation,
 )
-from src.services.embeddings import embed, embedding_model_name  # noqa: E402
-from src.services.glossary import normalize_term  # noqa: E402
+from src.services.embeddings import embed_with_model  # noqa: E402
+from src.services.glossary import normalize_scope, normalize_term  # noqa: E402
 from src.services.glossary_mining import (  # noqa: E402
     Cluster,
     cluster_corrections,
@@ -144,6 +146,8 @@ async def describe(cluster: Cluster, llm: Any) -> dict[str, Any] | None:
     prompt = PROPOSE_GLOSSARY_TERM_PROMPT.format(
         source_language=source_language,
         target_language=target_language,
+        domains=", ".join(f"`{value}`" for value in GLOSSARY_DOMAINS),
+        audiences=", ".join(f"`{value}`" for value in GLOSSARY_AUDIENCES),
         machine_phrase=machine_phrase,
         human_phrase=human_phrase,
         occurrence_count=cluster.occurrence_count,
@@ -231,7 +235,7 @@ async def mine(args: argparse.Namespace) -> int:
         if args.no_write:
             continue
 
-        vector = await embed(source_term, settings=settings)
+        vector, vector_model = await embed_with_model(source_term, settings=settings)
         async with session_factory() as session:
             proposal = GlossaryProposal(
                 source_term=source_term,
@@ -239,15 +243,19 @@ async def mine(args: argparse.Namespace) -> int:
                 target_term=target_term,
                 source_language=source_language,
                 target_language=target_language,
-                domain=str(described.get("domain") or domain)[:50],
-                audience=str(described.get("audience") or audience)[:50],
+                # The scope the lookup will compare by equality, so a word
+                # outside the closed vocabulary is dropped rather than stored
+                # as a scope no conversation is ever profiled under.
+                domain=normalize_scope(described.get("domain"), GLOSSARY_DOMAINS) or domain,
+                audience=normalize_scope(described.get("audience"), GLOSSARY_AUDIENCES)
+                or audience,
                 keep_verbatim=bool(described.get("keep_verbatim")),
                 status="pending",
                 occurrence_count=cluster.occurrence_count,
                 distinct_user_count=cluster.distinct_user_count,
                 rationale=str(described.get("rationale") or "")[:1000],
                 embedding=vector,
-                embedding_model=embedding_model_name(settings) if vector else "",
+                embedding_model=vector_model,
             )
             session.add(proposal)
             await session.flush()

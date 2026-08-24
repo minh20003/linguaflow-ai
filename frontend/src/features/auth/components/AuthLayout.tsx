@@ -24,7 +24,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
               <MessageSquareText className="w-4 h-4" />
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="font-bold tracking-tight text-lg text-slate-900">LinguaChat</span>
+              <span className="font-bold tracking-tight text-lg text-slate-900">LinguaFlow</span>
             </div>
           </div>
 
@@ -72,7 +72,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.25 }}
-              className="flex items-start gap-3 bg-indigo-600 text-white p-3.5 rounded-2xl shadow-sm shadow-indigo-500/20 ml-6"
+              className="flex items-start gap-3 bg-indigo-500 text-white p-3.5 rounded-2xl shadow-sm shadow-indigo-400/20 ml-6"
             >
               <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-sm font-semibold text-white shrink-0">
                 🇺🇸
@@ -136,7 +136,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
             <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-xs">
               <MessageSquareText className="w-4 h-4" />
             </div>
-            <span className="font-bold tracking-tight text-lg text-slate-900">LinguaChat</span>
+            <span className="font-bold tracking-tight text-lg text-slate-900">LinguaFlow</span>
           </div>
           <span className="text-xs font-medium text-indigo-700 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full">
             Multilingual
@@ -150,7 +150,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
 
         {/* Mobile footer hint */}
         <div className="md:hidden w-full max-w-[420px] mt-6 pb-4 text-center text-xs text-slate-400">
-          LinguaChat • Multilingual Messaging Platform
+          LinguaFlow • Multilingual Messaging Platform
         </div>
       </div>
     </div>

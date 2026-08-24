@@ -1,0 +1,71 @@
+{
+  "run_id": "20260822-064517",
+  "started_at": "2026-08-22T06:45:17.627181+00:00",
+  "agent_context_size": 5,
+  "rag_top_k": 3,
+  "scenarios": [
+    "import-done",
+    "plan-approved",
+    "reviewer-replied",
+    "invoice-sent",
+    "server-restarted",
+    "design-signed-off",
+    "bug-assigned",
+    "contract-deadline",
+    "training-data"
+  ],
+  "rows": [
+    {
+      "embedding": "gemini:models/gemini-embedding-001",
+      "strategy": "message",
+      "scenarios": 9,
+      "hit_rate": 0.222,
+      "mrr": 0.259,
+      "mean_rank": 8.56,
+      "candidates": 34.0,
+      "query_ms": 0.0,
+      "embed_ms_per_message": 1114.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "gemini:models/gemini-embedding-001",
+      "strategy": "message_plus_previous",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.12,
+      "mean_rank": 10.44,
+      "candidates": 34.0,
+      "query_ms": 1047.7,
+      "embed_ms_per_message": 1114.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "gemini:models/gemini-embedding-001",
+      "strategy": "message_plus_recent",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.101,
+      "mean_rank": 13.22,
+      "candidates": 34.0,
+      "query_ms": 1040.1,
+      "embed_ms_per_message": 1114.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "gemini:models/gemini-embedding-001",
+      "strategy": "recent_only",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.077,
+      "mean_rank": 15.78,
+      "candidates": 34.0,
+      "query_ms": 1050.7,
+      "embed_ms_per_message": 1114.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    }
+  ]
+}
