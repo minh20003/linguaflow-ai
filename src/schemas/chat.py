@@ -53,6 +53,40 @@ class ConversationCreateRequest(BaseModel):
         return value
 
 
+class GroupMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_ids: list[str] = Field(min_length=1)
+
+
+class GroupRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["admin", "member"]
+
+
+class GroupTransferOwnerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1)
+
+
+class GroupUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("title")
+    @classmethod
+    def title_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Group name must not be blank")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+
 class ConversationMemberSummary(BaseModel):
     """Enough about a member to render them and to know what they read."""
 
@@ -66,6 +100,17 @@ class ConversationMemberSummary(BaseModel):
     username: str | None = None
     display_name: str | None = None
     preferred_language: str
+    group_role: Literal["owner", "admin", "member"] = "member"
+    # The standing this member holds in *this* conversation, which is why it
+    # cannot be validated straight off the User row: the same account is a
+    # junior colleague in one thread and a client in another.
+    #
+    # Required rather than defaulted, and deliberately so. A default here would
+    # be a second place the neutral standing is written down, and it would let a
+    # caller that forgot to resolve profiles serialise a plausible-looking
+    # `peer` for everyone. The resolver owns that default (`profile_for`); this
+    # layer only reports what it was given.
+    honorific_profile: str
 
     @model_validator(mode="after")
     def fill_legacy_profile_names(self) -> "ConversationMemberSummary":
@@ -82,6 +127,7 @@ class ConversationResponse(BaseModel):
     id: str
     type: ConversationType
     title: str | None
+    description: str | None = None
     created_by: str
     created_at: UtcDatetime
     member_ids: list[str]
@@ -99,6 +145,24 @@ class ConversationResponse(BaseModel):
     online_member_ids: list[str] = []
     # Messages from other people newer than this reader's last_read_at (§3.8).
     unread_count: int = 0
+    is_pinned: bool = False
+    pinned_at: UtcDatetime | None = None
+    is_muted: bool = False
+
+
+class ConversationPreferencesUpdate(BaseModel):
+    """Explicit desired per-member state; never a blind server-side toggle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_pinned: bool | None = None
+    is_muted: bool | None = None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "ConversationPreferencesUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one preference must be provided")
+        return self
 
 
 class TranslationEditSummary(BaseModel):
@@ -122,6 +186,12 @@ class TranslationSummary(BaseModel):
 
     translation_id: str
     target_language: str
+    # Which standing this wording addresses the reader with. Carried so a client
+    # holding several translations of one message can tell them apart: after
+    # `honorific_profile` joined the unique key, `target_language` alone no
+    # longer identifies a row (docs/CONTRACT.md section 5, note 6).
+    honorific_profile: str
+    translation_tone: Literal["natural", "formal", "casual", "friendly"] = "natural"
     translated_text: str
     model: str
     latency_ms: int
@@ -143,6 +213,7 @@ class AttachmentResponse(BaseModel):
     filename: str
     content_type: str
     size: int
+    created_at: datetime
 
     @computed_field
     @property
@@ -156,6 +227,13 @@ class AttachmentResponse(BaseModel):
         return f"/api/v1/conversations/{self.conversation_id}/attachments/{self.id}"
 
 
+class MentionSummary(BaseModel):
+    """A durable mention target, validated server-side against the thread."""
+
+    type: Literal["user", "assistant"]
+    user_id: str | None = None
+
+
 class MessageResponse(BaseModel):
     """Persisted message representation used by REST history."""
 
@@ -167,6 +245,8 @@ class MessageResponse(BaseModel):
     sender_id: str
     original_text: str
     source_language: str
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
     # Carrying translations here is what makes a socket that dropped mid
     # translation a non-event: the client recovers them on reconnect rather
     # than waiting for a `translation_completed` that was already sent.
@@ -178,6 +258,84 @@ class MessageResponse(BaseModel):
     # The file this message carries, and the message it answers (§3.7).
     attachment: AttachmentResponse | None = None
     reply_to_message_id: str | None = None
+    forwarded_from_message_id: str | None = None
+    is_saved: bool = False
+    reactions: list["MessageReactionSummary"] = []
+
+
+class SavedMessageStateResponse(BaseModel):
+    message_id: str
+    is_saved: bool
+
+
+class SavedMessagesResponse(BaseModel):
+    items: list[MessageResponse]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class MessageReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    user_ids: list[str]
+
+
+class ReactionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emoji: str = Field(min_length=1, max_length=32)
+
+    @field_validator("emoji")
+    @classmethod
+    def emoji_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("emoji must not be blank")
+        return cleaned
+
+
+class ReactionStateResponse(BaseModel):
+    message_id: str
+    reactions: list[MessageReactionSummary]
+
+
+class MessageSearchResult(BaseModel):
+    message: MessageResponse
+    matched_in: Literal["original", "translation"]
+    snippet: str
+
+
+class MessageSearchResponse(BaseModel):
+    items: list[MessageSearchResult]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class TranslationRetryResponse(BaseModel):
+    message_id: str
+    status: Literal["scheduled"] = "scheduled"
+
+
+class CallStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    call_type: Literal["voice", "video"]
+
+
+class CallResponse(BaseModel):
+    call_id: str
+    conversation_id: str
+    caller_id: str
+    callee_id: str
+    call_type: Literal["voice", "video"]
+    status: Literal["ringing", "accepted", "rejected", "ended", "missed", "failed"]
+    room_url: str | None = None
+    join_token: str | None = None
+    created_at: UtcDatetime
+    answered_at: UtcDatetime | None = None
+    ended_at: UtcDatetime | None = None
 
 
 class EditMessageRequest(BaseModel):
@@ -240,6 +398,10 @@ class TranslationEditRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edited_text: str = Field(min_length=1, max_length=5000)
+    # Whether this wording may feed the glossary-mining pipeline. It defaults
+    # to false and must be explicitly requested. It does not control the
+    # separate, identity-free admin quality-review queue.
+    consent_to_share: bool = False
 
     @field_validator("edited_text")
     @classmethod
@@ -258,6 +420,9 @@ class TranslationEditResponse(BaseModel):
     translation_id: str
     message_id: str
     target_language: str
+    # Same reason as on TranslationSummary: the pair, not the language alone,
+    # names the translation this edit was written against.
+    honorific_profile: str
     edited_text: str
     edited_at: UtcDatetime
 
@@ -287,9 +452,12 @@ class RealtimeMessage(BaseModel):
     sender_id: str
     original_text: str
     created_at: UtcDatetime
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None
+    forwarded_from_message_id: str | None = None
     attachment: AttachmentResponse | None = None
 
 
@@ -314,6 +482,8 @@ class SendMessageEvent(BaseModel):
     # Both optional: a plain message carries neither (docs/CONTRACT.md §4.1).
     attachment_id: str | None = Field(default=None, max_length=255)
     reply_to_message_id: str | None = Field(default=None, max_length=36)
+    forwarded_from_message_id: str | None = Field(default=None, max_length=36)
+    mentions: list[MentionSummary] = []
 
     @field_validator("client_message_id", "conversation_id")
     @classmethod
@@ -373,12 +543,27 @@ class MessageReceivedEvent(BaseModel):
     message: RealtimeMessage
 
 
+class MentionNotificationEvent(BaseModel):
+    """Realtime cue for a member explicitly tagged in a message."""
+
+    type: Literal["mention"] = "mention"
+    message_id: str
+    conversation_id: str
+    sender_id: str
+
+
 class TranslationCompletedEvent(BaseModel):
     """WebSocket delivery event for a finished translation.
 
-    Sent only to members whose `preferred_language` equals `target_language`;
-    the socket is per-user, so the filtering happens at fan-out rather than at
-    the client (docs/CONTRACT.md section 4.4).
+    Addressed at fan-out to the members of one bucket — those who share a
+    `preferred_language` *and* a standing — rather than broadcast for the client
+    to filter (docs/CONTRACT.md section 4.4).
+
+    That addressing is not on its own enough to identify the row, which is why
+    `honorific_profile` is on the payload. A sender in a `direct` conversation
+    receives the translation meant for the other person as well as their own, so
+    that the rating and edit controls can sit under their own message (ADR-19),
+    and with a widened key `target_language` no longer tells those two apart.
 
     `conversation_id` is carried explicitly because a per-user socket gives the
     client no other way to route this event to the right thread.
@@ -390,6 +575,8 @@ class TranslationCompletedEvent(BaseModel):
     translation_id: str
     source_language: str
     target_language: str
+    honorific_profile: str
+    translation_tone: Literal["natural", "formal", "casual", "friendly"] = "natural"
     translated_text: str
     model: str
     latency_ms: int
@@ -418,6 +605,31 @@ class MessageDeletedEvent(BaseModel):
     message_id: str
     conversation_id: str
     deleted_at: UtcDatetime
+
+
+class MessageReactionsUpdatedEvent(BaseModel):
+    type: Literal["message_reactions_updated"] = "message_reactions_updated"
+    conversation_id: str
+    message_id: str
+    reactions: list[MessageReactionSummary]
+
+
+class ConversationMemberLeftEvent(BaseModel):
+    type: Literal["conversation_member_left"] = "conversation_member_left"
+    conversation_id: str
+    user_id: str
+
+
+class CallEvent(BaseModel):
+    """Public call state notification.  Never carries a provider credential."""
+
+    type: Literal["call_incoming", "call_accepted", "call_rejected", "call_ended", "call_failed"]
+    call_id: str
+    conversation_id: str
+    caller_id: str
+    callee_id: str
+    call_type: Literal["voice", "video"]
+    status: Literal["ringing", "accepted", "rejected", "ended", "missed", "failed"]
 
 
 class ErrorEvent(BaseModel):

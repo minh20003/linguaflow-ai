@@ -1,25 +1,37 @@
 """Business logic for durable conversations and original chat messages."""
 
-from collections.abc import Sequence
+import json
+import logging
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from langchain_core.messages import HumanMessage, SystemMessage
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from src.database.models import (
+    ActionProposal,
     Attachment,
     Conversation,
     ConversationMember,
     Feedback,
     Message,
+    MessageReaction,
+    SavedMessage,
     TranslationEdit,
     TranslationResult,
     User,
 )
 from src.schemas.chat import ConversationType
+from src.services.blocking import DirectMessagingBlockedError, is_blocked_between
+from src.services.llm import LLMConfigError, extract_text, get_llm
+from src.services.profiles import profile_for, select_for_reader
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceError(Exception):
@@ -88,6 +100,10 @@ class ConversationValidationError(ChatServiceError):
     """Raised when a conversation or message violates a domain rule."""
 
 
+class DirectConversationRequiredError(ChatServiceError):
+    """An operation is only meaningful for a one-to-one conversation."""
+
+
 class ReferencedUsersNotFoundError(ChatServiceError):
     """Raised when a conversation request references missing users."""
 
@@ -118,11 +134,21 @@ class SendMessageResult:
     created: bool
 
 
+def message_mentions(message: Message) -> list[dict[str, str]]:
+    """Return a defensive representation of persisted mention metadata."""
+    try:
+        parsed = json.loads(message.mentions_json)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return [item for item in parsed if isinstance(item, dict) and item.get("type") in {"user", "assistant"}]
+
+
 class ChatService:
     """Encapsulate chat authorization, persistence, and idempotency rules."""
 
     max_message_length = 5000
     max_client_message_id_length = 128
+    assistant_conversation_title = "__linguachat_assistant__"
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
@@ -177,6 +203,9 @@ class ChatService:
             raise ReferencedUsersNotFoundError(missing_user_ids)
 
         if conversation_type == "direct":
+            other_id = next(user_id for user_id in unique_member_ids if user_id != creator_id)
+            if await is_blocked_between(self._db, creator_id, other_id):
+                raise DirectMessagingBlockedError("Direct messaging is unavailable")
             existing = await self._find_direct_conversation(unique_member_ids)
             if existing is not None:
                 return ConversationResult(conversation=existing, created=False)
@@ -194,9 +223,65 @@ class ChatService:
                 ConversationMember(
                     conversation_id=conversation.id,
                     user_id=user_id,
+                    role="owner" if conversation_type == "group" and user_id == creator_id else "member",
                 )
                 for user_id in unique_member_ids
             ]
+        )
+        await self._db.flush()
+        await self._db.refresh(conversation)
+        return ConversationResult(conversation=conversation, created=True)
+
+    async def get_or_create_assistant_conversation(
+        self, *, user_id: str
+    ) -> ConversationResult:
+        """Return the private, durable thread used to talk to the Assistant.
+
+        This is deliberately a one-member system group rather than a fake
+        frontend-only thread.  It lets the normal history and WebSocket
+        pipelines carry assistant requests and responses across reconnects.
+        """
+        member = aliased(ConversationMember)
+        member_count = (
+            select(func.count())
+            .select_from(member)
+            .where(member.conversation_id == Conversation.id)
+            .correlate(Conversation)
+            .scalar_subquery()
+        )
+        existing = await self._db.scalar(
+            select(Conversation)
+            .join(
+                ConversationMember,
+                ConversationMember.conversation_id == Conversation.id,
+            )
+            .where(
+                Conversation.type == "group",
+                Conversation.title == self.assistant_conversation_title,
+                Conversation.created_by == user_id,
+                Conversation.deleted_at.is_(None),
+                ConversationMember.user_id == user_id,
+                member_count == 1,
+            )
+            .order_by(Conversation.created_at, Conversation.id)
+            .limit(1)
+        )
+        if existing is not None:
+            return ConversationResult(conversation=existing, created=False)
+
+        conversation = Conversation(
+            type="group",
+            title=self.assistant_conversation_title,
+            created_by=user_id,
+        )
+        self._db.add(conversation)
+        await self._db.flush()
+        self._db.add(
+            ConversationMember(
+                conversation_id=conversation.id,
+                user_id=user_id,
+                role="owner",
+            )
         )
         await self._db.flush()
         await self._db.refresh(conversation)
@@ -255,8 +340,13 @@ class ChatService:
                 ConversationMember,
                 ConversationMember.conversation_id == Conversation.id,
             )
-            .where(ConversationMember.user_id == user_id)
-            .order_by(Conversation.created_at.desc(), Conversation.id.desc())
+            .where(ConversationMember.user_id == user_id, Conversation.deleted_at.is_(None))
+            .order_by(
+                ConversationMember.is_pinned.desc(),
+                ConversationMember.pinned_at.desc().nullslast(),
+                Conversation.created_at.desc(),
+                Conversation.id.desc(),
+            )
         )
         return list(result.all())
 
@@ -265,6 +355,8 @@ class ChatService:
         *,
         conversation_ids: Sequence[str],
         reader_language: str,
+        reader_profiles: Mapping[str, str] | None = None,
+        reader_tones: Mapping[str, str] | None = None,
     ) -> dict[str, tuple[str, datetime]]:
         """Summarise the newest message of each conversation for one reader.
 
@@ -272,10 +364,21 @@ class ChatService:
         messages in the database rather than fetching each conversation's last
         message separately is what keeps the list endpoint off an N+1.
 
+        A message can hold several translations into one language, differing in
+        how they address the reader, so the language alone no longer picks a
+        row. This used to be a dict comprehension keyed by message id, which
+        meant whichever row the database returned last silently won — the
+        preview in the sidebar and the text inside the conversation could
+        disagree, and neither would be wrong twice in the same way.
+
         Args:
             conversation_ids: Conversations to summarise.
             reader_language: Language the calling account reads; the translation
                 into it is preferred over the original text where one exists.
+            reader_profiles: The caller's standing in each conversation, already
+                resolved by the endpoint. Absent entries fall back to the
+                neutral standing, which is also the state of every conversation
+                too young to have been profiled.
 
         Returns:
             Conversation id mapped to its preview text and send time.
@@ -309,20 +412,42 @@ class ChatService:
         )
         newest = (await self._db.execute(select(ranked).where(ranked.c.rank == 1))).all()
 
-        translated = {
-            message_id: text
-            for message_id, text in (
-                await self._db.execute(
-                    select(
-                        TranslationResult.message_id,
-                        TranslationResult.translated_text,
-                    ).where(
-                        TranslationResult.message_id.in_([row.id for row in newest]),
-                        TranslationResult.target_language == reader_language,
-                    )
+        candidates = (
+            await self._db.execute(
+                select(
+                    TranslationResult.message_id,
+                    TranslationResult.translated_text,
+                    TranslationResult.target_language,
+                    TranslationResult.honorific_profile,
                 )
-            ).all()
-        }
+                .where(
+                    TranslationResult.message_id.in_([row.id for row in newest]),
+                    TranslationResult.target_language == reader_language,
+                )
+                .order_by(
+                    TranslationResult.version.desc(),
+                    TranslationResult.created_at.desc(),
+                    TranslationResult.id.desc(),
+                )
+            )
+        ).all()
+
+        by_message: dict[str, list] = {}
+        for candidate in candidates:
+            by_message.setdefault(candidate.message_id, []).append(candidate)
+
+        profiles = reader_profiles or {}
+        tones = reader_tones or {}
+        translated: dict[str, str] = {}
+        for row in newest:
+            chosen = select_for_reader(
+                by_message.get(row.id, []),
+                target_language=reader_language,
+                honorific_profile=profile_for(profiles, row.conversation_id),
+                translation_tone=tones.get(row.conversation_id, "natural"),
+            )
+            if chosen is not None:
+                translated[row.id] = chosen.translated_text
 
         # A withdrawn message previews as empty text with its timestamp intact.
         # The wording belongs to the client: it is interface copy, and this
@@ -423,6 +548,46 @@ class ChatService:
             grouped.setdefault(conversation_id, []).append(user)
         return grouped
 
+    async def get_member_preferences_for_conversations(
+        self, *, user_id: str, conversation_ids: Sequence[str]
+    ) -> dict[str, ConversationMember]:
+        """Load the caller's pin/mute rows for a whole sidebar in one query."""
+        if not conversation_ids:
+            return {}
+        rows = await self._db.scalars(
+            select(ConversationMember).where(
+                ConversationMember.user_id == user_id,
+                ConversationMember.conversation_id.in_(conversation_ids),
+            )
+        )
+        return {row.conversation_id: row for row in rows}
+
+    async def update_conversation_preferences(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        is_pinned: bool | None,
+        is_muted: bool | None,
+    ) -> ConversationMember:
+        """Set explicit per-member preferences without moving an existing pin."""
+        await self._require_membership(conversation_id=conversation_id, user_id=user_id)
+        member = await self._db.get(ConversationMember, (conversation_id, user_id))
+        if member is None:  # defensive, _require_membership has already checked
+            raise ConversationMembershipError(conversation_id, user_id)
+        if is_pinned is not None:
+            if is_pinned and not member.is_pinned:
+                member.is_pinned = True
+                member.pinned_at = datetime.now(UTC)
+            elif not is_pinned:
+                member.is_pinned = False
+                member.pinned_at = None
+        if is_muted is not None:
+            member.is_muted = is_muted
+        await self._db.commit()
+        await self._db.refresh(member)
+        return member
+
     async def get_message_history(
         self,
         *,
@@ -451,6 +616,20 @@ class ChatService:
         )
         recent_messages.reverse()
         return recent_messages
+
+    async def get_message_for_member(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+    ) -> Message:
+        """Return one message after the same scope check mutations use."""
+        return await self._require_message_for_member(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
 
     async def mark_conversation_read(
         self,
@@ -486,6 +665,56 @@ class ChatService:
         )
         await self._db.commit()
         return read_at
+
+    async def search_messages(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        query: str,
+        reader_language: str,
+        limit: int,
+        before_created_at: datetime | None = None,
+        before_id: str | None = None,
+    ) -> list[Message]:
+        """Find non-deleted originals or candidate translations in one thread.
+
+        Translation rows are narrowed to the caller's language here, then the
+        route's reader-selection ladder discards any candidate rendering they
+        are not entitled to before it becomes a result.
+        """
+        if not 1 <= limit <= 100:
+            raise ConversationValidationError("limit must be between 1 and 100")
+        await self._require_membership(conversation_id=conversation_id, user_id=user_id)
+        needle = query.strip()
+        if not needle:
+            raise ConversationValidationError("q must not be blank")
+        escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        statement = (
+            select(Message)
+            .outerjoin(TranslationResult, TranslationResult.message_id == Message.id)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.deleted_at.is_(None),
+                or_(
+                    Message.original_text.ilike(pattern, escape="\\"),
+                    (TranslationResult.target_language == reader_language)
+                    & TranslationResult.translated_text.ilike(pattern, escape="\\"),
+                ),
+            )
+            .distinct()
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit + 1)
+        )
+        if before_created_at is not None and before_id is not None:
+            statement = statement.where(
+                or_(
+                    Message.created_at < before_created_at,
+                    (Message.created_at == before_created_at) & (Message.id < before_id),
+                )
+            )
+        return list((await self._db.scalars(statement)).all())
 
     async def get_unread_counts(
         self,
@@ -536,6 +765,8 @@ class ChatService:
         text: str,
         attachment_id: str | None = None,
         reply_to_message_id: str | None = None,
+        forwarded_from_message_id: str | None = None,
+        mentions: Sequence[Mapping[str, str | None]] = (),
     ) -> SendMessageResult:
         """Persist an authorized original message before any transport fan-out.
 
@@ -554,8 +785,18 @@ class ChatService:
             conversation_id=conversation_id,
             user_id=sender_id,
         )
+        conversation = await self._db.get(Conversation, conversation_id)
+        if conversation is not None and conversation.type == "direct":
+            other_ids = [member_id for member_id in member_ids if member_id != sender_id]
+            if other_ids and await is_blocked_between(self._db, sender_id, other_ids[0]):
+                raise DirectMessagingBlockedError("Direct messaging is unavailable")
         recipient_ids = tuple(
             member_id for member_id in member_ids if member_id != sender_id
+        )
+        normalized_mentions = self._normalize_mentions(
+            mentions=mentions,
+            member_ids=member_ids,
+            sender_id=sender_id,
         )
 
         existing_message = await self._find_message_by_client_message_id(
@@ -583,10 +824,15 @@ class ChatService:
             conversation_id=conversation_id,
             sender_id=sender_id,
             original_text=text,
+            mentions_json=json.dumps(normalized_mentions),
             source_language=sender_language or "en",
             reply_to_message_id=await self._resolve_reply_target(
                 conversation_id=conversation_id,
                 reply_to_message_id=reply_to_message_id,
+            ),
+            forwarded_from_message_id=await self._resolve_forward_target(
+                sender_id=sender_id,
+                forwarded_from_message_id=forwarded_from_message_id,
             ),
         )
         self._db.add(message)
@@ -627,6 +873,120 @@ class ChatService:
             recipient_ids=recipient_ids,
             created=True,
         )
+
+    async def create_assistant_reply(
+        self,
+        *,
+        trigger_message: Message,
+        member_ids: Sequence[str],
+    ) -> SendMessageResult:
+        """Persist an in-thread answer to an explicit assistant mention."""
+        existing = await self._find_message_by_client_message_id(
+            sender_id=trigger_message.sender_id,
+            conversation_id=trigger_message.conversation_id,
+            client_message_id=f"assistant:{trigger_message.id}",
+        )
+        if existing is not None:
+            return SendMessageResult(existing, tuple(member_ids), False)
+
+        reply = Message(
+            client_message_id=f"assistant:{trigger_message.id}",
+            conversation_id=trigger_message.conversation_id,
+            sender_id=trigger_message.sender_id,
+            original_text=await self._assistant_reply_text(trigger_message),
+            source_language=trigger_message.source_language,
+            assistant_generated=True,
+            reply_to_message_id=trigger_message.id,
+        )
+        self._db.add(reply)
+        await self._db.commit()
+        await self._db.refresh(reply)
+        await self._db.commit()
+        return SendMessageResult(reply, tuple(member_ids), True)
+
+    async def _assistant_reply_text(self, trigger_message: Message) -> str:
+        """Answer a mention using recent in-conversation context.
+
+        The answer and action-extraction jobs are intentionally separate: this
+        makes a useful conversational reply available immediately while every
+        calendar change remains a user-approved proposal.
+        """
+        fallback = (
+            "Mình chưa thể tạo câu trả lời đầy đủ ngay lúc này. "
+            "Bạn có thể thử lại, hoặc nêu rõ hơn điều bạn muốn mình hỗ trợ."
+        )
+        request = re.sub(r"(^|\s)@assistant\b", " ", trigger_message.original_text, flags=re.IGNORECASE).strip()
+        if not request:
+            return "Bạn muốn mình hỗ trợ điều gì trong cuộc trò chuyện này?"
+
+        try:
+            recent = list(
+                reversed(
+                    (await self._db.scalars(
+                        select(Message)
+                        .where(
+                            Message.conversation_id == trigger_message.conversation_id,
+                            Message.deleted_at.is_(None),
+                        )
+                        .order_by(Message.created_at.desc(), Message.id.desc())
+                        .limit(8)
+                    )).all()
+                )
+            )
+            transcript = "\n".join(
+                f"{'Trợ lý' if message.assistant_generated else 'Người dùng'}: {message.original_text}"
+                for message in recent
+                if message.original_text.strip()
+            )
+            response = await get_llm().ainvoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "Bạn là Trợ lý thông minh trong ứng dụng nhắn tin. "
+                            "Trả lời trực tiếp, đầy đủ và hữu ích cho yêu cầu mới nhất, "
+                            "dựa trên ngữ cảnh được cung cấp. Trả lời bằng cùng ngôn ngữ "
+                            "với yêu cầu của người dùng. Không tự khẳng định đã tạo, sửa "
+                            "hoặc thêm lịch/công việc: nếu có đề xuất, nói rõ người dùng phải "
+                            "xác nhận trước. Không nhắc lại tag @assistant."
+                        )
+                    ),
+                    HumanMessage(
+                        content=f"Ngữ cảnh gần đây:\n{transcript}\n\nYêu cầu cần trả lời:\n{request}"
+                    ),
+                ]
+            )
+            answer = extract_text(response)
+            return answer[:5000] if answer else fallback
+        except (LLMConfigError, OSError, RuntimeError, ValueError):
+            logger.warning("Assistant conversational reply unavailable", exc_info=True)
+            return fallback
+
+    @staticmethod
+    def _normalize_mentions(
+        *,
+        mentions: Sequence[Mapping[str, str | None]],
+        member_ids: Sequence[str],
+        sender_id: str,
+    ) -> list[dict[str, str]]:
+        """Reject spoofed tags and retain each valid target only once."""
+        member_set = set(member_ids)
+        result: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for mention in mentions:
+            mention_type = mention.get("type")
+            if mention_type == "assistant":
+                key = ("assistant", "")
+                if key not in seen:
+                    result.append({"type": "assistant"})
+                    seen.add(key)
+                continue
+            user_id = mention.get("user_id")
+            if mention_type == "user" and user_id and user_id in member_set and user_id != sender_id:
+                key = ("user", user_id)
+                if key not in seen:
+                    result.append({"type": "user", "user_id": user_id})
+                    seen.add(key)
+        return result
 
     async def edit_message(
         self,
@@ -675,6 +1035,11 @@ class ChatService:
         await self._db.execute(
             delete(TranslationResult).where(TranslationResult.message_id == message.id)
         )
+        await self._db.execute(
+            update(ActionProposal)
+            .where(ActionProposal.source_message_id == message.id, ActionProposal.status.in_(("needs_clarification", "pending_confirmation")))
+            .values(status="stale", stale_at=datetime.now(UTC))
+        )
         await self._db.commit()
         await self._db.refresh(message)
         return message, recipient_ids
@@ -710,6 +1075,11 @@ class ChatService:
         )
         if message.deleted_at is None:
             message.deleted_at = datetime.now(UTC)
+            await self._db.execute(
+                update(ActionProposal)
+                .where(ActionProposal.source_message_id == message.id, ActionProposal.status.in_(("needs_clarification", "pending_confirmation")))
+                .values(status="stale", stale_at=datetime.now(UTC))
+            )
             await self._db.commit()
             await self._db.refresh(message)
         return message, recipient_ids
@@ -732,6 +1102,26 @@ class ChatService:
             select(Message.conversation_id).where(Message.id == reply_to_message_id)
         )
         return reply_to_message_id if parent_conversation == conversation_id else None
+
+    async def _resolve_forward_target(
+        self,
+        *,
+        sender_id: str,
+        forwarded_from_message_id: str | None,
+    ) -> str | None:
+        """Keep a forward link only for a message the sender may read."""
+        if forwarded_from_message_id is None:
+            return None
+        permitted = await self._db.scalar(
+            select(Message.id)
+            .join(ConversationMember, ConversationMember.conversation_id == Message.conversation_id)
+            .where(
+                Message.id == forwarded_from_message_id,
+                Message.deleted_at.is_(None),
+                ConversationMember.user_id == sender_id,
+            )
+        )
+        return forwarded_from_message_id if permitted else None
 
     async def _claim_attachment(
         self,
@@ -759,6 +1149,152 @@ class ChatService:
             .values(message_id=message_id)
         )
         await self._db.commit()
+
+    async def set_saved_message(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+        is_saved: bool,
+    ) -> bool:
+        """Create or remove a bookmark idempotently after scoped authorization."""
+        message = await self._require_message_for_member(
+            user_id=user_id, conversation_id=conversation_id, message_id=message_id
+        )
+        if is_saved:
+            if message.deleted_at is not None:
+                raise MessageAlreadyDeletedError(message_id)
+            existing = await self._db.scalar(
+                select(SavedMessage.id).where(
+                    SavedMessage.user_id == user_id, SavedMessage.message_id == message_id
+                )
+            )
+            if existing is None:
+                self._db.add(SavedMessage(user_id=user_id, message_id=message_id))
+                try:
+                    await self._db.commit()
+                except IntegrityError:
+                    await self._db.rollback()
+            return True
+        await self._db.execute(
+            delete(SavedMessage).where(
+                SavedMessage.user_id == user_id, SavedMessage.message_id == message_id
+            )
+        )
+        await self._db.commit()
+        return False
+
+    async def saved_message_ids(self, *, user_id: str, message_ids: Sequence[str]) -> set[str]:
+        if not message_ids:
+            return set()
+        rows = await self._db.scalars(
+            select(SavedMessage.message_id).where(
+                SavedMessage.user_id == user_id, SavedMessage.message_id.in_(message_ids)
+            )
+        )
+        return set(rows)
+
+    async def list_saved_messages(
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        before_created_at: datetime | None = None,
+        before_id: str | None = None,
+    ) -> list[tuple[Message, SavedMessage]]:
+        """Read bookmark history ordered by relation creation, not message time."""
+        if not 1 <= limit <= 100:
+            raise ConversationValidationError("limit must be between 1 and 100")
+        statement = (
+            select(Message, SavedMessage)
+            .join(SavedMessage, SavedMessage.message_id == Message.id)
+            .join(
+                ConversationMember,
+                (ConversationMember.conversation_id == Message.conversation_id)
+                & (ConversationMember.user_id == user_id),
+            )
+            .where(SavedMessage.user_id == user_id, Message.deleted_at.is_(None))
+            .order_by(SavedMessage.created_at.desc(), SavedMessage.id.desc())
+            .limit(limit + 1)
+        )
+        if before_created_at is not None and before_id is not None:
+            statement = statement.where(
+                or_(
+                    SavedMessage.created_at < before_created_at,
+                    (SavedMessage.created_at == before_created_at) & (SavedMessage.id < before_id),
+                )
+            )
+        rows = await self._db.execute(statement)
+        return list(rows.all())
+
+    async def update_reaction(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str,
+        message_id: str,
+        emoji: str,
+        add: bool,
+    ) -> list[tuple[str, int, list[str]]]:
+        """Explicitly add/remove an emoji and return canonical aggregates."""
+        message = await self._require_message_for_member(
+            user_id=user_id, conversation_id=conversation_id, message_id=message_id
+        )
+        if add:
+            if message.deleted_at is not None:
+                raise MessageAlreadyDeletedError(message_id)
+            exists = await self._db.scalar(
+                select(MessageReaction.id).where(
+                    MessageReaction.message_id == message_id,
+                    MessageReaction.user_id == user_id,
+                    MessageReaction.emoji == emoji,
+                )
+            )
+            if exists is None:
+                self._db.add(MessageReaction(message_id=message_id, user_id=user_id, emoji=emoji))
+                try:
+                    await self._db.commit()
+                except IntegrityError:
+                    await self._db.rollback()
+        else:
+            await self._db.execute(
+                delete(MessageReaction).where(
+                    MessageReaction.message_id == message_id,
+                    MessageReaction.user_id == user_id,
+                    MessageReaction.emoji == emoji,
+                )
+            )
+            await self._db.commit()
+        return (await self.reactions_by_message(message_ids=[message_id])).get(message_id, [])
+
+    async def reactions_by_message(
+        self, *, message_ids: Sequence[str]
+    ) -> dict[str, list[tuple[str, int, list[str]]]]:
+        """Fetch all reaction aggregates for a message page in a bounded query."""
+        if not message_ids:
+            return {}
+        rows = await self._db.execute(
+            select(MessageReaction.message_id, MessageReaction.emoji, MessageReaction.user_id)
+            .where(MessageReaction.message_id.in_(message_ids))
+            .order_by(MessageReaction.emoji, MessageReaction.user_id)
+        )
+        grouped: dict[str, dict[str, list[str]]] = {}
+        for message_id, emoji, user_id in rows:
+            grouped.setdefault(message_id, {}).setdefault(emoji, []).append(user_id)
+        return {
+            message_id: [(emoji, len(user_ids), user_ids) for emoji, user_ids in emojis.items()]
+            for message_id, emojis in grouped.items()
+        }
+
+    async def _require_message_for_member(
+        self, *, user_id: str, conversation_id: str, message_id: str
+    ) -> Message:
+        await self._require_membership(conversation_id=conversation_id, user_id=user_id)
+        message = await self._db.get(Message, message_id)
+        if message is None or message.conversation_id != conversation_id:
+            raise MessageNotFoundError(message_id)
+        return message
 
     async def get_attachments_by_message(
         self,
@@ -869,7 +1405,7 @@ class ChatService:
         user_id: str,
         translation_id: str,
         edited_text: str,
-    ) -> tuple[TranslationEdit, TranslationResult]:
+    ) -> tuple[TranslationEdit, TranslationResult, Message]:
         """Store one account's wording for a translation (docs/CONTRACT.md §3.10).
 
         Appends rather than replaces, unlike `submit_translation_feedback`
@@ -882,8 +1418,10 @@ class ChatService:
             edited_text: The wording this account proposes.
 
         Returns:
-            The stored edit and the translation it belongs to, so the caller can
-            answer with the target language without a second query.
+            The stored edit, the translation it belongs to, and the message it
+            translates — the caller needs the target language from the second
+            and, with consent, the original wording from the third, and both
+            are already in hand here rather than worth a second query.
 
         Raises:
             TranslationNotFoundError: No translation carries that id.
@@ -919,7 +1457,7 @@ class ChatService:
         self._db.add(edit)
         await self._db.commit()
         await self._db.refresh(edit)
-        return edit, translation
+        return edit, translation, message
 
     async def latest_translation_edits(
         self,

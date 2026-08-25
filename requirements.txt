@@ -13,8 +13,13 @@ langgraph>=0.2.0
 langchain-openai>=0.3.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
-# Observability cho Agent (F-03.4). API CallbackHandler khác nhau giữa các major
-# version — module src/agents/observability.py viết theo v4.
+langchain-mistralai>=0.2.0
+# Observability cho Agent (F-03.4). Backend chon bang OBSERVABILITY_PROVIDER;
+# mac dinh la Braintrust (ADR-29). Tich hop LangChain nam trong chinh goi
+# braintrust — goi rieng braintrust-langchain da bi khai tu.
+braintrust>=0.34.0
+# Langfuse van giu de chon lai duoc. API CallbackHandler khac nhau giua cac major
+# version — module src/agents/observability.py viet theo v4.
 langfuse>=4.0.0,<5.0.0
 # Nhan dien ngon ngu cuc bo (~1ms), giam so lan goi LLM detect
 langdetect>=1.0.9
@@ -30,16 +35,36 @@ alembic>=1.14.0
 # Driver PostgreSQL bat dong bo. Phai la asyncpg chu khong phai psycopg2:
 # create_async_engine khong mo duoc URL cua driver dong bo.
 asyncpg>=0.30.0
+# Kieu cot `vector` va cac toan tu khoang cach cua pgvector cho SQLAlchemy.
+# Glossary, correction_log va message_embeddings deu tim theo cosine (ADR-22).
+pgvector>=0.3.0
+
+# Sinh vector nhung (ADR-25). Gemini va OpenAI dung lai langchain-google-genai
+# va langchain-openai da khai bao o khoi AI/LangChain ben tren, khong can them
+# gi. Hai goi duoi day phuc vu EMBEDDING_PROVIDER=local, nay la tang du phong
+# khi provider hosted het quota (EMBEDDING_FALLBACK_PROVIDER). Chung keo theo
+# torch (~500MB) vao image — do la cai gia da chon de mot han muc can khong lam
+# dut dich vu; bo dong nay neu trien khai chap nhan mat khop ngu nghia luc do.
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
 
 # Authentication
-python-jose[cryptography]>=3.3.0
+# 3.5.0 declares a conflicting self-dependency for the `cryptography` extra,
+# which makes a clean Linux/Docker install fail resolution.
+python-jose[cryptography]>=3.3.0,<3.5.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.0.0
+# Xac minh ID token cua Google Sign-In (Batch G).
+google-auth>=2.0.0
 
 # Dev tools
+# Chi so dich may doi chieu tham chieu cho eval/: chrF++, BLEU, TER. Thuan
+# Python, chay offline, khong ton quota — dung de bo sung cho diem LLM-judge
+# chu khong thay the no (ADR-17).
+sacrebleu>=2.4.0
 ruff>=0.8.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0

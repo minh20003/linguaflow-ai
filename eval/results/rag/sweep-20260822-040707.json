@@ -1,0 +1,123 @@
+{
+  "run_id": "20260822-040707",
+  "started_at": "2026-08-22T04:07:07.753762+00:00",
+  "agent_context_size": 5,
+  "rag_top_k": 3,
+  "scenarios": [
+    "import-done",
+    "plan-approved",
+    "reviewer-replied",
+    "invoice-sent",
+    "server-restarted",
+    "design-signed-off",
+    "bug-assigned",
+    "contract-deadline",
+    "training-data"
+  ],
+  "rows": [
+    {
+      "embedding": "local:intfloat/multilingual-e5-base",
+      "strategy": "message",
+      "scenarios": 9,
+      "hit_rate": 0.222,
+      "mrr": 0.296,
+      "mean_rank": 9.44,
+      "candidates": 34.0,
+      "query_ms": 0.0,
+      "embed_ms_per_message": 292.8,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:intfloat/multilingual-e5-base",
+      "strategy": "message_plus_previous",
+      "scenarios": 9,
+      "hit_rate": 0.222,
+      "mrr": 0.27,
+      "mean_rank": 13.67,
+      "candidates": 34.0,
+      "query_ms": 101.3,
+      "embed_ms_per_message": 292.8,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:intfloat/multilingual-e5-base",
+      "strategy": "message_plus_recent",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.068,
+      "mean_rank": 17.78,
+      "candidates": 34.0,
+      "query_ms": 245.9,
+      "embed_ms_per_message": 292.8,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:intfloat/multilingual-e5-base",
+      "strategy": "recent_only",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.064,
+      "mean_rank": 19.67,
+      "candidates": 34.0,
+      "query_ms": 204.7,
+      "embed_ms_per_message": 292.8,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/LaBSE",
+      "strategy": "message",
+      "scenarios": 9,
+      "hit_rate": 0.222,
+      "mrr": 0.244,
+      "mean_rank": 10.11,
+      "candidates": 34.0,
+      "query_ms": 0.0,
+      "embed_ms_per_message": 189.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/LaBSE",
+      "strategy": "message_plus_previous",
+      "scenarios": 9,
+      "hit_rate": 0.333,
+      "mrr": 0.192,
+      "mean_rank": 11.56,
+      "candidates": 34.0,
+      "query_ms": 118.9,
+      "embed_ms_per_message": 189.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/LaBSE",
+      "strategy": "message_plus_recent",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.081,
+      "mean_rank": 14.44,
+      "candidates": 34.0,
+      "query_ms": 270.4,
+      "embed_ms_per_message": 189.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    },
+    {
+      "embedding": "local:sentence-transformers/LaBSE",
+      "strategy": "recent_only",
+      "scenarios": 9,
+      "hit_rate": 0.0,
+      "mrr": 0.072,
+      "mean_rank": 15.33,
+      "candidates": 34.0,
+      "query_ms": 232.6,
+      "embed_ms_per_message": 189.6,
+      "chance_hit_rate": 0.088,
+      "chance_mrr": 0.121
+    }
+  ]
+}

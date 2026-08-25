@@ -18,6 +18,7 @@ from src.schemas.chat import (
     AuthEvent,
     AuthOkEvent,
     ErrorEvent,
+    MentionNotificationEvent,
     MessageCreatedEvent,
     MessageReceivedEvent,
     RealtimeMessage,
@@ -25,13 +26,19 @@ from src.schemas.chat import (
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.assistant_mentions import schedule_assistant_mention
+from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
     ChatService,
     ClientMessageIdConflictError,
     ConversationMembershipError,
     ConversationNotFoundError,
+    message_mentions,
 )
+from src.services.commitment_detection import schedule_commitment_detection
 from src.services.connection_manager import ConnectionManager
+from src.services.message_memory import schedule_message_embedding
+from src.services.profile_inference import schedule_profile_inference
 from src.services.translation import schedule_translations
 
 AUTH_TIMEOUT_SECONDS = 10
@@ -269,6 +276,8 @@ async def websocket_endpoint(
                     text=event.text,
                     attachment_id=event.attachment_id,
                     reply_to_message_id=event.reply_to_message_id,
+                    forwarded_from_message_id=event.forwarded_from_message_id,
+                    mentions=[mention.model_dump() for mention in event.mentions],
                 )
             except ConversationNotFoundError:
                 await db.rollback()
@@ -281,6 +290,10 @@ async def websocket_endpoint(
                     "not_conversation_member",
                     "You are not a member of this conversation",
                 )
+                continue
+            except DirectMessagingBlockedError:
+                await db.rollback()
+                await _send_error(websocket, "direct_messaging_blocked", "Direct messaging is unavailable")
                 continue
             except ClientMessageIdConflictError:
                 await db.rollback()
@@ -296,6 +309,8 @@ async def websocket_endpoint(
                 continue
 
             realtime_message = RealtimeMessage.model_validate(result.message)
+            realtime_message.mentions = message_mentions(result.message)
+            realtime_message.assistant_generated = result.message.assistant_generated
             # Attached separately: the ORM object has no `attachment` field, and
             # recipients need the file metadata without refetching history.
             attachments = await service.get_attachments_by_message(
@@ -317,9 +332,66 @@ async def websocket_endpoint(
                     result.recipient_ids,
                     MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
                 )
+                mentioned_user_ids = tuple(
+                    mention["user_id"]
+                    for mention in realtime_message.mentions
+                    if mention.get("type") == "user" and mention.get("user_id")
+                )
+                if mentioned_user_ids:
+                    await manager.send_to_users(
+                        mentioned_user_ids,
+                        MentionNotificationEvent(
+                            message_id=result.message.id,
+                            conversation_id=result.message.conversation_id,
+                            sender_id=user_id,
+                        ).model_dump(mode="json"),
+                    )
+                if any(mention.get("type") == "assistant" for mention in realtime_message.mentions):
+                    member_ids = (user_id, *result.recipient_ids)
+                    assistant_result = await service.create_assistant_reply(
+                        trigger_message=result.message,
+                        member_ids=member_ids,
+                    )
+                    assistant_message = RealtimeMessage.model_validate(assistant_result.message)
+                    assistant_message.mentions = message_mentions(assistant_result.message)
+                    assistant_message.assistant_generated = True
+                    await manager.send_to_users(
+                        assistant_result.recipient_ids,
+                        MessageReceivedEvent(message=assistant_message).model_dump(mode="json"),
+                    )
+                    schedule_assistant_mention(
+                        message_id=result.message.id,
+                        conversation_id=result.message.conversation_id,
+                        requester_id=user_id,
+                        publisher=manager,
+                    )
                 # Fire and forget. Guarded by `created` so an idempotent resend
                 # does not translate the same message twice.
                 schedule_translations(message=result.message, publisher=manager)
+                # Commitment detection deliberately receives primitive IDs and
+                # opens its own session; it never delays message delivery.
+                schedule_commitment_detection(
+                    message_id=result.message.id,
+                    conversation_id=result.message.conversation_id,
+                    sender_id=result.message.sender_id,
+                    publisher=manager,
+                )
+                # Also fire and forget, and separate on purpose: this asks a
+                # question about the whole conversation rather than about this
+                # message, and it answers at most once every twenty of them
+                # (ADR-24). Scheduled per message only because that is when the
+                # count changes; the cadence check lives inside.
+                schedule_profile_inference(
+                    conversation_id=result.message.conversation_id
+                )
+                # Third and last of the detached tasks. Off unless
+                # RAG_CONTEXT_ENABLED, and the guard lives inside so this call
+                # site stays a plain statement of what happens to a message.
+                schedule_message_embedding(
+                    message_id=result.message.id,
+                    conversation_id=result.message.conversation_id,
+                    text=result.message.original_text,
+                )
     except WebSocketDisconnect:
         return
     finally:

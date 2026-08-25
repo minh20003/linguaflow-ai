@@ -1,50 +1,48 @@
-# LinguaFlow — giao diện web
+# LinguaChat Frontend
 
-Next.js 16 (App Router) + React 19. Đây là toàn bộ phần người dùng nhìn thấy:
-đăng ký/đăng nhập, danh sách hội thoại, khung chat và trang cài đặt ngôn ngữ.
-Backend nằm ở thư mục gốc của kho (FastAPI), chạy riêng.
+Next.js App Router frontend for authentication and real-time multilingual chat.
 
-## Chạy trên máy
+## Commands
 
 ```bash
-cp .env.example .env.local     # rồi sửa NEXT_PUBLIC_API_URL nếu backend không ở cổng 8000
 npm install
-npm run dev                    # http://localhost:3000
+npm run dev
+npm run lint
+npx tsc --noEmit --incremental false
+npm run build
 ```
 
-Backend phải chạy sẵn (`make run` ở thư mục gốc) và địa chỉ của trang này phải
-nằm trong `CORS_ORIGINS` của backend, nếu không mọi lời gọi API sẽ bị trình duyệt
-chặn.
+The development app is available at `http://localhost:3000`; the chat route is
+`/chat`.
 
-## Biến môi trường
+## Source layout
 
-| Biến | Bắt buộc | Ý nghĩa |
+```text
+src/
+  app/                 Route definitions and layouts
+  config/              Public runtime configuration
+  features/auth/       Authentication UI, API client and session helpers
+  features/chat/       Chat UI, REST/WebSocket clients and styles
+```
+Keep route files thin. Feature-specific code belongs under its feature.
+
+## Environment Variables
+
+| Variable | Required | Description |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | Có (khi không phải localhost:8000) | Gốc địa chỉ backend, ví dụ `https://linguaflow.up.railway.app` |
+| `NEXT_PUBLIC_API_URL` | Yes (when not localhost:8000) | Backend base URL, e.g. `http://localhost:8000` |
+| `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` | Optional | Google OAuth 2.0 Web Client ID, must match `GOOGLE_OAUTH_CLIENT_ID` in backend |
 
-**`NEXT_PUBLIC_*` được nhúng vào mã JavaScript lúc build, không đọc lúc chạy.**
-Đổi giá trị rồi mà không build lại thì bản cũ vẫn trỏ về địa chỉ cũ — đây là lỗi
-dễ mất thời gian nhất khi triển khai. Địa chỉ WebSocket suy ra từ chính biến này
-(`shared/lib/use-websocket.ts`), `http` thành `ws` và `https` thành `wss`, nên
-không có biến thứ hai phải nhớ.
+Google Sign-In uses the Google Identity Services ID-token flow. Add the site's
+origin to **Authorized JavaScript origins** in Google Cloud Console. The backend
+verifies the token and resolves accounts by the immutable `google_sub` value.
+## Docker
 
-## Lệnh
+The production image is a Next.js standalone server. Build and run it with:
 
 ```bash
-npm run dev      # máy chủ phát triển
-npm run build    # bản dựng production
-npm run start    # chạy bản đã dựng
-npm run lint     # eslint
-npx tsc --noEmit # kiểm tra kiểu, chạy trước khi mở PR
+NEXT_PUBLIC_API_URL=http://localhost:8000 docker compose up --build
 ```
 
-## Cấu trúc
-
-```
-src/app/         # định tuyến: (auth), chat, settings, (legal)
-src/features/    # auth, chat, settings — mỗi thư mục một miền nghiệp vụ
-src/shared/lib/  # gọi API, phiên đăng nhập, WebSocket, hằng số
-src/shared/ui/   # thành phần giao diện dùng lại
-```
-
-Cách triển khai lên Vercel: xem `docs/DEPLOY.md` ở thư mục gốc.
+`NEXT_PUBLIC_API_URL` must point to the API address available from the visitor's
+browser, not a Docker-only service hostname.

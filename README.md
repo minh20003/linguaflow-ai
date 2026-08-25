@@ -2,6 +2,16 @@
 
 Realtime multilingual chat with context-aware AI translation. Users chat in their preferred language while the system automatically translates messages between participants.
 
+## Live Demo
+
+| | |
+|---|---|
+| App | https://linguaflow-4-u3.vercel.app |
+| API health | https://linguaflow-api-production.up.railway.app/health |
+
+Sign up with your own email — registration sends a one-time code — or use the
+seeded demo accounts in [Development Accounts](#development-accounts) below.
+
 ## What LinguaFlow Does
 
 - Realtime direct and group messaging
@@ -52,7 +62,7 @@ User → WebSocket → FastAPI → Translation Service → LangGraph Agent → L
 - Alembic migrations
 
 ### Observability
-- Langfuse (optional)
+- Braintrust (optional, default), or Langfuse — set `OBSERVABILITY_PROVIDER`
 
 ## Prerequisites
 
@@ -74,8 +84,8 @@ source .venv/bin/activate  # Linux/macOS
 
 pip install -r requirements.txt
 
-# Frontend setup
-cd frontend
+# Frontend setup (v1 — pending port into develop_v2's newer frontend)
+cd frontend-v1
 npm install
 cd ..
 ```
@@ -133,7 +143,7 @@ Backend runs at: http://localhost:8000
 ### Terminal 2 — Frontend
 
 ```bash
-cd frontend
+cd frontend-v1
 npm run dev
 ```
 
@@ -158,7 +168,7 @@ make test
 make lint
 
 # Frontend
-cd frontend
+cd frontend-v1
 npm run lint
 npm run build
 cd ..
@@ -184,7 +194,7 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 
 ```
 .
-├── frontend/              # Next.js frontend
+├── frontend-v1/            # Next.js frontend (v1 — pending port into develop_v2's frontend)
 │   └── package.json
 ├── src/
 │   ├── agents/           # LangGraph translation agent
@@ -212,10 +222,10 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment instructions.
 
 Summary:
-- **Frontend**: Vercel (root directory: `frontend/`)
+- **Frontend**: Vercel (root directory: `frontend-v1/`)
 - **Backend**: Railway with Docker
 - **Database**: Railway PostgreSQL
-- **Observability**: Langfuse (optional)
+- **Observability**: Braintrust (optional, default) or Langfuse
 
 ## Security Note
 

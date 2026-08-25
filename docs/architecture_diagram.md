@@ -29,7 +29,7 @@ graph TB
     Agent -->|read last 3-5 messages| DB[(SQLite dev<br/>PostgreSQL prod)]
     BE -->|persist message + translation + feedback| DB
 
-    Monitor[Langfuse<br/>latency/token monitoring] -.-> Agent
+    Monitor[Braintrust<br/>latency/token monitoring<br/>OBSERVABILITY_PROVIDER] -.-> Agent
 ```
 
 Hệ thống sử dụng một nguồn dữ liệu duy nhất (`DB`), đảm nhiệm đồng thời hai vai trò: lưu trữ lịch sử hội thoại dài hạn và cung cấp ngữ cảnh cho Agent. Phạm vi MVP không sử dụng Vector Store riêng (xem ADR-01 trong [`ARCHITECTURE.md`](../ARCHITECTURE.md)).
@@ -52,7 +52,8 @@ graph TD
     SameLang{Ngôn ngữ nguồn = đích?}
     SameLang -->|Có| ReturnOriginal[Trả về nguyên bản]
     SameLang -->|Không| BuildContext[Đọc 3-5 tin gần nhất<br/>từ bảng messages]
-    BuildContext --> Prompt[Tạo prompt: text + context + target_lang]
+    BuildContext --> Customize[customize: đọc lĩnh vực và đối tượng<br/>từ conversation_profiles — không gọi LLM]
+    Customize --> Prompt[Tạo prompt: text + context<br/>+ target_lang + vị thế xưng hô]
     Prompt --> CallLLM[Gọi LLM — streaming]
     CallLLM --> Valid{Bản dịch hợp lệ?}
     Valid -->|Không / timeout| FallbackProvider[Provider dự phòng<br/>deep-translator, ADR-07]
@@ -110,7 +111,7 @@ graph LR
 
     E1 -->|10. Submit correction| P4((P4: Handle Feedback<br/>REST API))
     P4 -->|11. Save feedbacks| DB
-    P4 -.log metrics.-> Monitor[Langfuse]
+    P4 -.log metrics.-> Monitor[Braintrust]
 ```
 
 **Ghi chú:** chỉ bước lưu bản dịch (bước 9) được thực hiện bất đồng bộ. Tin nhắn gốc được lưu đồng bộ trước khi phát tới các client, do các bước sau yêu cầu `message_id`. Trình tự chi tiết bao gồm cơ chế streaming: xem §5.
