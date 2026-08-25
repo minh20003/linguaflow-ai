@@ -61,7 +61,7 @@ export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading,
         </span>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-5">
           <div className="flex items-center justify-between"><span className="text-sm font-medium text-emerald-800">{isVietnamese ? 'Vote up' : 'Up votes'}</span><ThumbsUp className="h-5 w-5 text-emerald-600" /></div>
           <p className="mt-3 text-3xl font-bold text-emerald-950">{overview?.votes.up ?? 0}</p>

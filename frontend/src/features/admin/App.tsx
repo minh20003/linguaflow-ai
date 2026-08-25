@@ -5,7 +5,7 @@ import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { FeedbackView } from './components/feedback/FeedbackView';
 import { GlossaryView } from './components/glossary/GlossaryView';
 import { SuggestionsView } from './components/suggestions/SuggestionsView';
-import { LiveChatView } from './components/chat/LiveChatView';
+import { AgentTranslationResult, LiveChatView } from './components/chat/LiveChatView';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { API_BASE } from '../../config/env';
 import {
@@ -16,11 +16,11 @@ import {
   LanguagePair,
   RequestLog,
   LanguageCode,
-  TermCategory,
   MetricCardData,
   LanguagePairStat,
   ModelUsageStat,
   FeedbackOverview,
+  AdminInterfaceLanguage,
 } from './types';
 
 type ApiPair = { count: number; p50_ms: number; p95_ms: number; avg_input_tokens: number; avg_output_tokens: number };
@@ -30,7 +30,6 @@ type ApiGlossaryEntry = { id:string; source_term:string; target_term:string; sou
 type ApiProposal = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; audience:string; keep_verbatim:boolean; distinct_user_count:number; rationale:string; reject_reason:string; status:'pending'|'approved'|'rejected'; created_at:string };
 type ApiUser = { email:string; display_name?:string | null; username?:string | null; role:string; interface_language?:string | null };
 type AdminTheme = 'light' | 'dark';
-type AdminInterfaceLanguage = 'vi' | 'en';
 
 const apiBase = () => API_BASE;
 
@@ -61,11 +60,26 @@ const METRIC_DEFINITIONS: MetricCardData[] = [
   { id: 'p95_latency', title: 'Độ trễ P95', value: 0, unit: 'ms', description: 'Độ trễ phân vị 95', iconName: 'Timer' },
 ];
 
+function mapGlossaryEntries(glossary: ApiGlossaryEntry[]): TermItem[] {
+  return glossary.map((entry) => ({
+    id: entry.id,
+    sourceTerm: entry.source_term,
+    targetTerm: entry.target_term,
+    sourceLang: entry.source_language.toLowerCase(),
+    targetLang: entry.target_language.toLowerCase(),
+    domain: entry.domain,
+    audience: entry.audience,
+    keepVerbatim: entry.keep_verbatim,
+    status: entry.status === 'active' ? 'active' : 'retired',
+    createdAt: entry.created_at,
+    updatedAt: entry.updated_at,
+  }));
+}
+
 export default function App() {
   const [currentTab, setCurrentTab] = useState<AdminTab>('analytics');
   const [timeRange, setTimeRange] = useState<TimeRangeFilter>('7d');
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [adminTheme, setAdminTheme] = useState<AdminTheme>('light');
   const [adminLanguage, setAdminLanguage] = useState<AdminInterfaceLanguage>('vi');
   const [adminProfile, setAdminProfile] = useState({ name: 'Quản trị viên', email: 'admin@test.com', role: 'admin' });
@@ -201,22 +215,7 @@ export default function App() {
             targetPreview: attempt.fallback_reason || `Kết quả: ${attempt.outcome}`,
           };
         }));
-        setTerms(glossary.map((entry) => ({
-          id: entry.id,
-          sourceTerm: entry.source_term,
-          targetTerm: entry.target_term,
-          sourceLang: entry.source_language.toUpperCase() as LanguageCode,
-          targetLang: entry.target_language.toUpperCase() as LanguageCode,
-          category: (entry.domain || 'Công nghệ & AI') as TermCategory,
-          priority: entry.keep_verbatim ? 'Bắt buộc (High)' : 'Khuyên dùng (Medium)',
-          isStrict: entry.keep_verbatim,
-          notes: entry.audience,
-          status: entry.status === 'active' ? 'active' : 'inactive',
-          usageCount: 0,
-          createdBy: 'LinguaFlow',
-          createdAt: entry.created_at,
-          updatedAt: entry.updated_at,
-        })));
+        setTerms(mapGlossaryEntries(glossary));
         setSuggestions([...pending, ...approved, ...rejected].map((proposal) => ({
           id: proposal.id,
           sourceText: proposal.source_term,
@@ -236,6 +235,14 @@ export default function App() {
         setFeedbackOverview(feedback);
     } catch {
       clearServerData();
+      // Glossary is an independent admin surface. A stats, feedback or
+      // proposal failure must not erase valid glossary data from the screen.
+      try {
+        const glossary = await adminRequest<ApiGlossaryEntry[]>('/admin/glossary?include_retired=true');
+        setTerms(mapGlossaryEntries(glossary));
+      } catch {
+        setTerms([]);
+      }
       setToasts([{ id: 'admin-api-error', message: 'Không thể đồng bộ dữ liệu quản trị từ máy chủ', type: 'error' }]);
     } finally {
       setIsRefreshing(false);
@@ -265,24 +272,24 @@ export default function App() {
     void loadAdminData();
   };
 
-  const glossaryPayload = (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'> | TermItem) => ({
+  const glossaryPayload = (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt'> | TermItem) => ({
     source_term: term.sourceTerm.trim(),
     target_term: term.targetTerm.trim(),
     source_language: term.sourceLang.toLowerCase(),
     target_language: term.targetLang.toLowerCase(),
-    domain: term.category,
-    audience: (term.notes || '').trim().slice(0, 50),
-    keep_verbatim: term.isStrict,
+    domain: term.domain.trim().slice(0, 50),
+    audience: term.audience.trim().slice(0, 50),
+    keep_verbatim: term.keepVerbatim,
   });
 
   // Glossary mutations deliberately reload the server state. A glossary entry
   // must be the backend's canonical row before the translation pipeline may
   // use it; optimistic-only entries were lost on reload and never applied.
-  const handleAddTerm = async (newTermData: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => {
+  const handleAddTerm = async (newTermData: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     const entry = await adminRequest<ApiGlossaryEntry>('/admin/glossary', {
       method: 'POST', body: JSON.stringify(glossaryPayload(newTermData)),
     });
-    if (newTermData.status === 'inactive') {
+    if (newTermData.status === 'retired') {
       await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${entry.id}`, { method: 'DELETE' });
     }
     await loadAdminData();
@@ -292,15 +299,23 @@ export default function App() {
     const current = terms.find((term) => term.id === id);
     if (!current) throw new Error('glossary_entry_not_found');
     const next = { ...current, ...updatedData };
-    if (current.status !== next.status) {
+    const statusChanged = current.status !== next.status;
+    if (statusChanged) {
       await adminRequest<ApiGlossaryEntry>(
         next.status === 'active' ? `/admin/glossary/${id}/restore` : `/admin/glossary/${id}`,
         { method: next.status === 'active' ? 'POST' : 'DELETE' },
       );
     }
-    await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${id}`, {
-      method: 'PATCH', body: JSON.stringify(glossaryPayload(next)),
-    });
+    const contentChanged = current.sourceTerm !== next.sourceTerm
+      || current.targetTerm !== next.targetTerm
+      || current.domain !== next.domain
+      || current.audience !== next.audience
+      || current.keepVerbatim !== next.keepVerbatim;
+    if (contentChanged) {
+      await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${id}`, {
+        method: 'PATCH', body: JSON.stringify(glossaryPayload(next)),
+      });
+    }
     await loadAdminData();
   };
 
@@ -309,10 +324,9 @@ export default function App() {
     await loadAdminData();
   };
 
-  const handleBatchImportTerms = async (
-    importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[],
-  ) => {
-    for (const term of importedTerms) await handleAddTerm(term);
+  const handlePermanentDeleteTerm = async (id: string) => {
+    await adminRequest<ApiGlossaryEntry>(`/admin/glossary/${id}/permanent`, { method: 'DELETE' });
+    await loadAdminData();
   };
 
   // Approving a proposal is the one backend operation that atomically marks
@@ -335,7 +349,7 @@ export default function App() {
     await loadAdminData();
   };
 
-  const handleCreateSuggestionFromChat = (sugData: {
+  const handleCreateSuggestionFromChat = async (sugData: {
     sourceText: string;
     currentAiTranslation: string;
     suggestedTranslation: string;
@@ -345,80 +359,51 @@ export default function App() {
     userEmail: string;
     reason: string;
   }) => {
-    const newSug: TranslationSuggestion = {
-      id: `sug-${Date.now()}`,
-      ...sugData,
-      status: 'pending',
-      submittedAt: new Date().toLocaleString(),
-      domain: 'Công nghệ & AI',
-      autoAddToGlossary: true,
-    };
-    setSuggestions((prev) => [newSug, ...prev]);
+    await adminRequest<ApiProposal>('/admin/glossary/proposals', {
+      method: 'POST',
+      body: JSON.stringify({
+        source_term: sugData.sourceText,
+        target_term: sugData.suggestedTranslation,
+        source_language: sugData.sourceLang.toLowerCase(),
+        target_language: sugData.targetLang.toLowerCase(),
+        domain: '',
+        audience: '',
+        keep_verbatim: false,
+        rationale: sugData.reason,
+      }),
+    });
+    await loadAdminData();
   };
 
-  // Live translation completed from Chat view
-  const handleNewTranslationFromChat = (data: {
-    pair: LanguagePair;
-    model: string;
-    isFallback: boolean;
-    latency: number;
-    inputTokens: number;
-    outputTokens: number;
-    sourceText: string;
-    targetText: string;
-    matchedTerms: string[];
-  }) => {
-    // 1. Add to request logs
-    const newLog: RequestLog = {
-      id: `req-${Date.now()}`,
-      timestamp: new Date().toLocaleString(),
-      pair: data.pair,
-      model: data.model,
-      isFallback: data.isFallback,
-      status: data.isFallback ? 'warning' : 'success',
-      latency: data.latency,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      sourcePreview: data.sourceText,
-      targetPreview: data.targetText,
-      matchedGlossaryTerms: data.matchedTerms,
-    };
-    setRequestLogs((prev) => [newLog, ...prev.slice(0, 19)]);
-
-    // 2. Increment stats
-    setMetrics((prev) =>
-      prev.map((m) => {
-        if (m.id === 'total_translations') {
-          return { ...m, value: Number(m.value) + 1 };
-        }
-        return m;
-      })
-    );
-
-    // 3. Increment language pair count
-    setLanguagePairs((prev) =>
-      prev.map((lp) => {
-        if (lp.pair === data.pair) {
-          const newCount = lp.count + 1;
-          return { ...lp, count: newCount };
-        }
-        return lp;
-      })
-    );
-
-    // 4. Increment AI model count
-    setAiModels((prev) =>
-      prev.map((am) => {
-        if (am.name.includes(data.model) || (data.isFallback && am.id === 'fallback-unknown')) {
-          return { ...am, servedCount: am.servedCount + 1 };
-        }
-        return am;
-      })
-    );
-  };
-
-  const pendingSuggestionsCount = suggestions.filter((s) => s.status === 'pending').length;
-  const totalTermsCount = terms.length;
+  const handleAgentTranslation = useCallback(async ({
+    originalText,
+    sourceLang,
+    targetLang,
+  }: {
+    originalText: string;
+    sourceLang: LanguageCode;
+    targetLang: LanguageCode;
+  }): Promise<AgentTranslationResult> => {
+    try {
+      return await adminRequest<AgentTranslationResult>('/admin/translate', {
+        method: 'POST',
+        body: JSON.stringify({
+          original_text: originalText,
+          source_language: sourceLang.toLowerCase(),
+          target_language: targetLang.toLowerCase(),
+          translation_tone: 'natural',
+        }),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'admin_api_504') {
+        throw new Error('Translation agent phản hồi quá thời gian. Vui lòng thử lại.');
+      }
+      if (error instanceof Error && error.message === 'admin_api_502') {
+        throw new Error('Translation agent đang không khả dụng. Vui lòng kiểm tra cấu hình BE.');
+      }
+      throw new Error('Không thể gọi Translation Agent từ backend.');
+    }
+  }, []);
 
   return (
     <div id="admin-app-shell" data-theme={adminTheme} className="min-h-screen overflow-x-hidden bg-[#F9FAFB] font-sans text-gray-900 antialiased">
@@ -426,9 +411,6 @@ export default function App() {
       <Sidebar
         currentTab={currentTab}
         onTabChange={setCurrentTab}
-        pendingSuggestionsCount={pendingSuggestionsCount}
-        totalTermsCount={totalTermsCount}
-        feedbackTotalCount={feedbackOverview?.votes.total ?? 0}
         interfaceLanguage={adminLanguage}
         theme={adminTheme}
         onInterfaceLanguageChange={setAdminLanguage}
@@ -451,11 +433,10 @@ export default function App() {
           onTimeRangeChange={setTimeRange}
           onRefresh={handleRefresh}
           isRefreshing={isRefreshing}
-          onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
         />
 
         {/* Dynamic Body Content */}
-        <main className="flex-1 p-6 sm:p-8 max-w-7xl w-full mx-auto space-y-6">
+        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-6 p-4 sm:p-5 lg:p-6 2xl:px-8">
           {currentTab === 'analytics' && (
             <AnalyticsView
               metrics={metrics}
@@ -472,7 +453,7 @@ export default function App() {
             <FeedbackView
               overview={feedbackOverview}
               isLoading={isRefreshing}
-              interfaceLanguage={adminLanguage}
+              interfaceLanguage={adminLanguage === 'vi' ? 'vi' : 'en'}
             />
           )}
 
@@ -482,7 +463,7 @@ export default function App() {
               onAddTerm={handleAddTerm}
               onUpdateTerm={handleUpdateTerm}
               onDeleteTerm={handleDeleteTerm}
-              onBatchImport={handleBatchImportTerms}
+              onPermanentDeleteTerm={handlePermanentDeleteTerm}
               onNotify={addToast}
             />
           )}
@@ -498,9 +479,8 @@ export default function App() {
 
           {currentTab === 'chat' && (
             <LiveChatView
-              terms={terms}
+              onTranslate={handleAgentTranslation}
               onBackToAdmin={() => setCurrentTab('analytics')}
-              onNewTranslationComplete={handleNewTranslationFromChat}
               onSubmitSuggestion={handleCreateSuggestionFromChat}
               onNotify={addToast}
             />

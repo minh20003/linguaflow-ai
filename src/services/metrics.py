@@ -23,20 +23,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import TranslationAttempt
+from src.services.llm_pricing import estimate_cost_usd
 
 # Outcomes where the reader did not get the configured LLM's translation. Both
 # are failures of the primary path, and both are invisible in
 # `translation_results` alone, which is why the fallback rate is computed here.
 FALLBACK_OUTCOMES = frozenset({"secondary", "original"})
-
-# Reference text-token prices in USD per one million tokens. This dashboard
-# labels the result as an estimate because provider pricing can change and
-# attempts without a recorded model are deliberately excluded.
-MODEL_TOKEN_PRICES_USD: dict[str, tuple[float, float]] = {
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4o": (2.50, 10.00),
-}
-
 
 def _normalize_language_code(value: str | None) -> str:
     """Return a stable base code so ``vi``, ``VI`` and ``vi-VN`` group alike."""
@@ -45,13 +37,12 @@ def _normalize_language_code(value: str | None) -> str:
 
 
 def estimate_model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
-    """Estimate token cost for a known served model, including dated snapshots."""
-    normalized = (model or "").lower()
-    family = next((name for name in MODEL_TOKEN_PRICES_USD if normalized.startswith(name)), None)
-    if family is None:
-        return None
-    input_price, output_price = MODEL_TOKEN_PRICES_USD[family]
-    return (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+    """Estimate cost using the same catalog exposed by the stats API."""
+    return estimate_cost_usd(
+        model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
 
 
 def percentile(values: list[int], pct: float) -> float:

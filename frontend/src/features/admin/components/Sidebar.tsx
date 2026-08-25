@@ -1,42 +1,51 @@
 import React, { useState } from 'react';
-import { BarChart3, BookOpen, Check, Globe, Languages, Lightbulb, LogOut, Moon, Settings, Sun, ThumbsUp, User as UserIcon, X } from 'lucide-react';
-import { AdminTab } from '../types';
+import { BarChart3, BookOpen, Globe, Languages, Lightbulb, LogOut, Moon, Settings, Sun, ThumbsUp, User as UserIcon, X } from 'lucide-react';
+import { AdminInterfaceLanguage, AdminTab } from '../types';
+
+const DISPLAY_LANGUAGES: Array<{ value: AdminInterfaceLanguage; flag: string; name: string; nativeName: string }> = [
+  { value: 'vi', flag: '🇻🇳', name: 'Vietnamese', nativeName: 'Tiếng Việt' },
+  { value: 'en', flag: '🇺🇸', name: 'English', nativeName: 'English (US)' },
+  { value: 'ja', flag: '🇯🇵', name: 'Japanese', nativeName: '日本語' },
+  { value: 'zh', flag: '🇨🇳', name: 'Chinese', nativeName: '中文' },
+  { value: 'ko', flag: '🇰🇷', name: 'Korean', nativeName: '한국어' },
+  { value: 'fr', flag: '🇫🇷', name: 'French', nativeName: 'Français' },
+  { value: 'de', flag: '🇩🇪', name: 'German', nativeName: 'Deutsch' },
+  { value: 'es', flag: '🇪🇸', name: 'Spanish', nativeName: 'Español' },
+];
 
 interface SidebarProps {
   currentTab: AdminTab;
   onTabChange: (tab: AdminTab) => void;
-  pendingSuggestionsCount: number;
-  totalTermsCount: number;
-  feedbackTotalCount: number;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
-  interfaceLanguage: 'vi' | 'en';
+  interfaceLanguage: AdminInterfaceLanguage;
   theme: 'light' | 'dark';
-  onInterfaceLanguageChange: (language: 'vi' | 'en') => void;
+  onInterfaceLanguageChange: (language: AdminInterfaceLanguage) => void;
   onThemeChange: (theme: 'light' | 'dark') => void;
   adminName: string;
   adminEmail: string;
   adminRole: string;
 }
 
-type SettingsSection = 'language' | 'profile' | 'appearance';
+type SettingsSection = 'language' | 'profile';
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendingSuggestionsCount, totalTermsCount, feedbackTotalCount, interfaceLanguage, theme, onInterfaceLanguageChange, onThemeChange, adminName, adminEmail, adminRole }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, interfaceLanguage, theme, onInterfaceLanguageChange, onThemeChange, adminName, adminEmail, adminRole }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
   const isVietnamese = interfaceLanguage === 'vi';
+  const currentLanguage = DISPLAY_LANGUAGES.find((language) => language.value === interfaceLanguage) ?? DISPLAY_LANGUAGES[1];
+  const currentLanguageLabel = `${currentLanguage.flag} ${currentLanguage.nativeName}`;
   const initials = adminName.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase() || 'AD';
   const navItems = [
-    { id: 'analytics' as AdminTab, label: isVietnamese ? 'Thống kê' : 'Analytics', icon: BarChart3, badge: null },
-    { id: 'feedback' as AdminTab, label: isVietnamese ? 'Phản hồi' : 'Feedback', icon: ThumbsUp, badge: feedbackTotalCount || null },
-    { id: 'glossary' as AdminTab, label: isVietnamese ? 'Thuật ngữ' : 'Glossary', icon: BookOpen, badge: totalTermsCount || null },
-    { id: 'suggestions' as AdminTab, label: isVietnamese ? 'Đề xuất' : 'Suggestions', icon: Lightbulb, badge: pendingSuggestionsCount || null },
+    { id: 'analytics' as AdminTab, label: isVietnamese ? 'Thống kê' : 'Analytics', icon: BarChart3 },
+    { id: 'feedback' as AdminTab, label: isVietnamese ? 'Phản hồi' : 'Feedback', icon: ThumbsUp },
+    { id: 'glossary' as AdminTab, label: isVietnamese ? 'Thuật ngữ' : 'Glossary', icon: BookOpen },
+    { id: 'suggestions' as AdminTab, label: isVietnamese ? 'Đề xuất' : 'Suggestions', icon: Lightbulb },
   ];
   const sections = [
     { id: 'language' as SettingsSection, label: isVietnamese ? 'Ngôn ngữ hiển thị' : 'Display language', icon: Languages },
     { id: 'profile' as SettingsSection, label: isVietnamese ? 'Hồ sơ' : 'Profile', icon: UserIcon },
-    { id: 'appearance' as SettingsSection, label: isVietnamese ? 'Giao diện' : 'Appearance', icon: Moon },
   ];
   const openSettings = (section: SettingsSection = 'language') => { setActiveSection(section); setProfileOpen(false); setSettingsOpen(true); };
   const handleLogout = () => {
@@ -59,7 +68,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendi
               <button type="button" id={`nav-item-${item.id}`} onClick={() => onTabChange(item.id)} aria-label={item.label} aria-current={active ? 'page' : undefined} className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${active ? 'bg-[#EFF6FF] text-[#2563EB] shadow-sm dark:bg-[#2563EB]/20' : 'text-[#74798C] hover:bg-[#F7F8FC] hover:text-[#1E2230] dark:text-[#9DA3B4] dark:hover:bg-[#232630] dark:hover:text-white'}`}>
                 <Icon className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} />
                 {active && <span className="absolute -left-2 bottom-2 top-2 w-1 rounded-r-full bg-[#2563EB]" />}
-                {item.badge !== null && <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#2563EB] px-1 text-[10px] font-bold text-white ring-2 ring-white dark:ring-[#1C1F27]">{item.badge}</span>}
               </button>
               <span className="pointer-events-none absolute left-[60px] top-1/2 z-50 -translate-y-1/2 whitespace-nowrap rounded-lg bg-[#1E2230] px-2.5 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">{item.label}</span>
             </div>
@@ -73,13 +81,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendi
           <span className="pointer-events-none absolute left-[60px] top-1/2 z-50 -translate-y-1/2 whitespace-nowrap rounded-lg bg-[#1E2230] px-2.5 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">{isVietnamese ? 'Cài đặt' : 'Settings'}</span>
         </div>
         <div className="relative">
-          <button id="admin-profile-avatar-btn" type="button" onClick={() => setProfileOpen((open) => !open)} aria-label={`${isVietnamese ? 'Hồ sơ' : 'Profile'}: ${adminName}`} className="relative flex h-10 w-10 items-center justify-center rounded-full bg-[#EFF6FF] text-xs font-bold text-[#2563EB] ring-2 ring-[#E8EAF0] transition-all hover:ring-[#2563EB] dark:bg-[#2563EB]/20 dark:ring-[#2A2E3D]">{initials}<span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#1C1F27]" /></button>
+          <button id="admin-profile-avatar-btn" type="button" onClick={() => setProfileOpen((open) => !open)} aria-label={`${isVietnamese ? 'Hồ sơ' : 'Profile'}: ${adminName}`} className="relative flex h-10 w-10 items-center justify-center rounded-full border border-[#BFDBFE] bg-[#EFF6FF] text-xs font-bold text-[#2563EB] transition-colors hover:border-[#93C5FD] hover:bg-[#DBEAFE] dark:border-[#2563EB]/35 dark:bg-[#2563EB]/20">{initials}<span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#1C1F27]" /></button>
           {profileOpen && <>
             <button type="button" aria-label={isVietnamese ? 'Đóng menu hồ sơ' : 'Close profile menu'} className="fixed inset-0 z-[59] cursor-default" onClick={() => setProfileOpen(false)} />
             <div id="admin-user-profile-popover" className="fixed bottom-4 left-[84px] z-[60] w-72 rounded-2xl border border-[#E8EAF0] bg-white p-3 shadow-xl dark:border-[#2A2E3D] dark:bg-[#1C1F27]">
               <div className="mb-2 flex items-center gap-3 rounded-xl bg-[#F7F8FC] p-2.5 dark:bg-[#232630]/60">
-                <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#DBEAFE] text-sm font-bold text-[#2563EB] ring-2 ring-white dark:bg-[#2563EB]/20 dark:ring-[#1C1F27]">{initials}<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#1C1F27]" /></div>
-                <div className="min-w-0 flex-1"><h4 className="truncate text-sm font-semibold text-[#1E2230] dark:text-[#F5F6FA]">{adminName}</h4><p className="truncate text-xs text-[#74798C] dark:text-[#9DA3B4]">{adminEmail}</p><span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[#2563EB]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#2563EB]"><Globe className="h-2.5 w-2.5" />{isVietnamese ? 'Tiếng Việt' : 'English'}</span></div>
+                <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[#BFDBFE] bg-[#DBEAFE] text-sm font-bold text-[#2563EB] dark:border-[#2563EB]/35 dark:bg-[#2563EB]/20">{initials}<span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#1C1F27]" /></div>
+                <div className="min-w-0 flex-1"><h4 className="truncate text-sm font-semibold text-[#1E2230] dark:text-[#F5F6FA]">{adminName}</h4><p className="truncate text-xs text-[#74798C] dark:text-[#9DA3B4]">{adminEmail}</p><span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[#2563EB]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#2563EB]"><Globe className="h-2.5 w-2.5" />{currentLanguageLabel}</span></div>
               </div>
               <div className="space-y-0.5 text-xs text-[#1E2230] dark:text-[#E2E5F0]">
                 <button type="button" onClick={() => openSettings('profile')} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[#F7F8FC] dark:hover:bg-[#232630]"><UserIcon className="h-4 w-4 text-[#74798C]" />{isVietnamese ? 'Hồ sơ của tôi' : 'My profile'}</button>
@@ -102,9 +110,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, pendi
           <main className="flex min-w-0 flex-1 flex-col bg-white dark:bg-[#1C1F27]">
             <div className="flex items-center justify-between border-b border-[#E8EAF0] px-6 py-4 dark:border-[#2A2E3D]"><h4 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">{sections.find((section) => section.id === activeSection)?.label}</h4><button type="button" onClick={() => setSettingsOpen(false)} aria-label={isVietnamese ? 'Đóng' : 'Close'} className="rounded-xl p-1.5 text-[#74798C] hover:bg-[#F7F8FC] hover:text-[#1E2230] dark:hover:bg-[#232630] dark:hover:text-white"><X className="h-5 w-5" /></button></div>
             <div className="flex-1 overflow-y-auto p-6 text-sm">
-              {activeSection === 'language' && <div className="space-y-5"><div className="space-y-1.5"><label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">{isVietnamese ? 'Ngôn ngữ hiển thị yêu thích' : 'Preferred display language'}</label><select id="admin-settings-language-select" value={interfaceLanguage} onChange={(event) => onInterfaceLanguageChange(event.target.value as 'vi' | 'en')} className="h-11 w-full rounded-xl border border-transparent bg-[#F4F5F8] px-3 text-sm text-[#1E2230] outline-none focus:border-[#2563EB]/40 dark:bg-[#232630] dark:text-[#F5F6FA]"><option value="vi">🇻🇳 Tiếng Việt</option><option value="en">🇺🇸 English</option></select><p className="pt-0.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">{isVietnamese ? 'Các nhãn và nội dung quản trị sẽ hiển thị bằng ngôn ngữ bạn chọn.' : 'Admin labels and content use your selected language.'}</p></div><div className="flex items-center justify-between rounded-2xl border border-[#E8EAF0] bg-[#F7F8FC] p-3.5 dark:border-[#2A2E3D] dark:bg-[#232630]/60"><div><h5 className="text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">{isVietnamese ? 'Ngôn ngữ hiện tại' : 'Current language'}</h5><p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">{isVietnamese ? 'Tiếng Việt' : 'English'}</p></div><Check className="h-5 w-5 text-[#2563EB]" /></div></div>}
-              {activeSection === 'profile' && <div className="space-y-5"><div className="flex items-center gap-4"><div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#DBEAFE] text-xl font-bold text-[#2563EB] ring-2 ring-[#2563EB] dark:bg-[#2563EB]/20">{initials}</div><div><h5 className="text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">{adminName}</h5><p className="text-xs text-[#74798C]">{adminEmail}</p></div></div><div className="grid gap-3"><div className="rounded-xl bg-[#F4F5F8] px-4 py-3 dark:bg-[#232630]"><p className="text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">{isVietnamese ? 'Vai trò' : 'Role'}</p><p className="mt-1 text-sm font-semibold capitalize text-[#1E2230] dark:text-[#F5F6FA]">{adminRole}</p></div><div className="rounded-xl bg-[#F4F5F8] px-4 py-3 dark:bg-[#232630]"><p className="text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">Email</p><p className="mt-1 text-sm text-[#1E2230] dark:text-[#F5F6FA]">{adminEmail}</p></div></div></div>}
-              {activeSection === 'appearance' && <div className="space-y-3"><p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">{isVietnamese ? 'Chọn giao diện sáng hoặc tối cho toàn bộ khu vực quản trị.' : 'Choose light or dark appearance for the admin area.'}</p><div className="grid grid-cols-2 gap-3"><button type="button" onClick={() => onThemeChange('light')} className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold ${theme === 'light' ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]' : 'border-[#E8EAF0] text-[#74798C]'}`}><Sun className="h-4 w-4" />{isVietnamese ? 'Sáng' : 'Light'}</button><button type="button" onClick={() => onThemeChange('dark')} className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold ${theme === 'dark' ? 'border-[#2563EB] bg-[#2563EB]/20 text-[#2563EB]' : 'border-[#E8EAF0] text-[#74798C] dark:border-[#2A2E3D]'}`}><Moon className="h-4 w-4" />{isVietnamese ? 'Tối' : 'Dark'}</button></div></div>}
+              {activeSection === 'language' && <div className="space-y-5">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">{isVietnamese ? 'Ngôn ngữ hiển thị yêu thích' : 'Preferred display language'}</label>
+                  <select id="admin-settings-language-select" value={interfaceLanguage} onChange={(event) => onInterfaceLanguageChange(event.target.value as AdminInterfaceLanguage)} className="h-11 w-full rounded-xl border border-transparent bg-[#F4F5F8] px-3 text-sm text-[#1E2230] outline-none transition-colors focus:border-[#2563EB]/40 focus:outline-none dark:bg-[#232630] dark:text-[#F5F6FA]">
+                    {DISPLAY_LANGUAGES.map((language) => <option key={language.value} value={language.value}>{language.flag} {language.name} — {language.nativeName}</option>)}
+                  </select>
+                  <p className="pt-0.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">{isVietnamese ? 'Giao diện, điều khiển và thông báo quản trị sẽ dùng ngôn ngữ bạn chọn.' : 'Admin controls, menus, and system messages use the language you select.'}</p>
+                </div>
+              </div>}
+              {activeSection === 'profile' && <div className="space-y-5"><div className="flex items-center gap-4"><div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#DBEAFE] text-xl font-bold text-[#2563EB] ring-2 ring-[#2563EB] dark:bg-[#2563EB]/20">{initials}</div><div><h5 className="text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">{adminName}</h5><p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">{adminEmail}</p></div></div><div className="grid gap-3"><div className="rounded-xl border border-[#E5EEFC] bg-[#FAFCFF] px-4 py-3 shadow-xs dark:border-[#2563EB]/20 dark:bg-[#2563EB]/[0.06]"><p className="text-[10px] font-bold uppercase tracking-wide text-[#6B82A7] dark:text-[#AFC7F4]">{isVietnamese ? 'Vai trò' : 'Role'}</p><p className="mt-1 text-sm font-semibold capitalize text-[#45658F] dark:text-[#EAF2FF]">{adminRole}</p></div><div className="rounded-xl border border-[#E5EEFC] bg-[#FAFCFF] px-4 py-3 shadow-xs dark:border-[#2563EB]/20 dark:bg-[#2563EB]/[0.06]"><p className="text-[10px] font-bold uppercase tracking-wide text-[#6B82A7] dark:text-[#AFC7F4]">Email</p><p className="mt-1 text-sm font-medium text-[#45658F] dark:text-[#EAF2FF]">{adminEmail}</p></div></div></div>}
             </div>
           </main>
         </div>
