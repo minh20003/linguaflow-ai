@@ -1,4 +1,6 @@
-export type LanguageCode = 'EN' | 'VI' | 'JA' | 'KO' | 'ZH' | 'FR';
+export type LanguageCode = 'EN' | 'VI' | 'JA' | 'ZH' | 'KO' | 'FR' | 'DE' | 'ES' | 'TH' | 'ID' | 'PT' | 'RU' | 'AR' | 'HI';
+
+export type AdminInterfaceLanguage = 'vi' | 'en' | 'ja' | 'zh' | 'ko' | 'fr' | 'de' | 'es';
 
 export type LanguagePair = 'EN → VI' | 'VI → EN' | 'EN → EN' | 'VI → VI' | 'EN → JA' | 'JA → VI';
 
@@ -64,27 +66,16 @@ export interface RequestLog {
   matchedGlossaryTerms?: string[];
 }
 
-export type TermCategory = 
-  | 'Công nghệ & AI'
-  | 'Kinh doanh & Tài chính'
-  | 'UI/UX & Sản phẩm'
-  | 'Pháp lý & Điều khoản'
-  | 'Y tế & Sức khỏe'
-  | 'Giao tiếp hàng ngày';
-
 export interface TermItem {
   id: string;
   sourceTerm: string;
   targetTerm: string;
-  sourceLang: LanguageCode;
-  targetLang: LanguageCode;
-  category: TermCategory;
-  priority: 'Bắt buộc (High)' | 'Khuyên dùng (Medium)' | 'Tham khảo (Low)';
-  isStrict: boolean; // Exact case match
-  notes?: string;
-  status: 'active' | 'inactive';
-  usageCount: number;
-  createdBy: string;
+  sourceLang: string;
+  targetLang: string;
+  domain: string;
+  audience: string;
+  keepVerbatim: boolean;
+  status: 'active' | 'retired';
   createdAt: string;
   updatedAt: string;
 }

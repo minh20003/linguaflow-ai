@@ -1,872 +1,351 @@
-import React, { useState, useMemo } from 'react';
-import {
-  BookOpen,
-  Plus,
-  Search,
-  Filter,
-  Download,
-  Upload,
-  Trash2,
-  Edit2,
-  Tag,
-  Copy,
-  Check,
-  X
-} from 'lucide-react';
-import { TermItem, TermCategory, LanguageCode } from '../../types';
+import React, { useMemo, useState } from 'react';
+import { Archive, BookOpen, Check, Copy, Edit2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { TermItem } from '../../types';
+
+type TermDraft = Omit<TermItem, 'id' | 'createdAt' | 'updatedAt'>;
 
 interface GlossaryViewProps {
   terms: TermItem[];
-  onAddTerm: (term: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>) => Promise<void>;
+  onAddTerm: (term: TermDraft) => Promise<void>;
   onUpdateTerm: (id: string, updatedData: Partial<TermItem>) => Promise<void>;
   onDeleteTerm: (id: string) => Promise<void>;
-  onBatchImport: (importedTerms: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[]) => Promise<void>;
+  onPermanentDeleteTerm: (id: string) => Promise<void>;
   onNotify: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
-const CATEGORIES: TermCategory[] = [
-  'Công nghệ & AI',
-  'Kinh doanh & Tài chính',
-  'UI/UX & Sản phẩm',
-  'Pháp lý & Điều khoản',
-  'Y tế & Sức khỏe',
-  'Giao tiếp hàng ngày',
-];
+const LANGUAGES = [
+  ['en', 'English'], ['vi', 'Tiếng Việt'], ['ja', '日本語'], ['zh', '中文'],
+  ['ko', '한국어'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'],
+  ['th', 'ไทย'], ['id', 'Bahasa Indonesia'], ['pt', 'Português'], ['ru', 'Русский'],
+  ['ar', 'العربية'], ['hi', 'हिन्दी'],
+] as const;
+const DOMAIN_OPTIONS = ['engineering', 'commercial', 'support'];
+const AUDIENCE_OPTIONS = ['internal', 'client'];
+
+const EMPTY_DRAFT: TermDraft = {
+  sourceTerm: '', targetTerm: '', sourceLang: 'en', targetLang: 'vi',
+  domain: '', audience: '', keepVerbatim: false, status: 'active',
+};
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(new Date(value));
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
 
 export const GlossaryView: React.FC<GlossaryViewProps> = ({
-  terms,
-  onAddTerm,
-  onUpdateTerm,
-  onDeleteTerm,
-  onBatchImport,
-  onNotify,
+  terms, onAddTerm, onUpdateTerm, onDeleteTerm, onPermanentDeleteTerm, onNotify,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
-  const [selectedPriority, setSelectedPriority] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-
-  // Modals state
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editingTerm, setEditingTerm] = useState<TermItem | null>(null);
-  const [deletingTermId, setDeletingTermId] = useState<string | null>(null);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importText, setImportText] = useState('');
+  const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [targetFilter, setTargetFilter] = useState('all');
+  const [domainFilter, setDomainFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | TermItem['status']>('all');
+  const [draft, setDraft] = useState<TermDraft>(EMPTY_DRAFT);
+  const [editing, setEditing] = useState<TermItem | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  // Form State for Add / Edit
-  const [formData, setFormData] = useState({
-    sourceTerm: '',
-    targetTerm: '',
-    sourceLang: 'EN' as LanguageCode,
-    targetLang: 'VI' as LanguageCode,
-    category: 'Công nghệ & AI' as TermCategory,
-    priority: 'Bắt buộc (High)' as 'Bắt buộc (High)' | 'Khuyên dùng (Medium)' | 'Tham khảo (Low)',
-    isStrict: false,
-    notes: '',
-    status: 'active' as 'active' | 'inactive',
-  });
-
-  // Filtered terms
+  const domains = useMemo(
+    () => Array.from(new Set([...DOMAIN_OPTIONS, ...terms.map((term) => term.domain).filter(Boolean)])).sort(),
+    [terms],
+  );
   const filteredTerms = useMemo(() => {
-    return terms.filter((item) => {
-      const matchSearch =
-        item.sourceTerm.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        item.targetTerm.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.notes && item.notes.toLowerCase().includes(searchTerm.toLowerCase()));
-
-      const matchCategory = selectedCategory === 'all' || item.category === selectedCategory;
-      const matchLang =
-        selectedLanguage === 'all' ||
-        `${item.sourceLang} → ${item.targetLang}` === selectedLanguage;
-      const matchPriority = selectedPriority === 'all' || item.priority.includes(selectedPriority);
-      const matchStatus = selectedStatus === 'all' || item.status === selectedStatus;
-
-      return matchSearch && matchCategory && matchLang && matchPriority && matchStatus;
+    const query = search.trim().toLowerCase();
+    return terms.filter((term) => {
+      const matchesSearch = !query || [term.sourceTerm, term.targetTerm, term.domain, term.audience]
+        .some((value) => value.toLowerCase().includes(query));
+      const matchesSource = sourceFilter === 'all' || term.sourceLang === sourceFilter;
+      const matchesTarget = targetFilter === 'all' || term.targetLang === targetFilter;
+      const matchesDomain = domainFilter === 'all' || term.domain === domainFilter;
+      const matchesStatus = statusFilter === 'all' || term.status === statusFilter;
+      return matchesSearch && matchesSource && matchesTarget && matchesDomain && matchesStatus;
     });
-  }, [terms, searchTerm, selectedCategory, selectedLanguage, selectedPriority, selectedStatus]);
+  }, [domainFilter, search, sourceFilter, statusFilter, targetFilter, terms]);
 
-  // Statistics calculation
-  const totalTerms = terms.length;
-  const activeTermsCount = terms.filter((t) => t.status === 'active').length;
-  const highPriorityCount = terms.filter((t) => t.priority.includes('High')).length;
-  const totalAppliedUsage = terms.reduce((acc, curr) => acc + (curr.usageCount || 0), 0);
+  const activeCount = terms.filter((term) => term.status === 'active').length;
+  const retiredCount = terms.length - activeCount;
+  const verbatimCount = terms.filter((term) => term.keepVerbatim).length;
 
-  // Handlers
-  const handleOpenAddModal = () => {
-    setFormData({
-      sourceTerm: '',
-      targetTerm: '',
-      sourceLang: 'EN',
-      targetLang: 'VI',
-      category: 'Công nghệ & AI',
-      priority: 'Bắt buộc (High)',
-      isStrict: false,
-      notes: '',
-      status: 'active',
-    });
-    setIsAddModalOpen(true);
+  const openAdd = () => {
+    setEditing(null);
+    setDraft(EMPTY_DRAFT);
+    setModalOpen(true);
   };
 
-  const handleOpenEditModal = (term: TermItem) => {
-    setEditingTerm(term);
-    setFormData({
-      sourceTerm: term.sourceTerm,
-      targetTerm: term.targetTerm,
-      sourceLang: term.sourceLang,
-      targetLang: term.targetLang,
-      category: term.category,
-      priority: term.priority,
-      isStrict: term.isStrict,
-      notes: term.notes || '',
-      status: term.status,
+  const openEdit = (term: TermItem) => {
+    setEditing(term);
+    setDraft({
+      sourceTerm: term.sourceTerm, targetTerm: term.targetTerm,
+      sourceLang: term.sourceLang, targetLang: term.targetLang,
+      domain: term.domain, audience: term.audience,
+      keepVerbatim: term.keepVerbatim, status: term.status,
+    });
+    setModalOpen(true);
+  };
+
+  const changeDraft = <K extends keyof TermDraft>(key: K, value: TermDraft[K]) => {
+    setDraft((current) => {
+      const next = { ...current, [key]: value };
+      if (next.keepVerbatim) next.targetTerm = next.sourceTerm;
+      return next;
     });
   };
 
-  const handleSubmitForm = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.sourceTerm.trim() || !formData.targetTerm.trim()) {
-      onNotify('Vui lòng nhập cả thuật ngữ gốc và bản dịch chuẩn', 'error');
-      return;
-    }
-
-    if (editingTerm) {
-      try {
-        await onUpdateTerm(editingTerm.id, { ...formData, updatedAt: new Date().toISOString().split('T')[0] });
-        onNotify(`Đã cập nhật thuật ngữ "${formData.sourceTerm}"`, 'success');
-        setEditingTerm(null);
-      } catch {
-        onNotify('Không thể cập nhật thuật ngữ trên máy chủ.', 'error');
-      }
-    } else {
-      try {
-        await onAddTerm({ ...formData, createdBy: 'admin@linguaflow.ai' });
-        onNotify(`Đã thêm thuật ngữ "${formData.sourceTerm}" vào từ điển`, 'success');
-        setIsAddModalOpen(false);
-      } catch {
-        onNotify('Không thể thêm thuật ngữ trên máy chủ.', 'error');
-      }
-    }
-  };
-
-  const handleConfirmDelete = async () => {
-    if (deletingTermId) {
-      const termToDelete = terms.find((t) => t.id === deletingTermId);
-      try {
-        await onDeleteTerm(deletingTermId);
-        onNotify(`Đã ngừng áp dụng thuật ngữ "${termToDelete?.sourceTerm}"`, 'info');
-        setDeletingTermId(null);
-      } catch {
-        onNotify('Không thể cập nhật trạng thái thuật ngữ trên máy chủ.', 'error');
-      }
-    }
-  };
-
-  const handleExportCSV = () => {
-    const headers = ['Source Term', 'Target Translation', 'Source Lang', 'Target Lang', 'Category', 'Priority', 'Strict Match', 'Status', 'Usage Count', 'Notes'];
-    const rows = filteredTerms.map((t) => [
-      `"${t.sourceTerm.replace(/"/g, '""')}"`,
-      `"${t.targetTerm.replace(/"/g, '""')}"`,
-      t.sourceLang,
-      t.targetLang,
-      `"${t.category}"`,
-      `"${t.priority}"`,
-      t.isStrict ? 'Yes' : 'No',
-      t.status,
-      t.usageCount,
-      `"${(t.notes || '').replace(/"/g, '""')}"`,
-    ]);
-
-    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `linguaflow-glossary-${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    onNotify(`Đã xuất ${filteredTerms.length} thuật ngữ ra file CSV thành công!`, 'success');
-  };
-
-  const handleProcessImport = async () => {
-    if (!importText.trim()) {
-      onNotify('Vui lòng dán nội dung CSV hoặc JSON để import', 'error');
-      return;
-    }
-
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!draft.sourceTerm.trim() || !draft.targetTerm.trim() || busy) return;
+    setBusy(true);
     try {
-      const parsedItems: Omit<TermItem, 'id' | 'createdAt' | 'updatedAt' | 'usageCount'>[] = [];
-
-      // Check if JSON
-      if (importText.trim().startsWith('[') || importText.trim().startsWith('{')) {
-        const jsonData = JSON.parse(importText);
-        const arrayData = Array.isArray(jsonData) ? jsonData : [jsonData];
-        for (const item of arrayData) {
-          if (item.sourceTerm && item.targetTerm) {
-            parsedItems.push({
-              sourceTerm: item.sourceTerm,
-              targetTerm: item.targetTerm,
-              sourceLang: item.sourceLang || 'EN',
-              targetLang: item.targetLang || 'VI',
-              category: item.category || 'Công nghệ & AI',
-              priority: item.priority || 'Bắt buộc (High)',
-              isStrict: Boolean(item.isStrict),
-              notes: item.notes || '',
-              status: item.status || 'active',
-              createdBy: 'import@linguaflow.ai',
-            });
-          }
-        }
+      const normalized = {
+        ...draft,
+        sourceTerm: draft.sourceTerm.trim(), targetTerm: draft.targetTerm.trim(),
+        domain: draft.domain.trim(), audience: draft.audience.trim(),
+      };
+      if (editing) {
+        await onUpdateTerm(editing.id, normalized);
+        onNotify(`Đã cập nhật “${normalized.sourceTerm}”`, 'success');
       } else {
-        // Parse CSV lines
-        const lines = importText.trim().split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line || (i === 0 && line.toLowerCase().includes('source'))) continue; // skip header
-          const cols = line.split(',').map((c) => c.replace(/^["']|["']$/g, '').trim());
-          if (cols.length >= 2 && cols[0] && cols[1]) {
-            parsedItems.push({
-              sourceTerm: cols[0],
-              targetTerm: cols[1],
-              sourceLang: (cols[2] as LanguageCode) || 'EN',
-              targetLang: (cols[3] as LanguageCode) || 'VI',
-              category: (cols[4] as TermCategory) || 'Công nghệ & AI',
-              priority: (cols[5] as TermItem['priority']) || 'Bắt buộc (High)',
-              isStrict: cols[6]?.toLowerCase() === 'yes' || cols[6] === 'true',
-              notes: cols[9] || cols[7] || '',
-              status: cols[7]?.toLowerCase() === 'inactive' ? 'inactive' : 'active',
-              createdBy: 'import@linguaflow.ai',
-            });
-          }
-        }
+        await onAddTerm(normalized);
+        onNotify(`Đã thêm “${normalized.sourceTerm}” vào thuật ngữ dùng chung`, 'success');
       }
-
-      if (parsedItems.length === 0) {
-        onNotify('Không tìm thấy dòng dữ liệu hợp lệ nào. Vui lòng kiểm tra định dạng.', 'error');
-        return;
-      }
-
-      await onBatchImport(parsedItems);
-      onNotify(`Đã nhập thành công ${parsedItems.length} thuật ngữ vào từ điển!`, 'success');
-      setIsImportModalOpen(false);
-      setImportText('');
+      setModalOpen(false);
+      setEditing(null);
     } catch {
-      onNotify('Lỗi cú pháp khi đọc dữ liệu import. Vui lòng kiểm tra lại định dạng JSON/CSV.', 'error');
+      onNotify('Không thể lưu thuật ngữ. Hãy kiểm tra dữ liệu hoặc mục trùng lặp.', 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleCopyTerm = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+  const changeStatus = async (term: TermItem) => {
+    try {
+      if (term.status === 'active') {
+        await onDeleteTerm(term.id);
+        onNotify(`Đã ngừng áp dụng “${term.sourceTerm}”`, 'info');
+      } else {
+        await onUpdateTerm(term.id, { status: 'active' });
+        onNotify(`Đã khôi phục “${term.sourceTerm}”`, 'success');
+      }
+    } catch {
+      onNotify('Không thể thay đổi trạng thái thuật ngữ.', 'error');
+    }
+  };
+
+  const permanentlyDelete = async () => {
+    if (!confirmingDelete || busy) return;
+    const term = terms.find((item) => item.id === confirmingDelete);
+    setBusy(true);
+    try {
+      await onPermanentDeleteTerm(confirmingDelete);
+      onNotify(`Đã xóa vĩnh viễn “${term?.sourceTerm ?? ''}”`, 'info');
+      setConfirmingDelete(null);
+    } catch {
+      onNotify('Không thể xóa vĩnh viễn thuật ngữ.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copy = async (term: TermItem) => {
+    await navigator.clipboard.writeText(`${term.sourceTerm} → ${term.targetTerm}`);
+    setCopiedId(term.id);
+    window.setTimeout(() => setCopiedId(null), 1600);
+  };
+
+  const exportCsv = () => {
+    const header = ['source_term', 'target_term', 'source_language', 'target_language', 'domain', 'audience', 'keep_verbatim', 'status', 'updated_at'];
+    const rows = filteredTerms.map((term) => [
+      csvCell(term.sourceTerm), csvCell(term.targetTerm), term.sourceLang, term.targetLang,
+      csvCell(term.domain), csvCell(term.audience), String(term.keepVerbatim), term.status, term.updatedAt,
+    ].join(','));
+    const blob = new Blob([`\uFEFF${[header.join(','), ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `linguaflow-glossary-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
     <div className="space-y-6">
-      {/* Top Stats Ribbon */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Tổng thuật ngữ</span>
-          <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{totalTerms}</div>
-          <div className="mt-2 text-xs text-gray-400 font-medium">Toàn bộ kho từ điển</div>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Đang áp dụng</span>
-          <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{activeTermsCount}</div>
-          <div className="mt-2 text-xs text-green-600 font-medium">Được AI nạp vào context</div>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Ưu tiên bắt buộc</span>
-          <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{highPriorityCount}</div>
-          <div className="mt-2 text-xs text-blue-600 font-medium">Quy tắc chuẩn tuyệt đối</div>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Lượt áp dụng thực tế</span>
-          <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{totalAppliedUsage}</div>
-          <div className="mt-2 text-xs text-gray-500 font-medium">Lượt khớp trong các phiên dịch</div>
-        </div>
+        {[
+          ['Tổng thuật ngữ', terms.length, 'Toàn bộ kho dùng chung'],
+          ['Đang áp dụng', activeCount, 'Được nạp vào bản dịch'],
+          ['Đã ngừng', retiredCount, 'Có thể khôi phục'],
+          ['Giữ nguyên văn', verbatimCount, 'Không dịch sang ngôn ngữ đích'],
+        ].map(([label, value, hint]) => (
+          <div key={String(label)} className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{label}</span>
+            <div className="mt-2 text-2xl font-bold text-gray-900">{value}</div>
+            <div className="mt-2 text-xs text-gray-400">{hint}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Control Bar: Search & Action Buttons */}
-      <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-xs space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              id="input-glossary-search"
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Tìm kiếm theo thuật ngữ gốc, bản dịch hoặc ghi chú..."
-              className="w-full pl-9 pr-4 py-2 text-xs sm:text-sm bg-white border border-gray-300 rounded-md focus:border-blue-600 outline-hidden transition-colors"
-            />
-          </div>
-
-          {/* Action Buttons: Add, Import, Export */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              id="btn-import-glossary"
-              onClick={() => setIsImportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-300 rounded-md transition-colors"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import</span>
-            </button>
-
-            <button
-              id="btn-export-glossary"
-              onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-gray-700 bg-white hover:bg-gray-50 border border-gray-300 rounded-md transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
-            </button>
-
-            <button
-              id="btn-add-new-term"
-              onClick={handleOpenAddModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-xs transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Thêm thuật ngữ</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Filter Badges */}
-        <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-gray-100 text-xs">
-          <div className="flex items-center gap-1 text-gray-500 font-medium mr-1">
-            <Filter className="w-3.5 h-3.5" />
-            <span>Bộ lọc:</span>
-          </div>
-
-          {/* Category Filter */}
-          <select
-            id="filter-glossary-category"
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="py-1 px-2.5 bg-white border border-gray-300 rounded-md text-gray-700 font-medium outline-hidden hover:bg-gray-50"
-          >
-            <option value="all">Tất cả chuyên ngành</option>
-            {CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
-
-          {/* Language Pair Filter */}
-          <select
-            id="filter-glossary-lang"
-            value={selectedLanguage}
-            onChange={(e) => setSelectedLanguage(e.target.value)}
-            className="py-1 px-2.5 bg-white border border-gray-300 rounded-md text-gray-700 font-medium outline-hidden hover:bg-gray-50"
-          >
-            <option value="all">Tất cả cặp ngôn ngữ</option>
-            <option value="EN → VI">EN → VI</option>
-            <option value="VI → EN">VI → EN</option>
-          </select>
-
-          {/* Priority Filter */}
-          <select
-            id="filter-glossary-priority"
-            value={selectedPriority}
-            onChange={(e) => setSelectedPriority(e.target.value)}
-            className="py-1 px-2.5 bg-white border border-gray-300 rounded-md text-gray-700 font-medium outline-hidden hover:bg-gray-50"
-          >
-            <option value="all">Mọi mức độ ưu tiên</option>
-            <option value="High">Bắt buộc (High)</option>
-            <option value="Medium">Khuyên dùng (Medium)</option>
-            <option value="Low">Tham khảo (Low)</option>
-          </select>
-
-          {/* Status Filter */}
-          <select
-            id="filter-glossary-status"
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="py-1 px-2.5 bg-white border border-gray-300 rounded-md text-gray-700 font-medium outline-hidden hover:bg-gray-50"
-          >
-            <option value="all">Tất cả trạng thái</option>
-            <option value="active">Đang áp dụng</option>
-            <option value="inactive">Tạm ngưng</option>
-          </select>
-
-          {(selectedCategory !== 'all' ||
-            selectedLanguage !== 'all' ||
-            selectedPriority !== 'all' ||
-            selectedStatus !== 'all' ||
-            searchTerm) && (
-            <button
-              onClick={() => {
-                setSelectedCategory('all');
-                setSelectedLanguage('all');
-                setSelectedPriority('all');
-                setSelectedStatus('all');
-                setSearchTerm('');
-              }}
-              className="text-blue-600 hover:text-blue-800 text-xs font-medium ml-auto"
-            >
-              Đặt lại bộ lọc
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Terms Table */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
-        {filteredTerms.length === 0 ? (
-          <div className="p-12 text-center space-y-3">
-            <div className="w-10 h-10 rounded-full bg-gray-100 text-gray-400 mx-auto flex items-center justify-center">
-              <BookOpen className="w-5 h-5" />
-            </div>
+      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="space-y-5 border-b border-gray-100 bg-gradient-to-b from-white to-slate-50/40 p-5 lg:p-6">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold text-gray-900">Không tìm thấy thuật ngữ phù hợp</p>
-              <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
-                Hãy thử thay đổi từ khóa tìm kiếm hoặc điều chỉnh lại các bộ lọc chuyên ngành.
-              </p>
+              <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><BookOpen className="h-5 w-5" /></span><div><h2 className="font-semibold text-gray-900">Thuật ngữ đang quản lý</h2><p className="mt-1 text-xs text-gray-500">Đồng bộ trực tiếp với hệ thống dịch; phạm vi trống áp dụng cho mọi hội thoại.</p></div></div>
             </div>
-            <button
-              onClick={handleOpenAddModal}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700"
-            >
-              <Plus className="w-3.5 h-3.5" /> Thêm thuật ngữ mới
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={exportCsv} className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">Xuất CSV</button>
+              <button type="button" onClick={openAdd} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"><Plus className="w-4 h-4" /> Thêm thuật ngữ</button>
+            </div>
           </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between"><span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tìm kiếm và lọc</span><span className="text-[11px] text-gray-400">{filteredTerms.length}/{terms.length} thuật ngữ</span></div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(210px,1fr)_180px_180px_150px_150px]">
+            <label className="relative sm:col-span-2 md:col-span-1"><span className="sr-only">Tìm kiếm thuật ngữ</span><Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm từ gốc, bản dịch, domain, audience…" className="w-full pl-9 pr-3 py-2.5 text-xs border border-gray-300 rounded-lg outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-100" /></label>
+            <select aria-label="Ngôn ngữ nguồn" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ nguồn</option>{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select>
+            <select aria-label="Ngôn ngữ đích" value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ đích</option>{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select>
+            <select aria-label="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi domain</option>{domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}</select>
+            <select aria-label="Trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi trạng thái</option><option value="active">Đang áp dụng</option><option value="retired">Đã ngừng</option></select>
+            </div>
+          </div>
+        </div>
+
+        {filteredTerms.length === 0 ? (
+          <div className="p-12 text-center"><BookOpen className="w-8 h-8 text-gray-300 mx-auto mb-3" /><p className="text-sm font-medium text-gray-700">Chưa có thuật ngữ phù hợp</p><p className="text-xs text-gray-400 mt-1">Đổi bộ lọc hoặc thêm thuật ngữ mới.</p></div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead className="bg-gray-50 text-[11px] text-gray-400 uppercase font-bold tracking-wider border-b border-gray-100">
-                <tr>
-                  <th className="px-6 py-3">Thuật ngữ gốc (Source)</th>
-                  <th className="px-6 py-3">Bản dịch chuẩn (Canonical)</th>
-                  <th className="px-6 py-3">Cặp</th>
-                  <th className="px-6 py-3">Chuyên ngành</th>
-                  <th className="px-6 py-3">Ưu tiên</th>
-                  <th className="px-6 py-3 text-center">Trạng thái</th>
-                  <th className="px-6 py-3 text-right">Lượt dùng</th>
-                  <th className="px-6 py-3 text-center">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody className="text-sm divide-y divide-gray-100 text-gray-700">
-                {filteredTerms.map((term) => (
-                  <tr key={term.id} className="hover:bg-gray-50/60 transition-colors group">
-                    {/* Source Term */}
-                    <td className="px-6 py-3.5 font-medium text-gray-900">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-sm">{term.sourceTerm}</span>
-                        {term.isStrict && (
-                          <span
-                            className="text-[10px] px-1.5 py-0.2 rounded bg-gray-100 text-gray-700 font-semibold"
-                            title="Khớp chính xác từng chữ hoa/thường"
-                          >
-                            Strict
-                          </span>
-                        )}
-                        <button
-                          onClick={() => handleCopyTerm(term.id, term.sourceTerm)}
-                          title="Sao chép"
-                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-700 p-0.5 transition-opacity"
-                        >
-                          {copiedId === term.id ? (
-                            <Check className="w-3 h-3 text-green-600" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-                      </div>
-                      {term.notes && (
-                        <p className="text-xs text-gray-400 font-normal mt-0.5 line-clamp-1">
-                          {term.notes}
-                        </p>
-                      )}
-                    </td>
-
-                    {/* Target Translation */}
-                    <td className="px-6 py-3.5 font-medium text-blue-700">
-                      <div className="text-sm text-gray-900 font-medium">{term.targetTerm}</div>
-                    </td>
-
-                    {/* Pair */}
-                    <td className="px-6 py-3.5 whitespace-nowrap">
-                      <span className="font-mono text-xs font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                        {term.sourceLang} → {term.targetLang}
-                      </span>
-                    </td>
-
-                    {/* Domain / Category */}
-                    <td className="px-6 py-3.5 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-600">
-                        <Tag className="w-3 h-3 text-gray-400" />
-                        {term.category}
-                      </span>
-                    </td>
-
-                    {/* Priority */}
-                    <td className="px-6 py-3.5 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          term.priority.includes('High')
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : term.priority.includes('Medium')
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        {term.priority}
-                      </span>
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-6 py-3.5 text-center whitespace-nowrap">
-                      <button
-                        onClick={() => {
-                          void onUpdateTerm(term.id, {
-                            status: term.status === 'active' ? 'inactive' : 'active',
-                          }).catch(() => onNotify('Không thể đổi trạng thái thuật ngữ trên máy chủ.', 'error'));
-                        }}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
-                          term.status === 'active'
-                            ? 'bg-green-50 text-green-700 hover:bg-green-100'
-                            : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                        title="Nhấp để chuyển trạng thái"
-                      >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            term.status === 'active' ? 'bg-green-500' : 'bg-gray-400'
-                          }`}
-                        />
-                        {term.status === 'active' ? 'Hoạt động' : 'Tạm dừng'}
-                      </button>
-                    </td>
-
-                    {/* Usage Count */}
-                    <td className="px-6 py-3.5 text-right font-mono text-gray-700 whitespace-nowrap">
-                      {term.usageCount} <span className="text-gray-400 font-normal text-xs">lần</span>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-6 py-3.5 text-center whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1">
-                        <button
-                          id={`btn-edit-term-${term.id}`}
-                          onClick={() => handleOpenEditModal(term)}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded transition-colors"
-                          title="Chỉnh sửa thuật ngữ"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          id={`btn-delete-term-${term.id}`}
-                          onClick={() => setDeletingTermId(term.id)}
-                          className="p-1.5 text-gray-500 hover:text-rose-600 hover:bg-gray-100 rounded transition-colors"
-                          title="Xóa thuật ngữ"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+          <>
+          <div className="grid gap-3 p-4 lg:hidden">
+            {filteredTerms.map((term) => {
+              const retired = term.status === 'retired';
+              return (
+                <article key={term.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-xs">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono font-semibold text-gray-900 break-all">{term.sourceTerm}</span><span className="text-gray-300">→</span><span className="font-semibold text-blue-700 break-all">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div><div className="mt-2 flex flex-wrap gap-2"><span className="font-mono text-[11px] px-2 py-1 rounded-md bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span><span className={`text-[11px] px-2 py-1 rounded-md ${term.keepVerbatim ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{term.keepVerbatim ? 'Giữ nguyên văn' : 'Dùng bản dịch chuẩn'}</span></div></div>
+                    <span className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] ${retired ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'}`}><span className={`w-1.5 h-1.5 rounded-full ${retired ? 'bg-gray-400' : 'bg-green-500'}`} />{retired ? 'Đã ngừng' : 'Đang áp dụng'}</span>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-gray-50 p-3 text-xs"><div><div className="text-gray-400">Domain</div><div className="mt-1 font-medium text-gray-700">{term.domain || 'Mọi domain'}</div></div><div><div className="text-gray-400">Audience</div><div className="mt-1 font-medium text-gray-700">{term.audience || 'Mọi đối tượng'}</div></div></div>
+                  <div className="mt-3 flex items-center justify-between"><span className="text-[11px] text-gray-400">Cập nhật {formatDate(term.updatedAt)}</span><div className="flex items-center gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Chỉnh sửa"><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Xóa vĩnh viễn"><Trash2 className="w-4 h-4" /></button>}</div></div>
+                </article>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto lg:block">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">Thuật ngữ</th><th className="px-5 py-3">Cặp</th><th className="px-5 py-3">Phạm vi</th><th className="px-5 py-3">Cách áp dụng</th><th className="px-5 py-3">Trạng thái</th><th className="px-5 py-3">Cập nhật</th><th className="px-5 py-3 text-right">Thao tác</th></tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredTerms.map((term) => {
+                  const retired = term.status === 'retired';
+                  return (
+                    <tr key={term.id} className="hover:bg-gray-50/70">
+                      <td className="px-5 py-4 min-w-64"><div className="flex items-center gap-2"><span className="font-mono font-semibold text-gray-900">{term.sourceTerm}</span><span className="text-gray-300">→</span><span className="font-medium text-blue-700">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div></td>
+                      <td className="px-5 py-4 whitespace-nowrap"><span className="font-mono px-2 py-1 rounded bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span></td>
+                      <td className="px-5 py-4"><div className="text-gray-700">{term.domain || 'Mọi domain'}</div><div className="text-gray-400 mt-0.5">{term.audience || 'Mọi đối tượng'}</div></td>
+                      <td className="px-5 py-4"><span className={`px-2 py-1 rounded ${term.keepVerbatim ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{term.keepVerbatim ? 'Giữ nguyên văn' : 'Dùng bản dịch chuẩn'}</span></td>
+                      <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${retired ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'}`}><span className={`w-1.5 h-1.5 rounded-full ${retired ? 'bg-gray-400' : 'bg-green-500'}`} />{retired ? 'Đã ngừng' : 'Đang áp dụng'}</span></td>
+                      <td className="px-5 py-4 whitespace-nowrap text-gray-500">{formatDate(term.updatedAt)}</td>
+                      <td className="px-5 py-4"><div className="flex items-center justify-end gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title="Chỉnh sửa"><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded" title="Xóa vĩnh viễn"><Trash2 className="w-4 h-4" /></button>}</div></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          </>
         )}
-      </div>
+      </section>
 
-      {/* Add / Edit Term Modal */}
-      {(isAddModalOpen || editingTerm) && (
-        <div
-          id="term-form-modal"
-          className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4"
-          onClick={() => {
-            setIsAddModalOpen(false);
-            setEditingTerm(null);
-          }}
-        >
-          <div
-            className="bg-white rounded-xl max-w-lg w-full p-6 shadow-lg border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base">
-                  {editingTerm ? 'Chỉnh sửa Thuật ngữ' : 'Thêm Thuật ngữ Mới'}
-                </h3>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Quy chuẩn hóa bản dịch chính xác cho AI LinguaFlow
-                </p>
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" onClick={() => setModalOpen(false)}>
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-gray-200 bg-white shadow-2xl shadow-slate-900/20" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50/80 via-white to-white px-6 py-5">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-600/25"><BookOpen className="h-5 w-5" /></span>
+                <div><h3 className="text-base font-semibold text-gray-900">{editing ? 'Chỉnh sửa thuật ngữ' : 'Thêm thuật ngữ'}</h3><p className="mt-1 text-xs text-gray-500">Mục từ sẽ được áp dụng trực tiếp cho các bản dịch phù hợp.</p></div>
               </div>
-              <button
-                onClick={() => {
-                  setIsAddModalOpen(false);
-                  setEditingTerm(null);
-                }}
-                className="text-gray-400 hover:text-gray-700 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <button type="button" aria-label="Đóng" onClick={() => setModalOpen(false)} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-700 hover:shadow-sm"><X className="h-4 w-4" /></button>
             </div>
-
-            <form onSubmit={handleSubmitForm} className="space-y-4 text-xs">
-              {/* Language Pair Selector */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-gray-700 mb-1">Ngôn ngữ nguồn</label>
-                  <select
-                    value={formData.sourceLang}
-                    onChange={(e) =>
-                      setFormData({ ...formData, sourceLang: e.target.value as LanguageCode })
-                    }
-                    className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                  >
-                    <option value="EN">English (EN)</option>
-                    <option value="VI">Tiếng Việt (VI)</option>
-                    <option value="JA">Japanese (JA)</option>
-                  </select>
+            <form onSubmit={submit} className="space-y-5 p-6 text-xs">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Ngôn ngữ nguồn"><select value={draft.sourceLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('sourceLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select></Field>
+                <Field label="Ngôn ngữ đích"><select value={draft.targetLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('targetLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select></Field>
+              </div>
+              {editing && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-2">Backend không cho đổi cặp ngôn ngữ của mục đã tạo. Hãy ngừng mục cũ và tạo mục mới nếu cặp bị sai.</p>}
+              <Field label="Thuật ngữ nguồn"><input required maxLength={200} value={draft.sourceTerm} onChange={(event) => changeDraft('sourceTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900" /></Field>
+              <Field label="Thuật ngữ đích"><input required maxLength={200} value={draft.targetTerm} disabled={draft.keepVerbatim} onChange={(event) => changeDraft('targetTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100" /></Field>
+              <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+                <div className="mb-3"><h4 className="font-semibold text-gray-800">Phạm vi áp dụng</h4><p className="mt-1 text-gray-500">Chọn lĩnh vực và nhóm người dùng mà thuật ngữ này được ưu tiên.</p></div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <ScopeSelect label="Domain" value={draft.domain} options={DOMAIN_OPTIONS} onChange={(value) => changeDraft('domain', value)} />
+                  <ScopeSelect label="Audience" value={draft.audience} options={AUDIENCE_OPTIONS} onChange={(value) => changeDraft('audience', value)} />
                 </div>
-                <div>
-                  <label className="block font-medium text-gray-700 mb-1">Ngôn ngữ đích</label>
-                  <select
-                    value={formData.targetLang}
-                    onChange={(e) =>
-                      setFormData({ ...formData, targetLang: e.target.value as LanguageCode })
-                    }
-                    className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                  >
-                    <option value="VI">Tiếng Việt (VI)</option>
-                    <option value="EN">English (EN)</option>
-                    <option value="JA">Japanese (JA)</option>
-                  </select>
-                </div>
+                <p className="mt-3 text-gray-400">Không chọn phạm vi nghĩa là thuật ngữ được áp dụng cho mọi hội thoại phù hợp.</p>
               </div>
-
-              {/* Source Term Input */}
-              <div>
-                <label className="block font-medium text-gray-700 mb-1">
-                  Thuật ngữ gốc <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.sourceTerm}
-                  onChange={(e) => setFormData({ ...formData, sourceTerm: e.target.value })}
-                  placeholder="Ví dụ: Zero-shot inference, Rate limiting..."
-                  className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                />
-              </div>
-
-              {/* Target Translation Input */}
-              <div>
-                <label className="block font-medium text-gray-700 mb-1">
-                  Bản dịch quy chuẩn <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formData.targetTerm}
-                  onChange={(e) => setFormData({ ...formData, targetTerm: e.target.value })}
-                  placeholder="Ví dụ: Suy luận zero-shot, Giới hạn tần suất..."
-                  className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                />
-              </div>
-
-              {/* Category & Priority */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-gray-700 mb-1">Chuyên ngành</label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) =>
-                      setFormData({ ...formData, category: e.target.value as TermCategory })
-                    }
-                    className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block font-medium text-gray-700 mb-1">Mức độ ưu tiên</label>
-                  <select
-                    value={formData.priority}
-                    onChange={(e) => setFormData({ ...formData, priority: e.target.value as TermItem['priority'] })}
-                    className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                  >
-                    <option value="Bắt buộc (High)">Bắt buộc (High)</option>
-                    <option value="Khuyên dùng (Medium)">Khuyên dùng (Medium)</option>
-                    <option value="Tham khảo (Low)">Tham khảo (Low)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label className="block font-medium text-gray-700 mb-1">
-                  Ghi chú ngữ cảnh & hướng dẫn dịch
-                </label>
-                <textarea
-                  rows={2}
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Ví dụ: Giữ nguyên từ mượn trong bài báo công nghệ, không dịch thô..."
-                  className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 font-medium"
-                />
-              </div>
-
-              {/* Strict Match toggle */}
-              <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <label className="flex items-center gap-2 cursor-pointer">
+              <label className="flex items-start gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer">
+                <span className="relative mt-0.5 h-4 w-4 shrink-0">
                   <input
                     type="checkbox"
-                    checked={formData.isStrict}
-                    onChange={(e) => setFormData({ ...formData, isStrict: e.target.checked })}
-                    className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                    checked={draft.keepVerbatim}
+                    onChange={(event) => changeDraft('keepVerbatim', event.target.checked)}
+                    className="peer absolute inset-0 h-4 w-4 cursor-pointer appearance-none rounded border border-gray-300 bg-white checked:border-blue-600 checked:bg-blue-600 focus-visible:ring-2 focus-visible:ring-blue-200"
                   />
-                  <span className="font-medium text-gray-800">
-                    Khớp chính xác hoa/thường (Exact case sensitive)
-                  </span>
-                </label>
-                <p className="text-xs text-gray-400 pl-6 mt-0.5">
-                  Chỉ thay thế khi từ trong câu khớp tuyệt đối chữ hoa/chữ thường.
-                </p>
-              </div>
-
-              {/* Modal Actions */}
-              <div className="pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddModalOpen(false);
-                    setEditingTerm(null);
-                  }}
-                  className="px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-xs"
-                >
-                  {editingTerm ? 'Lưu thay đổi' : 'Thêm thuật ngữ'}
-                </button>
-              </div>
+                  <Check className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 text-white opacity-0 peer-checked:opacity-100" strokeWidth={3} />
+                </span>
+                <span><strong className="block text-gray-800">Giữ nguyên văn</strong><span className="text-gray-500">Không dịch thuật ngữ; giá trị đích sẽ luôn bằng giá trị nguồn.</span></span>
+              </label>
+              <div className="-mx-6 -mb-6 flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-4"><button type="button" onClick={() => setModalOpen(false)} className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-100">Hủy</button><button type="submit" disabled={busy || !draft.sourceTerm.trim() || !draft.targetTerm.trim()} className="rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white shadow-sm shadow-blue-600/20 transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Thêm thuật ngữ'}</button></div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {deletingTermId && (
-        <div
-          id="delete-confirm-modal"
-          className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4"
-          onClick={() => setDeletingTermId(null)}
-        >
-          <div
-            className="bg-white rounded-xl max-w-sm w-full p-6 shadow-lg border border-gray-200 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-              <Trash2 className="w-5 h-5" />
-            </div>
-            <div className="text-center">
-              <h3 className="font-semibold text-gray-900 text-base">Xác nhận xóa thuật ngữ</h3>
-              <p className="text-xs text-gray-500 mt-1">
-                Bạn có chắc chắn muốn xóa thuật ngữ này khỏi từ điển LinguaFlow? Hành động này không thể hoàn tác.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <button
-                onClick={() => setDeletingTermId(null)}
-                className="py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-md border border-gray-300"
-              >
-                Hủy bỏ
-              </button>
-              <button
-                onClick={handleConfirmDelete}
-                className="py-2 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 rounded-md shadow-xs"
-              >
-                Xóa vĩnh viễn
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Import Modal */}
-      {isImportModalOpen && (
-        <div
-          id="import-glossary-modal"
-          className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4"
-          onClick={() => setIsImportModalOpen(false)}
-        >
-          <div
-            className="bg-white rounded-xl max-w-lg w-full p-6 shadow-lg border border-gray-200 space-y-4 max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
-              <div>
-                <h3 className="font-semibold text-gray-900 text-base">Import Thuật ngữ hàng loạt</h3>
-                <p className="text-xs text-gray-400 mt-0.5">Hỗ trợ định dạng CSV hoặc JSON</p>
-              </div>
-              <button
-                onClick={() => setIsImportModalOpen(false)}
-                className="text-gray-400 hover:text-gray-700 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <p className="text-gray-600">
-                Dán nội dung CSV (mỗi dòng một thuật ngữ: <code className="bg-gray-100 px-1 py-0.5 rounded text-gray-800">Source, Target, SourceLang, TargetLang, Category...</code>) hoặc một mảng JSON:
-              </p>
-
-              <textarea
-                rows={7}
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder={`Prompt Injection, Tiêm nhiễm câu lệnh, EN, VI, Công nghệ & AI, Bắt buộc (High)
-Fine-tuning, Tinh chỉnh mô hình, EN, VI, Công nghệ & AI, Bắt buộc (High)
-Semantic Search, Tìm kiếm ngữ nghĩa, EN, VI, Công nghệ & AI, Khuyên dùng (Medium)`}
-                className="w-full p-3 font-mono text-xs bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600"
-              />
-
-              <div className="p-3 bg-blue-50/60 rounded-lg border border-blue-100 text-xs text-blue-800">
-                Hệ thống tự động phát hiện định dạng, kiểm tra trùng lặp và phân loại chuyên ngành theo chuẩn từ điển LinguaFlow.
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-gray-100 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setIsImportModalOpen(false)}
-                className="px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-              >
-                Đóng
-              </button>
-              <button
-                type="button"
-                onClick={handleProcessImport}
-                className="px-4 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-xs"
-              >
-                Bắt đầu Nhập dữ liệu
-              </button>
-            </div>
+      {confirmingDelete && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4" onClick={() => setConfirmingDelete(null)}>
+          <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-lg border border-gray-200" onClick={(event) => event.stopPropagation()}>
+            <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto"><Trash2 className="w-5 h-5" /></div>
+            <h3 className="text-center font-semibold text-gray-900 mt-4">Xóa vĩnh viễn thuật ngữ?</h3>
+            <p className="text-center text-xs text-gray-500 mt-2">Chỉ mục đã ngừng áp dụng mới có thể xóa. Hành động này không thể hoàn tác.</p>
+            <div className="grid grid-cols-2 gap-2 mt-5"><button type="button" onClick={() => setConfirmingDelete(null)} className="py-2 border border-gray-300 rounded-md text-xs">Hủy</button><button type="button" onClick={() => void permanentlyDelete()} disabled={busy} className="py-2 bg-rose-600 text-white rounded-md text-xs disabled:opacity-50">Xóa vĩnh viễn</button></div>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="block"><span className="block font-medium text-gray-700 mb-1">{label}</span>{children}</label>;
+}
+
+function ScopeSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const optionLabels: Record<string, string> = label === 'Domain'
+    ? { engineering: 'Kỹ thuật & Công nghệ', commercial: 'Kinh doanh & Thương mại', support: 'Chăm sóc & Hỗ trợ' }
+    : { internal: 'Nội bộ', client: 'Khách hàng' };
+  const emptyLabel = label === 'Domain' ? 'Tất cả lĩnh vực' : 'Tất cả đối tượng';
+
+  return (
+    <div>
+      <label className="block font-medium text-gray-700 mb-1">{label}</label>
+      <select
+        aria-label={label}
+        value={options.includes(value) ? value : ''}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-gray-900 outline-hidden transition-colors focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+      >
+        <option value="">{emptyLabel}</option>
+        {options.map((option) => <option key={option} value={option}>{optionLabels[option] ?? option}</option>)}
+      </select>
+    </div>
+  );
+}

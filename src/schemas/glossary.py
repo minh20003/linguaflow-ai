@@ -140,6 +140,20 @@ class GlossaryEntryRequest(BaseModel):
         return cleaned
 
 
+class GlossaryProposalCreateRequest(GlossaryEntryRequest):
+    """A manually submitted glossary proposal, kept pending for review."""
+
+    rationale: str = Field(min_length=1, max_length=1000)
+
+    @field_validator("rationale")
+    @classmethod
+    def rationale_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("A proposal needs a rationale")
+        return cleaned
+
+
 class GlossaryEntryUpdateRequest(BaseModel):
     """A correction to an entry that is already in force.
 

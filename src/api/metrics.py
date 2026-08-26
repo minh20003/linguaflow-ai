@@ -15,7 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.deps import get_admin_user
 from src.database import get_db
 from src.database.models import TranslationAttempt, User
-from src.services.llm_pricing import PRICE_PER_MILLION_TOKENS_USD, estimate_cost_usd
+from src.services.llm_pricing import (
+    PRICE_PER_MILLION_TOKENS_USD,
+    estimate_cost_usd,
+    get_model_price,
+)
 from src.services.metrics import summarize_attempts
 
 router = APIRouter()
@@ -56,7 +60,7 @@ async def read_stats(
             priced_every_model = False
         else:
             total_cost_usd += cost
-        price = PRICE_PER_MILLION_TOKENS_USD.get(model)
+        price = get_model_price(model)
         model_usage[model] = {
             "count": usage.count,
             "input_tokens": usage.input_tokens,
@@ -100,6 +104,13 @@ async def read_stats(
         "output_tokens": summary.output_tokens,
         "estimated_cost_usd": round(summary.estimated_cost_usd, 6),
         "cost_coverage_rate": round(summary.priced_attempts / summary.total, 4) if summary.total else 0.0,
+        "price_catalog": {
+            model: {
+                "input_per_million_usd": price.input_per_million_usd,
+                "output_per_million_usd": price.output_per_million_usd,
+            }
+            for model, price in PRICE_PER_MILLION_TOKENS_USD.items()
+        },
         "total_ms_mean": round(summary.total_ms_mean),
         "total_ms_p50": round(summary.total_ms_p50),
         "total_ms_p95": round(summary.total_ms_p95),

@@ -2,19 +2,17 @@ import React from 'react';
 import {
   CalendarRange,
   ChevronDown,
-  Menu,
   RotateCw,
 } from 'lucide-react';
-import { AdminTab, TimeRangeFilter } from '../types';
+import { AdminInterfaceLanguage, AdminTab, TimeRangeFilter } from '../types';
 
 interface HeaderProps {
   currentTab: AdminTab;
-  interfaceLanguage: 'vi' | 'en';
+  interfaceLanguage: AdminInterfaceLanguage;
   timeRange: TimeRangeFilter;
   onTimeRangeChange: (range: TimeRangeFilter) => void;
   onRefresh: () => void;
   isRefreshing?: boolean;
-  onToggleMobileSidebar: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,7 +22,6 @@ export const Header: React.FC<HeaderProps> = ({
   onTimeRangeChange,
   onRefresh,
   isRefreshing = false,
-  onToggleMobileSidebar,
 }) => {
   const getTabTitle = () => {
     const vi = interfaceLanguage === 'vi';
@@ -38,7 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'suggestions':
         return vi ? 'Kiểm duyệt đề xuất' : 'Suggestion review';
       case 'chat':
-        return vi ? 'Trò chuyện & Dịch thuật' : 'Chat & Translation';
+        return vi ? 'Kiểm tra dịch thuật' : 'Translation testing';
       default:
         return vi ? 'Trung tâm quản trị' : 'Admin center';
     }
@@ -49,17 +46,8 @@ export const Header: React.FC<HeaderProps> = ({
       id="admin-header"
       className="h-16 bg-white border-b border-gray-200 px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30"
     >
-      {/* Left: Mobile menu toggle + Page title */}
-      <div className="flex items-center gap-3">
-        <button
-          id="mobile-sidebar-toggle"
-          onClick={onToggleMobileSidebar}
-          className="p-1.5 -ml-1 text-gray-600 hover:text-gray-900 rounded-md hover:bg-gray-100 lg:hidden"
-          aria-label="Toggle Sidebar"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
-
+      {/* Left: Page title */}
+      <div className="flex items-center">
         <h1 className="text-lg sm:text-xl font-semibold text-gray-900 tracking-tight">
           {getTabTitle()}
         </h1>
@@ -92,8 +80,10 @@ export const Header: React.FC<HeaderProps> = ({
         <button
           id="btn-refresh-data"
           onClick={onRefresh}
-          title={interfaceLanguage === 'vi' ? 'Làm mới dữ liệu' : 'Refresh data'}
-          className="p-2 text-gray-500 hover:text-gray-900 rounded-md hover:bg-gray-100 border border-gray-200 transition-colors"
+          disabled={isRefreshing}
+          aria-label={interfaceLanguage === 'vi' ? 'Lấy dữ liệu mới' : 'Fetch latest data'}
+          title={interfaceLanguage === 'vi' ? 'Lấy dữ liệu mới từ máy chủ' : 'Fetch latest data from server'}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-700 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-wait disabled:opacity-70"
         >
           <RotateCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
         </button>

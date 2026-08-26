@@ -199,7 +199,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            Tất cả ({suggestions.length})
+            Tất cả
           </button>
           <button
             onClick={() => setStatusFilter('pending')}
@@ -209,7 +209,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            Chờ duyệt ({pendingCount})
+            Chờ duyệt
           </button>
           <button
             onClick={() => setStatusFilter('approved')}
@@ -219,7 +219,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            Đã duyệt ({approvedCount})
+            Đã duyệt
           </button>
           <button
             onClick={() => setStatusFilter('rejected')}
@@ -229,7 +229,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            Đã từ chối ({rejectedCount})
+            Đã từ chối
           </button>
         </div>
       </div>
