@@ -83,6 +83,14 @@ def test_estimated_cost_supports_dated_model_snapshots():
     assert cost == pytest.approx(0.75)
 
 
+@pytest.mark.parametrize("served_name", ["gemini 3.7 flash", "gemini_3.7_flash"])
+def test_estimated_cost_normalizes_provider_model_name_separators(served_name):
+    """Provider display names must use the Gemini catalog price, not read as free."""
+    cost = estimate_model_cost_usd(served_name, 1_000_000, 1_000_000)
+
+    assert cost == pytest.approx(2.80)
+
+
 def test_estimated_cost_ignores_unknown_models():
     """Unknown providers must not silently inherit an OpenAI price."""
     assert estimate_model_cost_usd("(none)", 1_000, 100) is None

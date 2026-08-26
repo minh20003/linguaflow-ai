@@ -67,7 +67,12 @@ PRICE_PER_MILLION_TOKENS_USD: dict[str, ModelPrice] = {
 
 def get_model_price(model: str) -> ModelPrice | None:
     """Return the matching family price, including dated model snapshots."""
-    normalized = (model or "").strip().lower()
+    # Providers do not agree on a stable separator in their reported model
+    # name.  Gemini, for example, can report ``gemini 3.7 flash`` while the
+    # configured model and price catalog use ``gemini-3.7-flash``.  Treat
+    # whitespace and underscores as separators before looking up the family;
+    # otherwise tokens are recorded but their cost is silently unpriced.
+    normalized = "-".join((model or "").strip().lower().replace("_", " ").split())
     # Providers may append a dated snapshot to the stable family id. Match the
     # longest family first so `gpt-4o-mini-*` never falls into `gpt-4o`.
     family = next(

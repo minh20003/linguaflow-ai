@@ -11,6 +11,7 @@ harness can run without a `.env` file.
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -23,6 +24,7 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
     {"your-secret-key-here", "change-me", "changeme", "secret", "dev-secret"}
 )
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 
@@ -31,7 +33,10 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Resolve from this module rather than the caller's working directory.
+        # Commands such as pytest may run from `frontend/`, but must still load
+        # the repository's shared local configuration.
+        env_file=_PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
