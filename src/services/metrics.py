@@ -15,9 +15,9 @@ database prints zeroes rather than failing.
 from __future__ import annotations
 
 import statistics
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,6 +149,102 @@ class AttemptSummary:
     total_ms_mean: float = 0.0
     total_ms_p50: float = 0.0
     total_ms_p95: float = 0.0
+
+
+async def summarize_attempt_time_series(
+    session: AsyncSession,
+    *,
+    days: int | None,
+    now: datetime | None = None,
+) -> list[dict[str, int | str]]:
+    """Return real attempt telemetry grouped into chart-ready UTC buckets.
+
+    The dashboard needs enough points to reveal a trend, not a raw log. The
+    last 24 hours is grouped hourly, 7/30-day windows are grouped daily, and
+    the all-time view is grouped monthly. Empty periods are returned as zeroes
+    only after at least one attempt exists, so the client can distinguish an
+    empty dataset from a quiet interval.
+    """
+    reference = now or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+
+    all_time = days is None
+    hourly = days == 1
+    if all_time:
+        start = None
+        bucket_count = 0
+        step = None
+    elif hourly:
+        start = (reference - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+        bucket_count = 24
+        step = timedelta(hours=1)
+    else:
+        start = (reference - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        bucket_count = days
+        step = timedelta(days=1)
+
+    rows = (
+        await session.execute(
+            select(
+                TranslationAttempt.created_at,
+                TranslationAttempt.total_ms,
+                TranslationAttempt.input_tokens,
+                TranslationAttempt.output_tokens,
+                TranslationAttempt.outcome,
+            ).where(TranslationAttempt.created_at >= start)
+            if start is not None
+            else select(
+                TranslationAttempt.created_at,
+                TranslationAttempt.total_ms,
+                TranslationAttempt.input_tokens,
+                TranslationAttempt.output_tokens,
+                TranslationAttempt.outcome,
+            )
+        )
+    ).all()
+    if not rows:
+        return []
+
+    grouped: dict[datetime, list[tuple[int, int, int, str]]] = defaultdict(list)
+    for created_at, total_ms, input_tokens, output_tokens, outcome in rows:
+        timestamp = created_at if created_at.tzinfo else created_at.replace(tzinfo=UTC)
+        if all_time:
+            bucket = timestamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif hourly:
+            bucket = timestamp.replace(minute=0, second=0, microsecond=0)
+        else:
+            bucket = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        grouped[bucket].append((int(total_ms or 0), int(input_tokens or 0), int(output_tokens or 0), str(outcome or "")))
+
+    if all_time:
+        start = min(grouped)
+        end = max(grouped)
+        buckets: list[datetime] = []
+        bucket = start
+        while bucket <= end:
+            buckets.append(bucket)
+            bucket = bucket.replace(year=bucket.year + 1, month=1) if bucket.month == 12 else bucket.replace(month=bucket.month + 1)
+    else:
+        assert start is not None and step is not None
+        buckets = [start + step * index for index in range(bucket_count)]
+
+    result: list[dict[str, int | str]] = []
+    for bucket in buckets:
+        entries = grouped.get(bucket, [])
+        latencies = [entry[0] for entry in entries]
+        result.append(
+            {
+                "time": bucket.strftime("%m/%Y") if all_time else bucket.strftime("%H:%M") if hourly else bucket.strftime("%d/%m"),
+                "translations": len(entries),
+                "input_tokens": sum(entry[1] for entry in entries),
+                "output_tokens": sum(entry[2] for entry in entries),
+                "p50_latency": round(percentile(latencies, 50)),
+                "p95_latency": round(percentile(latencies, 95)),
+                "fallback_count": sum(1 for entry in entries if entry[3] in FALLBACK_OUTCOMES),
+            }
+        )
+    return result
 
 
 async def summarize_attempts(

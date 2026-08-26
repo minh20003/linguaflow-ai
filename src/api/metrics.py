@@ -20,7 +20,7 @@ from src.services.llm_pricing import (
     estimate_cost_usd,
     get_model_price,
 )
-from src.services.metrics import summarize_attempts
+from src.services.metrics import summarize_attempt_time_series, summarize_attempts
 
 router = APIRouter()
 
@@ -146,3 +146,13 @@ async def read_recent_attempts(
         }
         for attempt in attempts
     ]
+
+
+@router.get("/stats/timeseries")
+async def read_attempt_time_series(
+    days: int | None = Query(default=None, ge=1, le=MAX_WINDOW_DAYS),
+    session: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> list[dict[str, int | str]]:
+    """Return real attempts in hourly, daily, or all-time monthly buckets."""
+    return await summarize_attempt_time_series(session, days=days)

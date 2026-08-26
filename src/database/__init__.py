@@ -30,6 +30,11 @@ def _get_engine():
         else {
             "pool_size": settings.database_pool_size,
             "max_overflow": settings.database_max_overflow,
+            "pool_recycle": settings.database_pool_recycle_seconds,
+            "pool_timeout": settings.database_pool_timeout_seconds,
+            # Prefer recently used connections so the oldest idle connections
+            # are recycled first when talking through a managed pooler.
+            "pool_use_lifo": True,
         }
     )
     return create_async_engine(

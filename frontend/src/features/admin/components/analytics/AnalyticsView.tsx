@@ -268,7 +268,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               )}
             </ResponsiveContainer> : (
               <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-gray-200 text-center text-sm text-gray-500">
-                Chưa có API dữ liệu lịch sử cho khoảng thời gian này.
+                Chưa có lượt dịch trong khoảng thời gian này.
               </div>
             )}
           </div>

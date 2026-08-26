@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     # to be sized against concurrent sockets rather than requests per second.
     database_pool_size: int = Field(default=5, ge=1, le=50)
     database_max_overflow: int = Field(default=10, ge=0, le=50)
+    # Managed PostgreSQL poolers can leave an idle TCP connection stale. Recycle
+    # it before the provider-side idle timeout and fail a saturated pool rather
+    # than making an API request wait indefinitely.
+    database_pool_recycle_seconds: int = Field(default=900, ge=60, le=86_400)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # The first managed-PostgreSQL connection can take longer than a pooled
+    # request during a cold start. Keep readiness strict, but avoid reporting a
+    # healthy database as unavailable before its TLS/pooler handshake finishes.
+    database_readiness_timeout_seconds: int = Field(default=30, ge=5, le=120)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"

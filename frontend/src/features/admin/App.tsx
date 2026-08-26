@@ -19,6 +19,7 @@ import {
   MetricCardData,
   LanguagePairStat,
   ModelUsageStat,
+  TimeSeriesDataPoint,
   FeedbackOverview,
   AdminInterfaceLanguage,
 } from './types';
@@ -26,6 +27,7 @@ import {
 type ApiPair = { count: number; p50_ms: number; p95_ms: number; avg_input_tokens: number; avg_output_tokens: number };
 type ApiStats = { total_attempts: number; outcomes?: Record<string, number>; fallback_rate: number; input_tokens: number; output_tokens: number; estimated_cost_usd?: number; cost_coverage_rate?: number; total_ms_p50: number; total_ms_p95: number; models_served?: Record<string, number>; language_pairs?: Record<string, ApiPair> };
 type ApiAttempt = { id:string; created_at:string; source_language:string; target_language:string; model:string; outcome:string; fallback_reason:string; total_ms:number; input_tokens:number; output_tokens:number };
+type ApiTimeSeriesPoint = { time:string; translations:number; input_tokens:number; output_tokens:number; p50_latency:number; p95_latency:number; fallback_count:number };
 type ApiGlossaryEntry = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; audience:string; keep_verbatim:boolean; status:string; created_at:string; updated_at:string };
 type ApiProposal = { id:string; source_term:string; target_term:string; source_language:string; target_language:string; domain:string; audience:string; keep_verbatim:boolean; distinct_user_count:number; rationale:string; reject_reason:string; status:'pending'|'approved'|'rejected'; created_at:string };
 type ApiUser = { email:string; display_name?:string | null; username?:string | null; role:string; interface_language?:string | null };
@@ -88,6 +90,8 @@ export default function App() {
   const [metrics, setMetrics] = useState<MetricCardData[]>([]);
   const [languagePairs, setLanguagePairs] = useState<LanguagePairStat[]>([]);
   const [aiModels, setAiModels] = useState<ModelUsageStat[]>([]);
+  const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesDataPoint[]>([]);
+  const [glossaryLanguageCodes, setGlossaryLanguageCodes] = useState<string[]>([]);
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const [feedbackOverview, setFeedbackOverview] = useState<FeedbackOverview | null>(null);
   const [terms, setTerms] = useState<TermItem[]>([]);
@@ -115,6 +119,8 @@ export default function App() {
     setMetrics([]);
     setLanguagePairs([]);
     setAiModels([]);
+    setTimeSeriesData([]);
+    setGlossaryLanguageCodes([]);
     setRequestLogs([]);
     setFeedbackOverview(null);
     setTerms([]);
@@ -133,9 +139,11 @@ export default function App() {
     const statsPath = days ? `/stats?days=${days}` : '/stats';
 
     try {
-      const [stats, attempts, glossary, pending, approved, rejected, profile, feedback] = await Promise.all([
+      const [stats, attempts, timeSeries, glossaryLanguages, glossary, pending, approved, rejected, profile, feedback] = await Promise.all([
         adminRequest<ApiStats>(statsPath),
         adminRequest<ApiAttempt[]>(`/stats/attempts${days ? `?days=${days}&limit=20` : '?limit=20'}`),
+        adminRequest<ApiTimeSeriesPoint[]>(`/stats/timeseries${days ? `?days=${days}` : ''}`),
+        adminRequest<string[]>('/languages'),
         adminRequest<ApiGlossaryEntry[]>('/admin/glossary?include_retired=true'),
         adminRequest<ApiProposal[]>('/admin/glossary/proposals?status=pending'),
         adminRequest<ApiProposal[]>('/admin/glossary/proposals?status=approved'),
@@ -197,22 +205,40 @@ export default function App() {
           costPer1kTokens: 0,
           color: ['#2563EB', '#10B981', '#8B5CF6', '#F59E0B'][index % 4],
         })));
-        setRequestLogs(attempts.map((attempt) => {
+        setTimeSeriesData(timeSeries.map((point) => ({
+          time: point.time,
+          translations: point.translations,
+          inputTokens: point.input_tokens,
+          outputTokens: point.output_tokens,
+          p50Latency: point.p50_latency,
+          p95Latency: point.p95_latency,
+          fallbackCount: point.fallback_count,
+        })));
+        setGlossaryLanguageCodes(glossaryLanguages.map((code) => code.toLowerCase()));
+        // The operational log keeps same-language passes for diagnostics, but
+        // this admin table is a translation history: show only work that
+        // actually crosses languages.
+        setRequestLogs(attempts.filter((attempt) => (
+          attempt.source_language.toLowerCase() !== attempt.target_language.toLowerCase()
+        )).map((attempt) => {
           const source = attempt.source_language.toUpperCase();
           const target = attempt.target_language.toUpperCase();
+          const isSameLanguage = source === target;
           const isFallback = attempt.outcome === 'secondary' || attempt.outcome === 'original';
           return {
             id: attempt.id,
             timestamp: new Date(attempt.created_at).toLocaleString('vi-VN'),
             pair: `${source} → ${target}` as LanguagePair,
-            model: attempt.model,
+            model: isSameLanguage ? '—' : attempt.model,
             isFallback,
-            status: isFallback ? 'warning' as const : attempt.outcome === 'primary' ? 'success' as const : 'error' as const,
+            status: isFallback ? 'warning' as const : ['llm', 'passthrough'].includes(attempt.outcome) ? 'success' as const : 'error' as const,
             latency: attempt.total_ms,
             inputTokens: attempt.input_tokens,
             outputTokens: attempt.output_tokens,
-            sourcePreview: `Yêu cầu dịch ${source} → ${target}`,
-            targetPreview: attempt.fallback_reason || `Kết quả: ${attempt.outcome}`,
+            sourcePreview: isSameLanguage ? `Không cần dịch · ${source}` : `Yêu cầu dịch ${source} → ${target}`,
+            targetPreview: isSameLanguage
+              ? 'Người gửi và người nhận cùng ngôn ngữ.'
+              : attempt.fallback_reason || `Kết quả: ${attempt.outcome}`,
           };
         }));
         setTerms(mapGlossaryEntries(glossary));
@@ -442,7 +468,7 @@ export default function App() {
               metrics={metrics}
               languagePairs={languagePairs}
               aiModels={aiModels}
-              timeSeriesData={[]}
+              timeSeriesData={timeSeriesData}
               requestLogs={requestLogs}
               timeRange={timeRange}
               onOpenLiveChat={() => setCurrentTab('chat')}
@@ -460,6 +486,7 @@ export default function App() {
           {currentTab === 'glossary' && (
             <GlossaryView
               terms={terms}
+              languageCodes={glossaryLanguageCodes}
               onAddTerm={handleAddTerm}
               onUpdateTerm={handleUpdateTerm}
               onDeleteTerm={handleDeleteTerm}

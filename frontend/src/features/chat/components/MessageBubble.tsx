@@ -75,15 +75,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const hasAttachments = Boolean(message.attachments?.length);
   const isAttachmentCaption = hasAttachments && /^Shared\s+/i.test(message.content.trim());
   const hasTranslation = !!message.translation;
-  // A sender always reads their original wording. Do not surface historical
-  // self-translations while the backend stops creating new ones for them.
-  const isTranslated = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'success';
-  const isTranslating = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'pending';
-  const isTranslationFailed = !message.isAssistant && !isAttachmentCaption && !isOutgoing && hasTranslation && message.translation?.status === 'failed';
-  const isShowingOriginal = message.translation?.showOriginal;
+  // Direct-message senders can review the exact wording delivered to the
+  // other participant. Group senders stay on the original-only path because
+  // several recipient languages make one bubble ambiguous.
+  const canShowTranslation = !message.isAssistant && !isAttachmentCaption && (!isOutgoing || !isGroup);
+  const isTranslated = canShowTranslation && hasTranslation && message.translation?.status === 'success';
+  const isTranslating = canShowTranslation && hasTranslation && message.translation?.status === 'pending';
+  const isTranslationFailed = canShowTranslation && hasTranslation && message.translation?.status === 'failed';
+  const isShowingOriginal = message.translation?.showOriginal ?? (isOutgoing && !isGroup);
   const showTranslatedAsPrimary = isTranslated && !isShowingOriginal;
   const canReviewTranslation = Boolean(
-    !message.isAssistant && !isOutgoing && !isAttachmentCaption && message.translation?.translationId && message.translation.status === 'success',
+    canShowTranslation && message.translation?.translationId && message.translation.status === 'success',
   );
   const hasUserMention = message.mentions?.some((mention) => mention.type === 'user');
   const hasAssistantMention = message.mentions?.some((mention) => mention.type === 'assistant');
@@ -314,7 +316,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   onClick={() => onToggleOriginal(message.id)}
                   className="mr-1 inline-flex rounded-md p-1 text-[11px] font-medium text-[#2563EB] hover:bg-[#EFF6FF] dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"
                 >
-                  <span>{interactionText(language, isShowingOriginal || isOutgoing ? 'Show translation' : 'Show original')}</span>
+                  <span>{interactionText(language, isShowingOriginal ? 'Show translation' : 'Show original')}</span>
                 </button>
                 <button
                   type="button"
