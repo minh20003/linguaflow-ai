@@ -307,3 +307,40 @@ Errors:   401 "Invalid or expired token"
 ### Remaining issues / risks
 
 - None
+
+---
+
+## [CI] — Run CI for develop_v2 on BTC self-hosted runner
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Changed push and pull-request CI triggers to target `develop_v2`.
+- Changed runner selection to `self-hosted` so the job can use the shared BTC runner.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — updated branch filters and runner label.
+- `Minh_report.md` — recorded the verified CI configuration change.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- The BTC shared runner is available to this repository with the standard `self-hosted` label.
+- CI is intentionally scoped to `develop_v2`; pushes and pull requests targeting `main` or `develop` no longer trigger this workflow.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; workflow diff contains no whitespace errors and the configured branch/runner values were re-read successfully.
+
+### Remaining issues / risks
+
+- The shared runner may remain queued while busy or if BTC has not granted this repository access.
