@@ -32,8 +32,10 @@ jobs:
           POSTGRES_USER: linguaflow
           POSTGRES_PASSWORD: linguaflow
           POSTGRES_DB: linguaflow
+        # Để Docker tự chọn cổng host trống vì runner BTC được dùng chung và
+        # cổng 5432 có thể đang bị một job/process khác chiếm giữ.
         ports:
-          - 5432:5432
+          - 5432
         options: >-
           --health-cmd "pg_isready -U linguaflow -d linguaflow"
           --health-interval 5s
@@ -68,4 +70,4 @@ jobs:
           OPENAI_API_KEY: test-key
           # Trỏ vào service container ở trên. conftest.py suy ra tên cơ sở dữ
           # liệu kiểm thử bằng cách thêm hậu tố `_test`, rồi tự tạo nếu chưa có.
-          DATABASE_URL: postgresql+asyncpg://linguaflow:linguaflow@localhost:5432/linguaflow
+          DATABASE_URL: "postgresql+asyncpg://linguaflow:linguaflow@localhost:${{ job.services.postgres.ports[5432] }}/linguaflow"
