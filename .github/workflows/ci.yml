@@ -18,7 +18,8 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: self-hosted
-    timeout-minutes: 15
+    # Cài dependencies và chạy hơn 700 tests mất trên 15 phút ở runner BTC.
+    timeout-minutes: 45
 
     # Bộ kiểm thử chạy trên PostgreSQL thật chứ không phải SQLite (ADR-22):
     # glossary, correction_log và message_embeddings đều là cột `vector` của

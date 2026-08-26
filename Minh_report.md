@@ -381,3 +381,40 @@ Errors:   401 "Invalid or expired token"
 ### Remaining issues / risks
 
 - Full validation requires the GitHub-hosted workflow to be picked up by the BTC runner.
+
+---
+
+## [CI] — Increase lint-and-test timeout
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Increased the `lint-and-test` job timeout from 15 to 45 minutes.
+- Prevents GitHub from canceling the workflow while the 709-test suite is still running after dependency installation.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — increased the job timeout.
+- `Minh_report.md` — recorded the timeout adjustment.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- The previous run reached 34% with no failed assertion before the 15-minute job limit canceled it.
+- A 45-minute limit provides headroom for dependency installation and the complete test suite on the shared runner.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; the timeout value was re-read successfully.
+
+### Remaining issues / risks
+
+- Full validation requires a new GitHub Actions run; rerunning the old workflow snapshot would retain its 15-minute timeout.
