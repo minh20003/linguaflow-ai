@@ -344,3 +344,40 @@ Errors:   401 "Invalid or expired token"
 ### Remaining issues / risks
 
 - The shared runner may remain queued while busy or if BTC has not granted this repository access.
+
+---
+
+## [CI] — Avoid PostgreSQL port collision on shared runner
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Replaced the fixed PostgreSQL host mapping `5432:5432` with an automatically assigned free host port.
+- Updated `DATABASE_URL` to read the assigned port from `job.services.postgres.ports[5432]`.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — use a dynamic host port for the PostgreSQL service.
+- `Minh_report.md` — record the CI infrastructure fix.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- PostgreSQL continues listening on port `5432` inside its service container; only the shared runner's host port is dynamic.
+- Application and test database access continues through the existing `DATABASE_URL` contract.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; workflow configuration was re-read after editing.
+
+### Remaining issues / risks
+
+- Full validation requires the GitHub-hosted workflow to be picked up by the BTC runner.
