@@ -18,8 +18,9 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: self-hosted
-    # Cài dependencies và chạy hơn 700 tests mất trên 15 phút ở runner BTC.
-    timeout-minutes: 45
+    # Runner BTC dùng chung có tốc độ biến động; dành tối đa 2 giờ để cài
+    # dependencies và chạy toàn bộ hơn 700 tests mà không bị huỷ giữa chừng.
+    timeout-minutes: 120
 
     # Bộ kiểm thử chạy trên PostgreSQL thật chứ không phải SQLite (ADR-22):
     # glossary, correction_log và message_embeddings đều là cột `vector` của

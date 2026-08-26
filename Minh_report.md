@@ -418,3 +418,49 @@ Errors:   401 "Invalid or expired token"
 ### Remaining issues / risks
 
 - Full validation requires a new GitHub Actions run; rerunning the old workflow snapshot would retain its 15-minute timeout.
+
+---
+
+## [CI] — Fix authentication test failures and extend timeout
+
+**Status:** Partial
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Password-reset responses now expose the opaque reset token in `development` and `test`, while continuing to suppress it in `production`.
+- Production email configuration tests now provide a valid HTTPS frontend URL so they exercise the intended email-provider and SMTP validations.
+- Increased the CI job timeout from 45 to 120 minutes as requested.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — set `timeout-minutes` to 120.
+- `src/api/routes.py` — align reset-token visibility with the explicit test environment.
+- `tests/test_api/test_auth_otp.py` — isolate production email validation tests from unrelated frontend URL validation.
+- `Minh_report.md` — record the CI and authentication test fixes.
+
+### API / Contract added or changed
+
+- `POST /api/v1/auth/password/forgot` returns `reset_token` in non-production environments (`development` and `test`); production continues returning `null`.
+
+### Technical decisions / assumptions
+
+- Test-only token exposure is acceptable because `APP_ENV=test` is non-production and is required by the password-reset integration test.
+- Production configuration tests must make unrelated prerequisites valid before asserting a specific email validation error.
+
+### Validation
+
+- Tests run:
+  - `python -m pytest tests/test_api/test_auth_otp.py::test_production_rejects_memory_and_console tests/test_api/test_auth_otp.py::test_production_smtp_missing_required_config_fails_validation -q`
+  - `python -m pytest tests/test_api/test_auth.py::test_password_reset_changes_password_and_revokes_sessions -q`
+  - `python -m ruff check src/api/routes.py tests/test_api/test_auth_otp.py`
+  - `python -m compileall -q src/api/routes.py`
+  - `git diff --check`
+- Result:
+  - Production configuration tests: **2 passed**.
+  - Ruff and Python compilation: passed.
+  - Password-reset integration test was blocked during fixture setup because the local PostgreSQL installation lacks the `vector` extension; no application assertion ran.
+
+### Remaining issues / risks
+
+- Docker Desktop is unavailable locally, so the required `pgvector/pgvector:pg16` test service could not be started. The next GitHub Actions run must provide final verification of the DB-backed password-reset test.
