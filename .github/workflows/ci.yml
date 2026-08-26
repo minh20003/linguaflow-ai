@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-latest]
     timeout-minutes: 15
 
     # Bộ kiểm thử chạy trên PostgreSQL thật chứ không phải SQLite (ADR-22):
