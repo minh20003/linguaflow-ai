@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -781,12 +781,15 @@ class ChatService:
             text=text,
         )
 
-        member_ids = await self._require_membership(
-            conversation_id=conversation_id,
-            user_id=sender_id,
-        )
         conversation = await self._db.get(Conversation, conversation_id)
-        if conversation is not None and conversation.type == "direct":
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        member_ids = await self.get_conversation_member_ids(
+            conversation_id=conversation_id,
+        )
+        if sender_id not in member_ids:
+            raise ConversationMembershipError(conversation_id, sender_id)
+        if conversation.type == "direct":
             other_ids = [member_id for member_id in member_ids if member_id != sender_id]
             if other_ids and await is_blocked_between(self._db, sender_id, other_ids[0]):
                 raise DirectMessagingBlockedError("Direct messaging is unavailable")
@@ -799,11 +802,23 @@ class ChatService:
             sender_id=sender_id,
         )
 
-        existing_message = await self._find_message_by_client_message_id(
-            sender_id=sender_id,
-            conversation_id=conversation_id,
-            client_message_id=client_message_id,
+        # One round trip is valuable on a remote database.  The outer join
+        # retains the authenticated sender's language even when no idempotency
+        # row exists, avoiding separate "existing message" and "language"
+        # queries on every ordinary send.
+        idempotency_row = await self._db.execute(
+            select(User.preferred_language, Message)
+            .outerjoin(
+                Message,
+                and_(
+                    Message.sender_id == sender_id,
+                    Message.conversation_id == conversation_id,
+                    Message.client_message_id == client_message_id,
+                ),
+            )
+            .where(User.id == sender_id)
         )
+        sender_language, existing_message = idempotency_row.one_or_none() or ("en", None)
         if existing_message is not None:
             self._raise_if_text_conflicts(existing_message, text)
             await self._db.commit()
@@ -812,12 +827,6 @@ class ChatService:
                 recipient_ids=recipient_ids,
                 created=False,
             )
-
-        # Provisional only. The agent's detect_language node decides the real
-        # value and overwrites it (docs/CONTRACT.md section 4.3).
-        sender_language = await self._db.scalar(
-            select(User.preferred_language).where(User.id == sender_id)
-        )
 
         message = Message(
             client_message_id=client_message_id,
@@ -864,10 +873,9 @@ class ChatService:
             message_id=message.id,
         )
 
-        await self._db.refresh(message)
-        # ``refresh`` starts a new read transaction; close it before transport
-        # fan-out so an idle WebSocket does not retain a database transaction.
-        await self._db.commit()
+        # PostgreSQL returns server defaults (including `created_at`) as part
+        # of the INSERT. Avoiding a refresh and another commit keeps the
+        # acknowledgement on the same durable-write round trip.
         return SendMessageResult(
             message=message,
             recipient_ids=recipient_ids,

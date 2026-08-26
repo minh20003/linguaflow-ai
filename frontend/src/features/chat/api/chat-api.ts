@@ -47,6 +47,12 @@ interface ApiTranslation {
   my_edit?: { edited_text: string } | null;
 }
 
+export interface TranslationDisplayContext {
+  currentUserId: string;
+  isDirect: boolean;
+  recipientLanguage?: string;
+}
+
 export interface ApiMessage {
   id: string;
   client_message_id: string;
@@ -212,12 +218,26 @@ export function compareConversations(a: Conversation, b: Conversation): number {
   return b.id.localeCompare(a.id);
 }
 
-export function toMessage(item: ApiMessage, users: Map<string, User>, preferredLanguage: string): Message {
+export function toMessage(
+  item: ApiMessage,
+  users: Map<string, User>,
+  preferredLanguage: string,
+  context?: TranslationDisplayContext,
+): Message {
   const sender = users.get(item.sender_id);
   const isAssistant = Boolean(item.assistant_generated);
+  const isOwnDirectMessage = Boolean(
+    context?.isDirect && item.sender_id === context.currentUserId && context.recipientLanguage,
+  );
+  const displayLanguage = isOwnDirectMessage ? context?.recipientLanguage : preferredLanguage;
   // Agent responses are already authored for the user-facing flow. Keep them
   // out of the per-message translation review pipeline entirely.
-  const translation = isAssistant ? undefined : item.translations.find((entry) => entry.target_language === preferredLanguage);
+  const translation = isAssistant ? undefined : item.translations.find((entry) => entry.target_language === displayLanguage);
+  // A same-language pipeline result is operational telemetry, not a user
+  // translation. Keep the original message clean and do not surface review
+  // controls for wording that was never translated.
+  const isSameLanguage = toLanguageCode(item.source_language) === toLanguageCode(displayLanguage || item.source_language);
+  const visibleTranslation = isSameLanguage ? undefined : translation;
   return {
     id: item.id,
     senderId: item.sender_id,
@@ -225,16 +245,19 @@ export function toMessage(item: ApiMessage, users: Map<string, User>, preferredL
     senderAvatar: isAssistant ? assistantAvatar() : sender?.avatar,
     conversationId: item.conversation_id,
     content: item.deleted_at ? "This message was deleted" : item.original_text,
-    translation: translation ? {
-      translationId: translation.translation_id,
+    translation: visibleTranslation ? {
+      translationId: visibleTranslation.translation_id,
       originalText: item.original_text,
       originalLanguage: toLanguageCode(item.source_language),
-      translatedText: translation.translated_text,
-      targetLanguage: toLanguageCode(translation.target_language),
+      translatedText: visibleTranslation.translated_text,
+      targetLanguage: toLanguageCode(visibleTranslation.target_language),
       status: "success",
-      rating: translation.my_rating === 1 || translation.my_rating === 5 ? translation.my_rating : undefined,
-      correction: translation.my_correction ?? undefined,
-      editedText: translation.my_edit?.edited_text,
+      // In a direct chat, a sender starts with their own wording and can opt
+      // in to inspect the rendering their recipient receives.
+      showOriginal: isOwnDirectMessage || undefined,
+      rating: visibleTranslation.my_rating === 1 || visibleTranslation.my_rating === 5 ? visibleTranslation.my_rating : undefined,
+      correction: visibleTranslation.my_correction ?? undefined,
+      editedText: visibleTranslation.my_edit?.edited_text,
     } : undefined,
     timestamp: time(item.created_at),
     createdAt: item.created_at,
@@ -267,17 +290,25 @@ export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
   };
 }
 
-export function toMessages(items: ApiMessage[], users: Map<string, User>, preferredLanguage: string): Message[] {
+export function toMessages(
+  items: ApiMessage[],
+  users: Map<string, User>,
+  preferredLanguage: string,
+  context?: TranslationDisplayContext,
+): Message[] {
   const originals = new Map(items.map((item) => [item.id, item]));
 
   return items.map((item) => {
-    const message = toMessage(item, users, preferredLanguage);
+    const message = toMessage(item, users, preferredLanguage, context);
     const original = item.reply_to_message_id ? originals.get(item.reply_to_message_id) : undefined;
     if (!message.replyTo || !original) return message;
 
     const originalSender = users.get(original.sender_id);
+    const replyLanguage = context?.isDirect && original.sender_id === context.currentUserId
+      ? context.recipientLanguage
+      : preferredLanguage;
     const translatedReply = original.translations.find(
-      (translation) => translation.target_language === preferredLanguage,
+      (translation) => translation.target_language === replyLanguage,
     );
     return {
       ...message,
@@ -374,8 +405,9 @@ export function removeReaction(token: string, conversationId: string, messageId:
     body: JSON.stringify({ emoji }),
   });
 }
-export function retryTranslation(token: string, conversationId: string, messageId: string) {
-  return request<{ message_id: string; status: "scheduled" }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/translate`, token, { method: "POST" });
+export function retryTranslation(token: string, conversationId: string, messageId: string, reviewRecipient = false) {
+  const query = reviewRecipient ? "?review_recipient=true" : "";
+  return request<{ message_id: string; status: "scheduled" }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/translate${query}`, token, { method: "POST" });
 }
 export function getUserSettings(token: string) {
   return request<ApiUserSettings>("/api/v1/auth/me/settings", token);

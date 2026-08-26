@@ -24,7 +24,11 @@ async def get_or_create_user_settings(db: AsyncSession, user_id: str) -> UserSet
     settings = UserSettings(user_id=user_id)
     db.add(settings)
     try:
-        await db.commit()
+        # This helper is called while routes are still reading the current
+        # user. Flushing makes the first-use settings row visible to the
+        # request without expiring ORM objects midway through that request.
+        # The route's unit of work owns the eventual commit.
+        await db.flush()
     except IntegrityError:
         await db.rollback()
         settings = await db.get(UserSettings, user_id)

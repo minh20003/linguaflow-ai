@@ -145,13 +145,13 @@ async def _readiness_response(db: AsyncSession) -> dict[str, Any] | JSONResponse
     """Confirm the API can serve requests that depend on PostgreSQL."""
     payload = _base_health_payload()
     try:
-        # A deployment probe must fail quickly instead of consuming the entire
-        # platform timeout while Supabase or the network is unavailable.
-        async with asyncio.timeout(5):
+        # A deployment probe must fail within a bounded time, while still
+        # allowing a cold managed-PostgreSQL TLS/pooler handshake to complete.
+        async with asyncio.timeout(settings.database_readiness_timeout_seconds):
             await db.execute(select(1))
     except Exception as exc:
         await db.rollback()
-        logger.error("Database readiness check failed: %s", exc)
+        logger.error("Database readiness check failed (%s): %s", type(exc).__name__, exc)
         payload.update({
             "status": "unavailable",
             "checks": {"api": "ok", "database": "unavailable"},

@@ -2050,6 +2050,7 @@ async def remove_message_reaction(
 async def retry_message_translation(
     conversation_id: str,
     message_id: str,
+    review_recipient: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     manager: ConnectionManager = Depends(get_connection_manager),
@@ -2072,9 +2073,32 @@ async def retry_message_translation(
     except ChatServiceError as exc:
         raise _message_error(exc) from exc
 
+    reader_id = current_user.id
+    viewer_ids = (current_user.id,)
+    if review_recipient:
+        conversation = await db.get(Conversation, conversation_id)
+        if conversation is None or conversation.type != "direct" or message.sender_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Recipient translation can only be retried for your own direct message",
+            )
+        member_ids = tuple(
+            member_id
+            for member_id in await service.get_conversation_member_ids(conversation_id=conversation_id)
+            if member_id != current_user.id
+        )
+        if len(member_ids) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The direct conversation no longer has exactly one recipient",
+            )
+        reader_id = member_ids[0]
+        viewer_ids = (current_user.id, reader_id)
+
     schedule_translation_retry(
         message=message,
-        reader_id=current_user.id,
+        reader_id=reader_id,
+        viewer_ids=viewer_ids,
         publisher=manager,
     )
     return TranslationRetryResponse(message_id=message_id)

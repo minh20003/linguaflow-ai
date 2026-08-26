@@ -2,13 +2,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Send,
   Bot,
-  User,
   ArrowRightLeft,
   Copy,
   Check,
   Lightbulb,
   ArrowLeft,
-  RotateCcw,
   BookOpen,
 } from 'lucide-react';
 import { LanguagePair, LanguageCode } from '../../types';
@@ -256,15 +254,6 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
           </div>
         </div>
 
-        <div>
-          <button
-            onClick={() => setMessages([])}
-            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-            title="Xóa lịch sử chat"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-        </div>
       </div>
 
       {/* Messages Stream Area */}
@@ -276,16 +265,11 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               msg.sender === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
             }`}
           >
-            {/* Avatar */}
-            <div
-              className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
-                msg.sender === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-900 text-white'
-              }`}
-            >
-              {msg.sender === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5 text-blue-400" />}
-            </div>
+            {msg.sender === 'bot' && (
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-bold text-white">
+                <Bot className="h-3.5 w-3.5 text-blue-400" />
+              </div>
+            )}
 
             {/* Message Bubble */}
             <div

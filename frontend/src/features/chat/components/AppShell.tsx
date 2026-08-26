@@ -132,7 +132,7 @@ function persistedSettings(settings: ApiUserSettings): Pick<AppSettings, "autoTr
 
 function applyDisplayPreference(messages: Message[], showOriginalByDefault: boolean): Message[] {
   return messages.map((message) => message.translation
-    ? { ...message, translation: { ...message.translation, showOriginal: showOriginalByDefault } }
+    ? { ...message, translation: { ...message.translation, showOriginal: message.translation.showOriginal ?? showOriginalByDefault } }
     : message);
 }
 
@@ -196,6 +196,14 @@ export const AppShell: React.FC = () => {
   const currentMessages = activeConversationId ? messagesMap[activeConversationId] ?? [] : [];
   const currentAttachments = activeConversationId ? attachmentsMap[activeConversationId] ?? [] : [];
   const usersById = useMemo(() => new Map([currentUser, ...users].filter((user) => user.id).map((user) => [user.id, user])), [currentUser, users]);
+  const translationContextForConversation = useCallback((conversationId: string) => {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    return {
+      currentUserId: currentUser.id,
+      isDirect: conversation?.type === 'direct',
+      recipientLanguage: conversation?.recipient?.nativeLanguage,
+    };
+  }, [conversations, currentUser.id]);
 
   const initiateCall = async (type: "voice" | "video") => {
     if (!token.current || !selectedConversation) return;
@@ -250,11 +258,11 @@ export const AppShell: React.FC = () => {
     setMessagesMap((previous) => ({
       ...previous,
       [conversationId]: applyDisplayPreference(
-        toMessages(history, usersById, settings.preferredLanguage),
+        toMessages(history, usersById, settings.preferredLanguage, translationContextForConversation(conversationId)),
         settings.showOriginalByDefault,
       ),
     }));
-  }, [settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
+  }, [settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   const loadConversationAttachments = useCallback(async (conversationId: string) => {
     if (!token.current) return;
@@ -307,6 +315,7 @@ export const AppShell: React.FC = () => {
       setSettings((value) => ({ ...value, ...restoredSettings }));
       setConversations(sortConversations(visible.map((item) => toConversation(item, user.id))));
       if (visible[0]) {
+        const firstConversation = toConversation(visible[0], user.id);
         const members = new Map([user, ...contacts].map((contact) => [contact.id, contact]));
         const [history, attachments] = await Promise.all([
           getMessages(accessToken, visible[0].id),
@@ -315,7 +324,11 @@ export const AppShell: React.FC = () => {
         if (!active) return;
         setMessagesMap({
           [visible[0].id]: applyDisplayPreference(
-            toMessages(history, members, user.nativeLanguage),
+            toMessages(history, members, user.nativeLanguage, {
+              currentUserId: user.id,
+              isDirect: firstConversation.type === 'direct',
+              recipientLanguage: firstConversation.recipient?.nativeLanguage,
+            }),
             restoredSettings.showOriginalByDefault,
           ),
         });
@@ -343,7 +356,7 @@ export const AppShell: React.FC = () => {
           const realtimeAttachment = realtime.attachment as ApiAttachment | null | undefined;
           const message: ApiMessage = { id: realtime.id as string, client_message_id: clientMessageId || realtime.id as string, conversation_id: realtime.conversation_id as string, sender_id: realtime.sender_id as string, original_text: realtime.original_text as string, source_language: settings.preferredLanguage, translations: [], created_at: realtime.created_at as string, deleted_at: null, reply_to_message_id: realtime.reply_to_message_id as string | null, forwarded_from_message_id: realtime.forwarded_from_message_id as string | null, attachment: realtimeAttachment, mentions: realtime.mentions as ApiMessage['mentions'], assistant_generated: Boolean(realtime.assistant_generated) };
           const mapped = applyDisplayPreference(
-            [toMessage(message, usersById, settings.preferredLanguage)],
+            [toMessage(message, usersById, settings.preferredLanguage, translationContextForConversation(message.conversation_id))],
             settings.showOriginalByDefault,
           )[0];
           setAssistantConversation((previous) => previous?.id === mapped.conversationId
@@ -383,11 +396,27 @@ export const AppShell: React.FC = () => {
         if (eventType === "translation_completed" || eventType === "translation.completed") {
           const messageId = payload.message_id as string;
           const targetLanguage = String(payload.target_language || settings.preferredLanguage);
-          if (targetLanguage !== settings.preferredLanguage) return;
           const translatedText = String(payload.translated_text ?? payload.content ?? "");
           const sourceLanguage = toLanguageCode(String(payload.source_language || "en"));
           const status = payload.status === "failed" || !translatedText ? "failed" : "success";
-          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? { ...item, translation: { translationId: String(payload.translation_id), originalText: item.content, originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status, showOriginal: settings.showOriginalByDefault } } : item)])));
+          setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => {
+            const conversation = conversations.find((item) => item.id === conversationId);
+            return [conversationId, messages.map((item) => {
+              if (item.id !== messageId) return item;
+              const isOwnMessage = item.senderId === currentUser.id;
+              if (isOwnMessage && conversation?.type !== 'direct') return item;
+              const displayLanguage = isOwnMessage ? conversation?.recipient?.nativeLanguage : settings.preferredLanguage;
+              if (!displayLanguage || targetLanguage !== displayLanguage) return item;
+              return {
+                ...item,
+                translation: {
+                  translationId: String(payload.translation_id), originalText: item.content,
+                  originalLanguage: sourceLanguage, translatedText, targetLanguage: toLanguageCode(targetLanguage), status,
+                  showOriginal: isOwnMessage || settings.showOriginalByDefault,
+                },
+              };
+            })];
+          })));
         }
         if (["call_incoming", "call_accepted", "call_rejected", "call_ended", "call_failed"].includes(eventType)) {
           const call: ApiCall = {
@@ -458,7 +487,7 @@ export const AppShell: React.FC = () => {
     };
     connect();
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
-  }, [addToast, currentUser.id, refreshConversations, settings.preferredLanguage, usersById]);
+  }, [addToast, conversations, currentUser.id, refreshConversations, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
   useEffect(() => {
@@ -577,7 +606,7 @@ export const AppShell: React.FC = () => {
     if (!token.current || !selectedConversationId) return [];
     const result = await searchMessages(token.current, selectedConversationId, query);
     const foundMessages = applyDisplayPreference(
-      result.items.map((item) => toMessage(item.message, usersById, settings.preferredLanguage)),
+      result.items.map((item) => toMessage(item.message, usersById, settings.preferredLanguage, translationContextForConversation(selectedConversationId))),
       settings.showOriginalByDefault,
     );
     setMessagesMap((previous) => {
@@ -591,7 +620,7 @@ export const AppShell: React.FC = () => {
       snippet: item.snippet,
       matchedIn: item.matched_in,
     }));
-  }, [selectedConversationId, settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
+  }, [selectedConversationId, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   const changeConversationPreference = async (
     conversationId: string,
@@ -686,7 +715,12 @@ export const AppShell: React.FC = () => {
   const requestTranslationRetry = async (messageId: string) => {
     if (!token.current || !selectedConversationId) return;
     try {
-      await retryTranslation(token.current, selectedConversationId, messageId);
+      const message = (messagesMap[selectedConversationId] ?? []).find((item) => item.id === messageId);
+      const conversation = conversations.find((item) => item.id === selectedConversationId);
+      const reviewRecipient = Boolean(
+        message?.senderId === currentUser.id && conversation?.type === 'direct',
+      );
+      await retryTranslation(token.current, selectedConversationId, messageId, reviewRecipient);
       setMessagesMap((previous) => ({
         ...previous,
         [selectedConversationId]: (previous[selectedConversationId] ?? []).map((message) => message.id === messageId && message.translation
@@ -801,7 +835,7 @@ export const AppShell: React.FC = () => {
           setMessagesMap((previous) => ({
             ...previous,
             [selectedConversationId]: applyDisplayPreference(
-              toMessages(history, usersById, preferredLanguage),
+              toMessages(history, usersById, preferredLanguage, translationContextForConversation(selectedConversationId)),
               settings.showOriginalByDefault,
             ),
           }));
@@ -811,7 +845,7 @@ export const AppShell: React.FC = () => {
       .catch((error: unknown) => {
         addToast("Could not save language", error instanceof Error ? error.message : undefined, "warning");
       });
-  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, settings.showOriginalByDefault, usersById]);
+  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   const unreadChatsCount = conversations.reduce((total, item) => total + item.unreadCount, 0);
   const activeCallConversation = activeCall

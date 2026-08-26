@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Archive, BookOpen, Check, Copy, Edit2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { Archive, BookOpen, Check, ChevronDown, Copy, Edit2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { TermItem } from '../../types';
 
 type TermDraft = Omit<TermItem, 'id' | 'createdAt' | 'updatedAt'>;
 
 interface GlossaryViewProps {
   terms: TermItem[];
+  languageCodes: string[];
   onAddTerm: (term: TermDraft) => Promise<void>;
   onUpdateTerm: (id: string, updatedData: Partial<TermItem>) => Promise<void>;
   onDeleteTerm: (id: string) => Promise<void>;
@@ -13,14 +14,17 @@ interface GlossaryViewProps {
   onNotify: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
-const LANGUAGES = [
-  ['en', 'English'], ['vi', 'Tiếng Việt'], ['ja', '日本語'], ['zh', '中文'],
-  ['ko', '한국어'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'],
-  ['th', 'ไทย'], ['id', 'Bahasa Indonesia'], ['pt', 'Português'], ['ru', 'Русский'],
-  ['ar', 'العربية'], ['hi', 'हिन्दी'],
-] as const;
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: 'English', vi: 'Tiếng Việt', ja: '日本語', zh: '中文', ko: '한국어',
+  fr: 'Français', de: 'Deutsch', es: 'Español', th: 'ไทย',
+  id: 'Bahasa Indonesia', pt: 'Português', ru: 'Русский', ar: 'العربية', hi: 'हिन्दी',
+};
 const DOMAIN_OPTIONS = ['engineering', 'commercial', 'support'];
 const AUDIENCE_OPTIONS = ['internal', 'client'];
+
+function languageLabel(code: string) {
+  return LANGUAGE_LABELS[code] ?? code.toUpperCase();
+}
 
 const EMPTY_DRAFT: TermDraft = {
   sourceTerm: '', targetTerm: '', sourceLang: 'en', targetLang: 'vi',
@@ -36,7 +40,7 @@ function csvCell(value: string) {
 }
 
 export const GlossaryView: React.FC<GlossaryViewProps> = ({
-  terms, onAddTerm, onUpdateTerm, onDeleteTerm, onPermanentDeleteTerm, onNotify,
+  terms, languageCodes, onAddTerm, onUpdateTerm, onDeleteTerm, onPermanentDeleteTerm, onNotify,
 }) => {
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('all');
@@ -204,10 +208,10 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
             <div className="flex items-center justify-between"><span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tìm kiếm và lọc</span><span className="text-[11px] text-gray-400">{filteredTerms.length}/{terms.length} thuật ngữ</span></div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(210px,1fr)_180px_180px_150px_150px]">
             <label className="relative sm:col-span-2 md:col-span-1"><span className="sr-only">Tìm kiếm thuật ngữ</span><Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm từ gốc, bản dịch, domain, audience…" className="w-full pl-9 pr-3 py-2.5 text-xs border border-gray-300 rounded-lg outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-100" /></label>
-            <select aria-label="Ngôn ngữ nguồn" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ nguồn</option>{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select>
-            <select aria-label="Ngôn ngữ đích" value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ đích</option>{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select>
-            <select aria-label="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi domain</option>{domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}</select>
-            <select aria-label="Trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi trạng thái</option><option value="active">Đang áp dụng</option><option value="retired">Đã ngừng</option></select>
+            <SelectControl aria-label="Ngôn ngữ nguồn" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ nguồn</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
+            <SelectControl aria-label="Ngôn ngữ đích" value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ đích</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
+            <SelectControl aria-label="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi domain</option>{domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}</SelectControl>
+            <SelectControl aria-label="Trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi trạng thái</option><option value="active">Đang áp dụng</option><option value="retired">Đã ngừng</option></SelectControl>
             </div>
           </div>
         </div>
@@ -233,16 +237,16 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
           </div>
           <div className="hidden overflow-x-auto lg:block">
             <table className="w-full text-left text-xs">
-              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">Thuật ngữ</th><th className="px-5 py-3">Cặp</th><th className="px-5 py-3">Phạm vi</th><th className="px-5 py-3">Cách áp dụng</th><th className="px-5 py-3">Trạng thái</th><th className="px-5 py-3">Cập nhật</th><th className="px-5 py-3 text-right">Thao tác</th></tr></thead>
+              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">Nguồn</th><th className="px-5 py-3">Bản dịch</th><th className="px-5 py-3">Cặp</th><th className="px-5 py-3">Phạm vi</th><th className="px-5 py-3">Trạng thái</th><th className="px-5 py-3">Cập nhật</th><th className="px-5 py-3 text-right">Thao tác</th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredTerms.map((term) => {
                   const retired = term.status === 'retired';
                   return (
                     <tr key={term.id} className="hover:bg-gray-50/70">
-                      <td className="px-5 py-4 min-w-64"><div className="flex items-center gap-2"><span className="font-mono font-semibold text-gray-900">{term.sourceTerm}</span><span className="text-gray-300">→</span><span className="font-medium text-blue-700">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div></td>
+                      <td className="px-5 py-4 min-w-44"><span className="font-mono font-semibold text-gray-900">{term.sourceTerm}</span></td>
+                      <td className="px-5 py-4 min-w-48"><div className="flex items-center gap-2"><span className="font-medium text-blue-700">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép cặp thuật ngữ" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div></td>
                       <td className="px-5 py-4 whitespace-nowrap"><span className="font-mono px-2 py-1 rounded bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span></td>
                       <td className="px-5 py-4"><div className="text-gray-700">{term.domain || 'Mọi domain'}</div><div className="text-gray-400 mt-0.5">{term.audience || 'Mọi đối tượng'}</div></td>
-                      <td className="px-5 py-4"><span className={`px-2 py-1 rounded ${term.keepVerbatim ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{term.keepVerbatim ? 'Giữ nguyên văn' : 'Dùng bản dịch chuẩn'}</span></td>
                       <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${retired ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'}`}><span className={`w-1.5 h-1.5 rounded-full ${retired ? 'bg-gray-400' : 'bg-green-500'}`} />{retired ? 'Đã ngừng' : 'Đang áp dụng'}</span></td>
                       <td className="px-5 py-4 whitespace-nowrap text-gray-500">{formatDate(term.updatedAt)}</td>
                       <td className="px-5 py-4"><div className="flex items-center justify-end gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title="Chỉnh sửa"><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded" title="Xóa vĩnh viễn"><Trash2 className="w-4 h-4" /></button>}</div></td>
@@ -268,8 +272,8 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
             </div>
             <form onSubmit={submit} className="space-y-5 p-6 text-xs">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Ngôn ngữ nguồn"><select value={draft.sourceLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('sourceLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select></Field>
-                <Field label="Ngôn ngữ đích"><select value={draft.targetLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('targetLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label} ({code.toUpperCase()})</option>)}</select></Field>
+                <Field label="Ngôn ngữ nguồn"><SelectControl value={draft.sourceLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('sourceLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
+                <Field label="Ngôn ngữ đích"><SelectControl value={draft.targetLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('targetLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
               </div>
               {editing && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-2">Backend không cho đổi cặp ngôn ngữ của mục đã tạo. Hãy ngừng mục cũ và tạo mục mới nếu cặp bị sai.</p>}
               <Field label="Thuật ngữ nguồn"><input required maxLength={200} value={draft.sourceTerm} onChange={(event) => changeDraft('sourceTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900" /></Field>
@@ -318,6 +322,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block"><span className="block font-medium text-gray-700 mb-1">{label}</span>{children}</label>;
 }
 
+function SelectControl({ className = '', children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <span className="relative block">
+      <select {...props} className={`${className} appearance-none pr-10`}>
+        {children}
+      </select>
+      <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" strokeWidth={2.25} />
+    </span>
+  );
+}
+
 function ScopeSelect({
   label,
   value,
@@ -337,7 +352,7 @@ function ScopeSelect({
   return (
     <div>
       <label className="block font-medium text-gray-700 mb-1">{label}</label>
-      <select
+      <SelectControl
         aria-label={label}
         value={options.includes(value) ? value : ''}
         onChange={(event) => onChange(event.target.value)}
@@ -345,7 +360,7 @@ function ScopeSelect({
       >
         <option value="">{emptyLabel}</option>
         {options.map((option) => <option key={option} value={option}>{optionLabels[option] ?? option}</option>)}
-      </select>
+      </SelectControl>
     </div>
   );
 }
