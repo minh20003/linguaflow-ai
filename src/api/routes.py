@@ -1078,11 +1078,11 @@ async def forgot_password(
         # an SMTP error only for real accounts would reintroduce account probing.
         logger.error("Password-reset email delivery failed for user %s: %s", user.id, type(exc).__name__)
 
-    # Development keeps the opaque token available for automated tests and
-    # offline work. Production never exposes it through the API response.
+    # Non-production environments keep the opaque token available for automated
+    # tests and offline work. Production never exposes it through the API response.
     return ForgotPasswordResponse(
         message=generic,
-        reset_token=raw_token if settings.app_env == "development" else None,
+        reset_token=raw_token if settings.app_env != "production" else None,
     )
 
 
