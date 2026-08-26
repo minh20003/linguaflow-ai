@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LoginScreen } from "@/features/auth/screens/LoginScreen";
+import LoginForm from "@/features/auth/components/LoginForm";
 
 export const metadata: Metadata = {
   title: "Đăng nhập — LinguaFlow",
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function LoginPage() {
-  return <LoginScreen />;
+  return <LoginForm />;
 }

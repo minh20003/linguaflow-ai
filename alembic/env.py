@@ -37,13 +37,10 @@ target_metadata = Base.metadata
 def _configure(**kwargs) -> None:
     """Apply the options both the offline and online paths need.
 
-    `render_as_batch` used to matter: it is what let a migration alter a column
-    on SQLite, which has no `ALTER COLUMN`, by rebuilding the table instead.
-    Since ADR-22 every environment runs PostgreSQL — development and the test
-    suite included — so batch mode is now inert, and it is left switched on only
-    because turning it off would rewrite migrations for no gain. Do not read it
-    as a sign that SQLite is still supported: the schema declares `vector`
-    columns, which SQLite cannot create at all.
+    `render_as_batch` is what lets a migration alter a column on SQLite, which
+    has no `ALTER COLUMN`: Alembic rebuilds the table instead. Developers run on
+    SQLite and the deployment runs on PostgreSQL, so a migration that only works
+    on one of them would be found late, by the person who wrote neither.
     """
     context.configure(
         target_metadata=target_metadata,

@@ -1,12 +1,6 @@
-# Local stack that matches the deployment: the API against PostgreSQL.
-#
-# Since ADR-22 the `postgres` service is also what day-to-day development and
-# the test suite run against — there is no SQLite path any more, because the
-# glossary, the correction log and the message memory are `vector` columns and
-# SQLite has no such type. Most of the time only the database is wanted:
-#
-#   docker compose up -d postgres    # database only, backend runs on the host
-#   docker compose up --build        # whole stack, closest to production
+# Local stack that matches the deployment: the API against PostgreSQL, not the
+# SQLite file used for day-to-day development. Run it before pushing anything
+# that touches the schema — `make migrate` on SQLite proves less than it looks.
 #
 # The frontend is not here on purpose: it is deployed to Vercel (docs/DEPLOY.md),
 # and a second Dockerfile for Next.js would be a build to maintain that nothing
@@ -14,14 +8,7 @@
 
 services:
   postgres:
-    # pgvector's image, not plain `postgres`: the schema declares `vector`
-    # columns, so on stock PostgreSQL it fails at CREATE TABLE (ADR-22).
-    # Pinned to pg16 to match the service container in .github/workflows/ci.yml.
-    image: pgvector/pgvector:pg16
-    # Published to the host because the backend usually runs outside the
-    # container during development, and pytest always does.
-    ports:
-      - "5433:5432"
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: linguaflow
       POSTGRES_PASSWORD: linguaflow
@@ -44,8 +31,8 @@ services:
     env_file:
       - .env
     environment:
-      # Overrides whatever .env says: from inside the network the database is
-      # reachable as `postgres`, while .env names `localhost` for the host.
+      # Overrides whatever .env says, because .env points at the local SQLite
+      # file and the container cannot reach the developer's disk.
       DATABASE_URL: postgresql+asyncpg://linguaflow:linguaflow@postgres:5432/linguaflow
       UPLOAD_DIR: /app/data/uploads
     volumes:

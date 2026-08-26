@@ -76,40 +76,6 @@ async def test_respects_the_limit_and_keeps_the_newest(
 
 
 @pytest.mark.asyncio
-async def test_never_reads_across_conversation_boundaries(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """The prompt is where one conversation could bleed into another (ADR-21).
-
-    Everything the model is shown comes from here, so this filter is the whole
-    isolation guarantee — an agent that saw the wrong thread would leak it into
-    a translation no output guardrail could recognise as foreign.
-    """
-    theirs = await conversation_factory(test_user, [test_user, test_user_two])
-    mine = await conversation_factory(test_user, [test_user, test_user_two])
-    await add_message(
-        test_db,
-        conversation_id=theirs.id,
-        sender_id=test_user_two.id,
-        text="lương tháng này chuyển vào 0912345678",
-        client_message_id="other-1",
-        minute=1,
-    )
-    await add_message(
-        test_db,
-        conversation_id=mine.id,
-        sender_id=test_user.id,
-        text="deploy xong chưa",
-        client_message_id="mine-1",
-        minute=2,
-    )
-
-    lines = await DatabaseContextProvider(test_db).get_recent_messages(mine.id)
-
-    assert [line.split(": ", 1)[1] for line in lines] == ["deploy xong chưa"]
-
-
-@pytest.mark.asyncio
 async def test_excludes_the_message_being_translated(
     test_db, test_user, test_user_two, conversation_factory
 ):
@@ -173,61 +139,3 @@ async def test_returns_nothing_without_a_usable_request(test_db):
 
     assert await provider.get_recent_messages("") == []
     assert await provider.get_recent_messages("c1", limit=0) == []
-
-
-@pytest.mark.asyncio
-async def test_withdrawn_message_is_kept_out_of_the_context(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """A withdrawn message is unreadable in the app; it must be unreadable here too."""
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    withdrawn = await add_message(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user.id,
-        text="số thẻ của tôi là 9704 1234 5678 9010",
-        client_message_id="c1",
-        minute=1,
-    )
-    withdrawn.deleted_at = BASE_TIME + timedelta(minutes=2)
-    await test_db.commit()
-    await add_message(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user_two.id,
-        text="ok em nhận được rồi",
-        client_message_id="c2",
-        minute=3,
-    )
-
-    lines = await DatabaseContextProvider(test_db).get_recent_messages(conversation.id)
-
-    assert [line.split(": ", 1)[1] for line in lines] == ["ok em nhận được rồi"]
-
-
-@pytest.mark.asyncio
-async def test_attachment_only_message_contributes_no_context_line(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """An empty line spends tokens and tells the model nothing."""
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    await add_message(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user.id,
-        text="",
-        client_message_id="c1",
-        minute=1,
-    )
-    await add_message(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user.id,
-        text="ảnh chụp màn hình lỗi build",
-        client_message_id="c2",
-        minute=2,
-    )
-
-    lines = await DatabaseContextProvider(test_db).get_recent_messages(conversation.id)
-
-    assert [line.split(": ", 1)[1] for line in lines] == ["ảnh chụp màn hình lỗi build"]

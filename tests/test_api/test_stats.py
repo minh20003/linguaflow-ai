@@ -16,17 +16,7 @@ from src.database.models import Message, TranslationAttempt
 _next_message = itertools.count()
 
 
-async def add_attempt(
-    session,
-    *,
-    conversation_id,
-    sender_id,
-    outcome,
-    days_ago=0,
-    model_served="llama-3.3-70b-versatile",
-    input_tokens=0,
-    output_tokens=0,
-):
+async def add_attempt(session, *, conversation_id, sender_id, outcome, days_ago=0):
     """Persist a message and one attempt against it."""
     created = datetime.now(UTC) - timedelta(days=days_ago)
     message = Message(
@@ -50,11 +40,9 @@ async def add_attempt(
             source_language_detected="vi",
             outcome=outcome,
             provider="groq",
-            model_served=model_served,
+            model_served="llama-3.3-70b-versatile",
             detect_method="langdetect",
             total_ms=500,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
             created_at=created,
         )
     )
@@ -96,54 +84,7 @@ async def test_stats_counts_outcomes_that_produced_no_translation(
     assert body["total_attempts"] == 4
     assert body["outcomes"]["llm"] == 2
     assert body["fallback_rate"] == 0.25
-    # Timeout is retained as an operational outcome, but is neutral for the
-    # completed-translation language-pair table.
-    assert body["language_pairs"]["vi->en"]["count"] == 3
-
-
-@pytest.mark.asyncio
-async def test_a_priced_model_gets_a_dollar_cost_and_an_unpriced_one_does_not(
-    client, test_db, test_user, test_user_two, conversation_factory, test_admin_headers
-):
-    """`llm_pricing.py` has an entry for `llama-3.3-70b-versatile`; a made-up
-    model name never will. The unpriced one must come back `null`, not `0` —
-    the two mean different things (see that module's docstring)."""
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    await add_attempt(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user.id,
-        outcome="llm",
-        model_served="llama-3.3-70b-versatile",
-        input_tokens=1_000_000,
-        output_tokens=1_000_000,
-    )
-    await add_attempt(
-        test_db,
-        conversation_id=conversation.id,
-        sender_id=test_user.id,
-        outcome="llm",
-        model_served="some-future-model",
-        input_tokens=1_000_000,
-        output_tokens=1_000_000,
-    )
-
-    body = (await client.get("/api/v1/stats", headers=test_admin_headers)).json()
-
-    priced = body["model_usage"]["llama-3.3-70b-versatile"]
-    assert priced["input_tokens"] == 1_000_000
-    assert priced["output_tokens"] == 1_000_000
-    assert priced["input_price_per_million_usd"] == 0.59
-    assert priced["output_price_per_million_usd"] == 0.79
-    assert priced["cost_usd"] == pytest.approx(0.59 + 0.79, abs=1e-6)
-
-    unpriced = body["model_usage"]["some-future-model"]
-    assert unpriced["input_price_per_million_usd"] is None
-    assert unpriced["cost_usd"] is None
-
-    # The total only ever sums what it could actually price, and says so.
-    assert body["total_cost_usd"] == pytest.approx(0.59 + 0.79, abs=1e-6)
-    assert body["cost_usd_partial"] is True
+    assert body["language_pairs"]["vi->en"]["count"] == 4
 
 
 @pytest.mark.asyncio

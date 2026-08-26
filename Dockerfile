@@ -4,18 +4,16 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 
 COPY requirements.txt .
-RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --retries 10 --timeout 120 -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # ---- Stage 2: Production ----
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# The virtual environment is outside /root so the non-root runtime user can
-# execute console scripts such as Alembic as well as import installed packages.
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH=/opt/venv/bin:$PATH
+# Copy installed packages from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
 
 # Security: run as non-root user
 RUN useradd -m appuser
@@ -36,11 +34,12 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:%s/health' % os.environ.get('PORT', '8000'))" || exit 1
 
-# Shell form so $PORT is expanded at run time. One worker is explicit rather
-# than implicit: a `UVICORN_WORKERS` environment variable must not split the
-# in-memory ConnectionManager across processes and lose WebSocket fan-out.
+# Shell form so $PORT is expanded at run time. Deliberately no `--workers`:
+# ConnectionManager holds the open sockets in process memory (see
+# src/api/websocket.py), so a second worker would only see half the connections
+# and message fan-out would drop the other half.
 #
 # Migrations run here rather than in the application's lifespan: the container
 # must fail loudly and stay down when the schema cannot be brought up to date,
 # instead of serving requests against a database it disagrees with.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

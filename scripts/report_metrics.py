@@ -151,16 +151,10 @@ def render_report(summary: AttemptSummary, window: str) -> str:
         "## 4. Model thực sự phục vụ",
         "",
         "Đọc từ phản hồi của provider, không phải từ `LLM_MODEL` đã cấu hình — alias có "
-        "thể trỏ sang bản khác và provider có thể định tuyến lại khi quá tải. `passthrough` "
-        "không model nào chạy nên không góp mặt ở đây (24/08); mẫu số vì thế là số lượt có "
-        "gọi model, không phải `total_attempts`.",
+        "thể trỏ sang bản khác và provider có thể định tuyến lại khi quá tải.",
         "",
     ]
-    lines += _counter_table(
-        "Phân bố `model_served`",
-        summary.models_served,
-        sum(summary.models_served.values()),
-    )
+    lines += _counter_table("Phân bố `model_served`", summary.models_served, summary.total)
 
     lines += [
         "## 5. Theo cặp ngôn ngữ",

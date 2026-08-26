@@ -99,14 +99,7 @@ async def translate_with_secondary_provider(
         return None
 
     if not isinstance(result, str) or not result.strip():
-        # The value itself is a translation of a user's message, so only its
-        # shape is logged: server logs are read by people the conversation
-        # never included.
-        logger.warning(
-            "Fallback translator returned no usable text: %s of length %d",
-            type(result).__name__,
-            len(result) if isinstance(result, str) else 0,
-        )
+        logger.warning("Fallback translator returned no usable text: %r", result)
         return None
 
     return result.strip()

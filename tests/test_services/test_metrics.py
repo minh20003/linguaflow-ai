@@ -11,12 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.database.models import Message, TranslationAttempt
-from src.services.metrics import (
-    estimate_model_cost_usd,
-    group_scores,
-    percentile,
-    summarize_attempts,
-)
+from src.services.metrics import group_scores, percentile, summarize_attempts
 
 BASE_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
@@ -76,18 +71,6 @@ def test_percentile_interpolates_between_neighbours():
     assert percentile([10, 20, 30, 40], 50) == 25.0
 
 
-def test_estimated_cost_supports_dated_model_snapshots():
-    """A served snapshot uses the price of its model family."""
-    cost = estimate_model_cost_usd("gpt-4o-mini-2024-07-18", 1_000_000, 1_000_000)
-
-    assert cost == pytest.approx(0.75)
-
-
-def test_estimated_cost_ignores_unknown_models():
-    """Unknown providers must not silently inherit an OpenAI price."""
-    assert estimate_model_cost_usd("(none)", 1_000, 100) is None
-
-
 def test_group_scores_reports_count_mean_and_passes():
     """Each bucket carries its sample size, so a mean of one is visible as such."""
     scored = [
@@ -144,124 +127,6 @@ async def test_fallback_rate_counts_outcomes_that_produce_no_translation(
     assert summary.total == 4
     assert summary.outcomes == {"llm": 1, "secondary": 1, "original": 1, "timeout": 1}
     assert summary.fallback_rate == 0.5
-
-
-@pytest.mark.asyncio
-async def test_passthrough_attempts_are_excluded_from_pairs_and_models_only(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """A passthrough is the bucket where the reader's own language matched the
-    message, so no model and no fallback API ever ran (`route_after_detect`).
-    That is not a translation that happened to be free — none was attempted —
-    so it must not appear as a `"vi->vi"` row with an empty `models_served`
-    bucket, and must not pull the headline latency down for work nobody did.
-
-    It still belongs in `total`, `outcomes` and `fallback_rate`: that
-    denominator is the entire reason `translation_attempts` records every
-    no-translation exit rather than only the ones that produced a translation
-    (ADR-16), and excluding it there would be overriding that decision, not
-    applying it."""
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    message = await add_message(
-        test_db, conversation_id=conversation.id, sender_id=test_user.id
-    )
-
-    await add_attempt(test_db, message_id=message.id, minute=0, outcome="secondary")
-    await add_attempt(
-        test_db,
-        message_id=message.id,
-        minute=1,
-        outcome="passthrough",
-        target_language="vi",
-        source_language_declared="vi",
-        source_language_detected="vi",
-        model_served="",
-        input_tokens=0,
-        output_tokens=0,
-        total_ms=0,
-    )
-
-    summary = await summarize_attempts(test_db)
-
-    assert summary.total == 2
-    assert summary.outcomes == {"secondary": 1, "passthrough": 1}
-    assert summary.fallback_rate == 0.5
-    assert "vi->vi" not in summary.language_pairs
-    assert list(summary.language_pairs) == ["vi->en"]
-    assert "(none)" not in summary.models_served
-    # The passthrough's 0ms must not enter the latency figures either — it
-    # measures nothing, since no model was ever called.
-    assert summary.total_ms_p50 == 500.0
-
-
-@pytest.mark.asyncio
-async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """The exclusion above is keyed on the languages matching, not on
-    `outcome == "passthrough"` — a same-language bucket that timed out or
-    errored before the graph reached its routing decision is exactly as
-    uninformative in `language_pairs` as an ordinary passthrough, and the
-    outcome recorded for it is incidental to that."""
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    message = await add_message(
-        test_db, conversation_id=conversation.id, sender_id=test_user.id
-    )
-
-    await add_attempt(
-        test_db,
-        message_id=message.id,
-        minute=0,
-        outcome="timeout",
-        target_language="vi",
-        source_language_declared="vi-VN",
-        source_language_detected=None,
-        detect_method="",
-        model_served="",
-    )
-
-    summary = await summarize_attempts(test_db)
-
-    assert summary.total == 1
-    assert summary.outcomes == {"timeout": 1}
-    assert summary.language_pairs == {}
-    assert summary.models_served == {}
-
-
-@pytest.mark.asyncio
-async def test_a_different_language_timeout_is_not_a_completed_pair_or_model(
-    test_db, test_user, test_user_two, conversation_factory
-):
-    """A timeout is operational data, not a completed translation pair.
-
-    It remains visible in totals/outcomes for reliability monitoring, but is
-    neutral for pair success/failure and completed-translation latency.
-    """
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-    message = await add_message(
-        test_db, conversation_id=conversation.id, sender_id=test_user.id
-    )
-
-    await add_attempt(
-        test_db,
-        message_id=message.id,
-        minute=0,
-        outcome="timeout",
-        target_language="vi",
-        source_language_declared="en",
-        source_language_detected=None,
-        detect_method="",
-        model_served="",
-        total_ms=4000,
-    )
-
-    summary = await summarize_attempts(test_db)
-
-    assert summary.total == 1
-    assert summary.outcomes == {"timeout": 1}
-    assert summary.language_pairs == {}
-    assert summary.models_served == {}
-    assert summary.total_ms_p50 == 0
 
 
 @pytest.mark.asyncio

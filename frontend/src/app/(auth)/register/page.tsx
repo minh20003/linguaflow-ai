@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { RegisterScreen } from "@/features/auth/screens/RegisterScreen";
+import RegisterForm from "@/features/auth/components/RegisterForm";
 
 export const metadata: Metadata = {
   title: "Tạo tài khoản — LinguaFlow",
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function RegisterPage() {
-  return <RegisterScreen />;
+  return <RegisterForm />;
 }

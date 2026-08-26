@@ -35,25 +35,6 @@ def recorded_schedule(monkeypatch):
     return calls
 
 
-@pytest.fixture
-def recorded_commitment_schedule(monkeypatch):
-    """Record the detached B-10 scheduler without running an LLM in a socket test."""
-    calls: list[dict] = []
-
-    def recorder(*, message_id, conversation_id, sender_id, publisher):
-        calls.append(
-            {
-                "message_id": message_id,
-                "conversation_id": conversation_id,
-                "sender_id": sender_id,
-                "publisher": publisher,
-            }
-        )
-
-    monkeypatch.setattr("src.api.websocket.schedule_commitment_detection", recorder)
-    return calls
-
-
 @pytest.mark.asyncio
 async def test_schedules_a_translation_for_a_new_message(
     ws_client, test_user, test_user_two, conversation_factory, recorded_schedule
@@ -75,39 +56,6 @@ async def test_schedules_a_translation_for_a_new_message(
 
     assert len(recorded_schedule) == 1
     assert recorded_schedule[0]["text"] == "Deploy xong chua anh?"
-
-
-@pytest.mark.asyncio
-async def test_new_message_schedules_detached_commitment_detection_after_delivery(
-    ws_client,
-    test_user,
-    test_user_two,
-    conversation_factory,
-    recorded_schedule,
-    recorded_commitment_schedule,
-):
-    client, _manager = ws_client
-    conversation = await conversation_factory(test_user, [test_user, test_user_two])
-
-    with client.websocket_connect("/api/v1/ws") as websocket:
-        assert authenticate(websocket, test_user)["type"] == "auth_ok"
-        websocket.send_json(
-            {
-                "type": "send_message",
-                "client_message_id": "commitment-hook-1",
-                "conversation_id": conversation.id,
-                "text": "I'll send the report tomorrow.",
-            }
-        )
-        # The acknowledgement is delivered without waiting for a detector.
-        assert websocket.receive_json()["type"] == "message_created"
-
-    assert len(recorded_schedule) == 1
-    assert len(recorded_commitment_schedule) == 1
-    call = recorded_commitment_schedule[0]
-    assert call["conversation_id"] == conversation.id
-    assert call["sender_id"] == test_user.id
-    assert isinstance(call["message_id"], str)
 
 
 @pytest.mark.asyncio

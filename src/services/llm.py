@@ -17,7 +17,6 @@ DEFAULT_MODELS: dict[str, str] = {
     "deepseek": "deepseek-chat",
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o-mini",
-    "mistral": "mistral-small-latest",
 }
 
 # Settings field holding each provider's API key. pydantic-settings maps the
@@ -28,7 +27,6 @@ PROVIDER_KEY_FIELD: dict[str, str] = {
     "deepseek": "deepseek_api_key",
     "gemini": "google_api_key",
     "openai": "openai_api_key",
-    "mistral": "mistral_api_key",
 }
 
 # DeepSeek is OpenAI-compatible, so it reuses the OpenAI client
@@ -175,12 +173,6 @@ def _build_llm(
         client = ChatOpenAI(
             api_key=api_key, base_url=DEEPSEEK_BASE_URL, max_tokens=max_tokens, **common
         )
-    elif provider == "mistral":
-        from langchain_mistralai import ChatMistralAI
-
-        # ChatMistralAI takes the timeout as `timeout` like the others but names
-        # the cap `max_tokens`, so only the key differs from the OpenAI branch.
-        client = ChatMistralAI(api_key=api_key, max_tokens=max_tokens, **common)
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -201,7 +193,6 @@ def _build_llm(
 def get_llm(
     settings: Settings | None = None,
     provider: str | None = None,
-    model: str | None = None,
 ) -> BaseChatModel:
     """Return the chat model for the configured provider.
 
@@ -209,10 +200,6 @@ def get_llm(
         settings: configuration to read. Defaults to the process settings.
         provider: overrides ``settings.llm_provider``. Used by the evaluation
             script to score with a different model than the one being tested.
-        model: overrides the model that provider would otherwise use. Needed
-            because ``LLM_MODEL`` belongs to the configured provider and cannot
-            name a model on a different one — the judge, which is exactly that
-            case, would otherwise be stuck on its provider's default.
 
     Raises:
         LLMConfigError: unknown provider, or its API key is missing.
@@ -237,14 +224,14 @@ def get_llm(
         )
 
     # An explicit provider override ignores LLM_MODEL, which belongs to the
-    # provider configured in settings — unless the caller names a model itself.
-    chosen_model = model or DEFAULT_MODELS[provider]
-    if not model and provider == settings.llm_provider and settings.llm_model:
-        chosen_model = settings.llm_model
+    # provider configured in settings.
+    model = DEFAULT_MODELS[provider]
+    if provider == settings.llm_provider and settings.llm_model:
+        model = settings.llm_model
 
     return _build_llm(
         provider,
-        chosen_model,
+        model,
         settings.llm_temperature,
         settings.llm_timeout_seconds,
         settings.llm_max_tokens,

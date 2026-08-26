@@ -23,26 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import TranslationAttempt
-from src.services.llm_pricing import estimate_cost_usd
 
 # Outcomes where the reader did not get the configured LLM's translation. Both
 # are failures of the primary path, and both are invisible in
 # `translation_results` alone, which is why the fallback rate is computed here.
 FALLBACK_OUTCOMES = frozenset({"secondary", "original"})
-
-def _normalize_language_code(value: str | None) -> str:
-    """Return a stable base code so ``vi``, ``VI`` and ``vi-VN`` group alike."""
-    normalized = (value or "unknown").strip().lower().replace("_", "-")
-    return normalized.split("-", 1)[0]
-
-
-def estimate_model_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
-    """Estimate cost using the same catalog exposed by the stats API."""
-    return estimate_cost_usd(
-        model,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-    )
 
 
 def percentile(values: list[int], pct: float) -> float:
@@ -99,23 +84,6 @@ class LanguagePairStats:
     count: int
     p50_ms: float
     p95_ms: float
-    avg_input_tokens: float
-    avg_output_tokens: float
-
-
-@dataclass(frozen=True, slots=True)
-class ModelUsageStats:
-    """One model's share of the traffic in `models_served`, with its tokens.
-
-    Split from `models_served` (which stays `dict[str, int]` for
-    `scripts/report_metrics.py`, unchanged) rather than replacing it, so the
-    admin stats screen can turn these into a cost estimate without every
-    existing reader of `models_served` needing to learn a new shape.
-    """
-
-    count: int
-    input_tokens: int
-    output_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,21 +100,9 @@ class AttemptSummary:
     detect_methods: dict[str, int] = field(default_factory=dict)
     fallback_reasons: dict[str, int] = field(default_factory=dict)
     models_served: dict[str, int] = field(default_factory=dict)
-    model_usage: dict[str, ModelUsageStats] = field(default_factory=dict)
     language_pairs: dict[str, LanguagePairStats] = field(default_factory=dict)
     input_tokens: int = 0
     output_tokens: int = 0
-    estimated_cost_usd: float = 0.0
-    priced_attempts: int = 0
-    # The plain arithmetic mean, alongside the percentiles below. A mean is
-    # what most readers of a latency figure expect "the average" to mean, and
-    # it is easy to confuse with `total_ms_p50` — which is the *median*, the
-    # middle attempt once every duration is sorted, not the mean of the fast
-    # half. The two agree when durations are symmetric and diverge sharply
-    # when a handful of slow outliers drag the mean up without moving the
-    # median at all; showing both is what makes that visible instead of
-    # picking one silently.
-    total_ms_mean: float = 0.0
     total_ms_p50: float = 0.0
     total_ms_p95: float = 0.0
 
@@ -162,42 +118,8 @@ async def summarize_attempts(
     have no portable SQL form — SQLite has no `percentile_cont` — and computing
     part of the summary in the database and the rest here would mean two
     definitions of the same metric. The volume this project produces (one row
-    per recipient bucket per message — a bucket being a language and a standing,
-    so up to four per language) stays well inside what a single query can
-    return; `since` is there for when it does not.
-
-    `language_pairs` stays keyed by the language pair alone, deliberately.
-    NFR-01 is about the delay a reader experiences, and that is the same
-    question whichever standing they were translated at; splitting the key would
-    turn one headline latency figure into four thinner samples. The consequence
-    to keep in mind when reading it: `count` counts buckets, not messages.
-
-    Every outcome — including the four no-translation exits `passthrough`,
-    `timeout`, `error` and `empty` — counts in the operational `total`,
-    `outcomes` and `fallback_rate`. That denominator is the entire reason
-    `translation_attempts` records all four rather than only the three that
-    reach `translation_results` (ADR-16).
-
-    `language_pairs` and `models_served` are narrower than that. A row whose
-    reading language already matched the message's own language is not a
-    translation, whatever outcome it ended up recorded under — passthrough is
-    the ordinary way there (routed before `build_context`, so no model and no
-    fallback API ever ran: `src/agents/graph.py` `route_after_detect`,
-    `src/agents/nodes/translation.py` `passthrough`), but a same-language
-    bucket that timed out or errored before reaching that routing decision is
-    exactly as uninformative — either way it would put a `"vi->vi"` row in
-    `language_pairs`. Those rows, and their near-zero durations, are left out
-    of `language_pairs` and `total_ms_p50`/`total_ms_p95` on that test, not on
-    `outcome`. Timeout rows are also excluded from pair/model/latency success
-    statistics: a timeout is an operational attempt, not a completed
-    translation that should be labelled successful or failed for a language
-    pair. `models_served` goes one step further: any row with no captured
-    model name is left out of it, same-language or not, because a row nobody
-    can name the model for has nothing to contribute to "which model served
-    this" — that is what an uninformative `"(none)"` bucket was standing in
-    for. It stays in `language_pairs` when it was a genuine attempt at a real
-    pair, since the time spent is still real even when the model behind it is
-    not known.
+    per recipient language per message) stays well inside what a single query
+    can return; `since` is there for when it does not.
 
     Args:
         session: An open database session.
@@ -230,62 +152,26 @@ async def summarize_attempts(
     detect_methods: Counter[str] = Counter()
     fallback_reasons: Counter[str] = Counter()
     models_served: Counter[str] = Counter()
-    model_input_tokens: Counter[str] = Counter()
-    model_output_tokens: Counter[str] = Counter()
     durations_by_pair: dict[str, list[int]] = {}
-    input_tokens_by_pair: dict[str, list[int]] = {}
-    output_tokens_by_pair: dict[str, list[int]] = {}
     all_durations: list[int] = []
     input_tokens = 0
     output_tokens = 0
-    estimated_cost_usd = 0.0
-    priced_attempts = 0
 
     for row in rows:
         outcomes[row.outcome] += 1
         detect_methods[row.detect_method or "(none)"] += 1
         if row.fallback_reason:
             fallback_reasons[row.fallback_reason] += 1
+        models_served[row.model_served or "(none)"] += 1
         input_tokens += row.input_tokens
         output_tokens += row.output_tokens
-        attempt_cost = estimate_model_cost_usd(row.model_served, row.input_tokens, row.output_tokens)
-        if attempt_cost is not None:
-            estimated_cost_usd += attempt_cost
-            priced_attempts += 1
 
         # The detected language is the one the translation was actually
         # performed from; the declared one is a guess from the sender's profile
         # and is wrong exactly when detection was worth running.
         source = row.source_language_detected or row.source_language_declared
-        normalized_source = _normalize_language_code(source)
-        normalized_target = _normalize_language_code(row.target_language)
-
-        # Everything below this line describes translation work that actually
-        # happened. A row whose reading language already matched its own is
-        # not that, regardless of which outcome it was recorded under — see
-        # the docstring above for why that check is on the languages and not
-        # on `outcome == "passthrough"`.
-        if normalized_source == normalized_target:
-            continue
-
-        # A timeout did not produce a translation result. Keep it in the
-        # operational totals above, but do not turn it into a language-pair
-        # success/failure row or let it distort completed-translation latency.
-        if row.outcome == "timeout":
-            continue
-
-        # No captured model name means nothing here can say which model this
-        # is evidence for, so it is not evidence for any of them — a `"(none)"`
-        # bucket would only have restated that as a bucket.
-        if row.model_served:
-            models_served[row.model_served] += 1
-            model_input_tokens[row.model_served] += row.input_tokens
-            model_output_tokens[row.model_served] += row.output_tokens
-
-        pair = f"{normalized_source}->{normalized_target}"
+        pair = f"{source}->{row.target_language}"
         durations_by_pair.setdefault(pair, []).append(row.total_ms)
-        input_tokens_by_pair.setdefault(pair, []).append(row.input_tokens)
-        output_tokens_by_pair.setdefault(pair, []).append(row.output_tokens)
         all_durations.append(row.total_ms)
 
     fallback_count = sum(outcomes[outcome] for outcome in FALLBACK_OUTCOMES)
@@ -297,29 +183,16 @@ async def summarize_attempts(
         detect_methods=dict(detect_methods.most_common()),
         fallback_reasons=dict(fallback_reasons.most_common()),
         models_served=dict(models_served.most_common()),
-        model_usage={
-            model: ModelUsageStats(
-                count=count,
-                input_tokens=model_input_tokens[model],
-                output_tokens=model_output_tokens[model],
-            )
-            for model, count in models_served.most_common()
-        },
         language_pairs={
             pair: LanguagePairStats(
                 count=len(durations),
                 p50_ms=percentile(durations, 50),
                 p95_ms=percentile(durations, 95),
-                avg_input_tokens=sum(input_tokens_by_pair[pair]) / len(input_tokens_by_pair[pair]),
-                avg_output_tokens=sum(output_tokens_by_pair[pair]) / len(output_tokens_by_pair[pair]),
             )
             for pair, durations in sorted(durations_by_pair.items())
         },
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        estimated_cost_usd=estimated_cost_usd,
-        priced_attempts=priced_attempts,
-        total_ms_mean=statistics.mean(all_durations) if all_durations else 0.0,
         total_ms_p50=percentile(all_durations, 50),
         total_ms_p95=percentile(all_durations, 95),
     )

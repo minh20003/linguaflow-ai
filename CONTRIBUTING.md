@@ -223,27 +223,11 @@ Giữ hàm nhỏ, mỗi hàm một trách nhiệm. Nếu một hàm cần chú t
 ### 6.4. Kiểm tra trước khi commit
 
 ```bash
-docker compose up -d postgres    # bo kiem thu chay tren PostgreSQL that
 ruff check src/ tests/ eval/
 pytest tests/ -q
 ```
 
-Cả hai lệnh sau phải pass. Không tắt rule để lệnh pass.
-
-**Bộ kiểm thử cần một PostgreSQL có `pgvector`** kể từ ADR-22 — không còn chạy
-trên SQLite được nữa, vì schema có cột `vector`. `docker compose up -d postgres`
-dựng đúng phiên bản mà CI dùng. `tests/conftest.py` tự suy ra cơ sở dữ liệu kiểm
-thử bằng cách thêm hậu tố `_test` vào `DATABASE_URL`, tự tạo nó và extension
-`vector` ở lần chạy đầu, rồi cấp cho mỗi test một schema riêng.
-
-Chỉ cần Docker Engine, **không cần Docker Desktop**: trên Windows, bản CLI cài
-trong WSL2 là đủ và Windows nối được qua `localhost:5432`. Máy ảo WSL tự tắt sau
-khoảng 60 giây không hoạt động và kéo PostgreSQL tắt theo — nếu một lần chạy test
-đang giữa chừng thì báo `ConnectionRefusedError`. Giữ một tiến trình sống trong
-WSL, hoặc nâng `vmIdleTimeout` trong `.wslconfig`.
-
-Toàn bộ 408 test mất khoảng 7 phút rưỡi trên máy phát triển, chậm hơn hẳn thời
-SQLite vì mỗi test dựng và xoá một schema. Đây là cái giá đã biết của ADR-22.
+Cả hai lệnh phải pass. Không tắt rule để lệnh pass.
 
 **Lưu ý về giới hạn của công cụ:** không có linter nào trong dự án phát hiện được định danh hoặc chú thích viết bằng tiếng Việt. Rule `N` của `ruff` chỉ kiểm tra kiểu chữ (`snake_case`, `PascalCase`), còn `PLC2401` chỉ bắt được ký tự non-ASCII — trong khi tiếng Việt không dấu là ASCII thuần. Việc bảo đảm §6.1 và §6.2 hoàn toàn thuộc trách nhiệm người review.
 

@@ -18,27 +18,7 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    # Bộ kiểm thử chạy trên PostgreSQL thật chứ không phải SQLite (ADR-22):
-    # glossary, correction_log và message_embeddings đều là cột `vector` của
-    # pgvector, mà SQLite không có kiểu đó nên schema còn không tạo nổi.
-    # Image ghim đúng phiên bản trong docker-compose.yml ở thư mục gốc — lệch
-    # phiên bản giữa CI và máy lập trình viên là loại lỗi không ai tái hiện được.
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: linguaflow
-          POSTGRES_PASSWORD: linguaflow
-          POSTGRES_DB: linguaflow
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U linguaflow -d linguaflow"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +46,3 @@ jobs:
           # Cố định provider cho CI để không phụ thuộc giá trị mặc định trong config
           LLM_PROVIDER: openai
           OPENAI_API_KEY: test-key
-          # Trỏ vào service container ở trên. conftest.py suy ra tên cơ sở dữ
-          # liệu kiểm thử bằng cách thêm hậu tố `_test`, rồi tự tạo nếu chưa có.
-          DATABASE_URL: postgresql+asyncpg://linguaflow:linguaflow@localhost:5432/linguaflow

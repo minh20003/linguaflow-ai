@@ -22,12 +22,10 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.context_provider import DEFAULT_CONTEXT_SIZE, ContextProvider
-from src.agents.customization import CustomizationProvider
 from src.agents.nodes.translation import (
     detect_language,
     fallback_translate,
     make_build_context,
-    make_customize,
     passthrough,
     translate,
     validate_output,
@@ -69,7 +67,6 @@ def route_after_validate(state: AgentState) -> str:
 def build_translation_graph(
     context_provider: ContextProvider | None = None,
     context_size: int | None = None,
-    customization_provider: CustomizationProvider | None = None,
 ):
     """Build and compile the translation graph.
 
@@ -78,9 +75,6 @@ def build_translation_graph(
             Defaults to no context (see src/agents/context_provider.py).
         context_size: how many recent messages to include. Defaults to the
             AGENT_CONTEXT_SIZE setting.
-        customization_provider: source of the subject area and audience the
-            translation is for. Defaults to knowing nothing, which renders the
-            prompt exactly as it read before the node existed.
     """
     if context_size is None:
         if context_provider is None:
@@ -95,7 +89,6 @@ def build_translation_graph(
 
     graph.add_node("detect_language", detect_language)
     graph.add_node("build_context", make_build_context(context_provider, context_size))
-    graph.add_node("customize", make_customize(customization_provider))
     graph.add_node("translate", translate)
     graph.add_node("validate_output", validate_output)
     graph.add_node("fallback_translate", fallback_translate)
@@ -114,11 +107,7 @@ def build_translation_graph(
             "validate_output": "validate_output",
         },
     )
-    # Between context and translation on purpose: it needs no context but
-    # must run before the prompt is built, and putting it here keeps the
-    # happy path a straight line that reads in the order it executes.
-    graph.add_edge("build_context", "customize")
-    graph.add_edge("customize", "translate")
+    graph.add_edge("build_context", "translate")
     graph.add_edge("translate", "validate_output")
     graph.add_conditional_edges(
         "validate_output",
