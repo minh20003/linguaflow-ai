@@ -56,6 +56,11 @@ def permitted_and_quiet(monkeypatch):
     monkeypatch.setattr(
         "src.services.chat.ChatService.get_message_history", AsyncMock(return_value=[])
     )
+    # Semantic recall off by default: it is additive, and the tests about
+    # routing should not depend on an embedding provider being reachable.
+    monkeypatch.setattr(
+        "src.services.agent_consent.has_consent", AsyncMock(return_value=False)
+    )
 
 
 @pytest.mark.asyncio
@@ -265,3 +270,119 @@ def test_the_planner_survives_a_model_that_wraps_json_in_a_code_fence() -> None:
     """Providers add fences unprompted; a strict parser would read that as failure."""
     steps = _parse_plan('```json\n{"steps": [{"operation": "summarize", "reason": "r"}]}\n```')
     assert [step["operation"] for step in steps] == ["summarize"]
+
+
+@pytest.mark.asyncio
+async def test_semantic_recall_reaches_past_the_recent_window(monkeypatch) -> None:
+    """Recall answers a question the recent window cannot.
+
+    The two passes exist for different reasons: the time-ordered window is
+    always right about recency, and semantic search reaches things said weeks
+    ago that no limit would have included. This asserts the second one is
+    merged in, and merged chronologically rather than appended.
+    """
+    from datetime import UTC, datetime
+
+    old = SimpleNamespace(
+        id="m-old",
+        original_text="Chốt deadline là 30/9",
+        deleted_at=None,
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    recent = SimpleNamespace(
+        id="m-recent",
+        original_text="Sáng nay họp lúc 9h",
+        deleted_at=None,
+        created_at=datetime(2026, 8, 27, tzinfo=UTC),
+    )
+
+    monkeypatch.setattr(
+        "src.services.chat.ChatService.get_message_history", AsyncMock(return_value=[recent])
+    )
+    monkeypatch.setattr(
+        "src.services.agent_consent.has_consent", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "src.services.semantic_search.search_similar_messages",
+        AsyncMock(return_value=[old]),
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_summarize(self, **kwargs):
+        return SimpleNamespace(
+            message_count=2, model_dump=lambda mode: {"summary": "ok", "key_points": []}
+        )
+
+    monkeypatch.setattr(
+        "src.services.conversation_intelligence.ConversationIntelligenceService."
+        "summarize_conversation",
+        fake_summarize,
+    )
+
+    graph = build_assistant_graph(
+        db=None,
+        checkpointer=InMemorySaver(),
+        llm_factory=lambda: planner_returning("summarize"),
+    )
+    state = await graph.ainvoke(
+        {
+            "conversation_id": "c-1",
+            "user_id": "u-1",
+            "request_text": "deadline là khi nào",
+        },
+        config("thread-recall"),
+    )
+    captured["memory"] = state["memory"]
+
+    # Oldest first, so the recalled line leads rather than being tacked on.
+    assert captured["memory"] == ["Chốt deadline là 30/9", "Sáng nay họp lúc 9h"]
+
+
+@pytest.mark.asyncio
+async def test_a_recalled_message_already_in_the_window_is_not_repeated(
+    monkeypatch,
+) -> None:
+    """A duplicated line reads to the model as the thing having been said twice."""
+    from datetime import UTC, datetime
+
+    same = SimpleNamespace(
+        id="m-1",
+        original_text="Chốt deadline là 30/9",
+        deleted_at=None,
+        created_at=datetime(2026, 8, 20, tzinfo=UTC),
+    )
+
+    monkeypatch.setattr(
+        "src.services.chat.ChatService.get_message_history", AsyncMock(return_value=[same])
+    )
+    monkeypatch.setattr(
+        "src.services.agent_consent.has_consent", AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "src.services.semantic_search.search_similar_messages",
+        AsyncMock(return_value=[same]),
+    )
+
+    async def fake_summarize(self, **kwargs):
+        return SimpleNamespace(
+            message_count=1, model_dump=lambda mode: {"summary": "ok", "key_points": []}
+        )
+
+    monkeypatch.setattr(
+        "src.services.conversation_intelligence.ConversationIntelligenceService."
+        "summarize_conversation",
+        fake_summarize,
+    )
+
+    graph = build_assistant_graph(
+        db=None,
+        checkpointer=InMemorySaver(),
+        llm_factory=lambda: planner_returning("summarize"),
+    )
+    state = await graph.ainvoke(
+        {"conversation_id": "c-1", "user_id": "u-1", "request_text": "deadline"},
+        config("thread-dedupe"),
+    )
+
+    assert state["memory"] == ["Chốt deadline là 30/9"]

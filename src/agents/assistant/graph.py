@@ -103,13 +103,26 @@ def make_load_memory(
     """Build the node that recalls what the conversation has already said."""
 
     async def load_memory(state: AssistantState) -> dict[str, Any]:
-        """Fetch recent messages the caller is entitled to read.
+        """Recall the conversation, by clock and by meaning.
 
-        Goes through `ChatService.get_message_history`, which applies both the
-        membership check and the visibility filter, so this node cannot become a
-        second way into messages that skips either.
+        Two passes because they answer different questions. The time-ordered
+        window is what "what did I miss" needs and is always right about
+        recency. Semantic recall is what "what did we decide about the deadline"
+        needs, and it reaches past the window into things said weeks ago that no
+        limit would have included.
+
+        Goes through `ChatService.get_message_history` for the first pass, which
+        applies both the membership check and the visibility filter, so this
+        node cannot become a second way into messages that skips either. The
+        second pass carries the same visibility filter itself.
+
+        Semantic recall is additive: it is skipped when the user has not granted
+        `store_memory`, when nothing is embedded yet, or when the provider is
+        down, and in each case the node still returns the recent window.
         """
+        from src.services.agent_consent import has_consent
         from src.services.chat import ChatService
+        from src.services.semantic_search import search_similar_messages
 
         try:
             messages = await ChatService(db).get_message_history(
@@ -121,12 +134,41 @@ def make_load_memory(
             logger.warning("Assistant memory load failed", exc_info=True)
             return {"memory": [], "error": str(exc), "telemetry": _note(state, memory_lines=0)}
 
-        lines = [
-            message.original_text
+        usable = [
+            message
             for message in messages
             if message.deleted_at is None and message.original_text.strip()
         ]
-        return {"memory": lines, "telemetry": _note(state, memory_lines=len(lines))}
+        recent_ids = {message.id for message in usable}
+
+        recalled: list[Any] = []
+        if await has_consent(db, state["user_id"], "store_memory"):
+            recalled = [
+                message
+                for message in await search_similar_messages(
+                    db,
+                    conversation_id=state["conversation_id"],
+                    user_id=state["user_id"],
+                    query_text=state.get("request_text", ""),
+                )
+                # A message already in the recent window would otherwise appear
+                # twice in the transcript, which reads as it having been said
+                # twice.
+                if message.id not in recent_ids
+            ]
+
+        # Merged into one chronological block. The model is told this is the
+        # conversation in order and nothing about which pass found which line;
+        # how a line was retrieved is not something a summary should reason
+        # about, the same rule `DatabaseContextProvider` follows.
+        merged = sorted([*usable, *recalled], key=lambda row: (row.created_at, row.id))
+        lines = [message.original_text for message in merged]
+        return {
+            "memory": lines,
+            "telemetry": _note(
+                state, memory_lines=len(lines), memory_recalled=len(recalled)
+            ),
+        }
 
     return load_memory
 
