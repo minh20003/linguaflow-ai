@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from src.database import get_async_session_maker
+from src.services.agent_consent import has_consent
 from src.services.conversation_intelligence import ConversationIntelligenceService
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,11 @@ async def _process(
 ) -> None:
     """Persist agent proposals and notify only their authenticated owner."""
     async with get_async_session_maker()() as session:
+        # `extract_actions_from_message` enforces this too, but raising here
+        # would surface a normal "not permitted" state as a logged failure in
+        # the done-callback. Ask first and stop quietly.
+        if not await has_consent(session, requester_id, "read_conversations"):
+            return
         proposals = await ConversationIntelligenceService().extract_actions_from_message(
             conversation_id=conversation_id,
             message_id=message_id,

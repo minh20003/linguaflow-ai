@@ -11,6 +11,7 @@ from src.agents.conversation_intelligence.observability import build_runnable_co
 from src.agents.conversation_intelligence.parsing import invoke_with_repair
 from src.config import Settings, get_settings
 from src.schemas.intelligence import ActionProposalResponse
+from src.services.agent_consent import require_consent
 from src.services.llm import get_llm
 
 T = TypeVar("T", bound=BaseModel)
@@ -81,6 +82,12 @@ class ConversationIntelligenceService:
         from src.database.models import User
         from src.schemas.intelligence import ConversationSummaryResponse
         from src.services.chat import ChatService
+
+        # Before membership, not after: this asks about the caller's own account
+        # and involves no conversation data, so checking it first costs a single
+        # indexed lookup and avoids reading messages the user never agreed to
+        # let a model see.
+        await require_consent(db, user_id, "read_conversations")
 
         chat_service = ChatService(db)
         # 1. Membership & existence authorization + message history retrieval
@@ -161,6 +168,8 @@ class ConversationIntelligenceService:
             ConversationNotFoundError,
             MessageNotFoundError,
         )
+
+        await require_consent(db, user_id, "read_conversations")
 
         # 1. Verify conversation existence and caller membership
         conv = await db.get(Conversation, conversation_id)
@@ -307,6 +316,8 @@ class ConversationIntelligenceService:
             MessageNotFoundError,
         )
 
+        await require_consent(db, user_id, "read_conversations")
+
         # 1. Verify conversation existence and caller membership
         conv = await db.get(Conversation, conversation_id)
         if conv is None:
@@ -367,6 +378,12 @@ class ConversationIntelligenceService:
             ConversationNotFoundError,
             MessageNotFoundError,
         )
+
+        # Only `read_conversations` here. This method serves both the manual
+        # endpoint and the background scanner, and a request the user typed is
+        # not proactive — the extra `proactive_scan` check belongs to the
+        # scanner, in `commitment_detection.py`.
+        await require_consent(db, user_id, "read_conversations")
 
         # 1. Verify conversation and caller membership
         conv = await db.get(Conversation, conversation_id)

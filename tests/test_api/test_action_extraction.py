@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
 from src.database.models import ActionProposal, Conversation, ConversationMember, Message, User
+from src.services.agent_consent import set_consents
 
 
 @pytest_asyncio.fixture
@@ -77,6 +78,13 @@ async def extraction_setup(test_db: AsyncSession):
     )
     test_db.add_all([m_task, m_appt, m_casual])
     await test_db.commit()
+
+    # Granted to all three, the outsider included: these tests measure
+    # membership, ownership and extraction quality. Without consent the 403 for
+    # a non-member would be indistinguishable from a 403 for a missing
+    # permission, and several would pass for the wrong reason (ADR-30).
+    for account in (alice, bob, outsider):
+        await set_consents(test_db, account.id, {"read_conversations": True})
 
     return {
         "alice": alice,

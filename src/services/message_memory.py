@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import Settings, get_settings
 from src.database import get_async_session_maker
 from src.database.models import MessageEmbedding
+from src.services.agent_consent import has_consent
 from src.services.embeddings import embed_with_model
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ def schedule_message_embedding(
     message_id: str,
     conversation_id: str,
     text: str,
+    sender_id: str | None = None,
     session_factory: Callable[[], AsyncSession] | None = None,
     settings: Settings | None = None,
 ) -> None:
@@ -52,16 +54,25 @@ def schedule_message_embedding(
     Returns immediately and can fail silently. The message it describes has
     already reached its recipients; nothing here may hold that up.
 
+    Two independent reasons to remember a message, either of which suffices:
+    `rag_context_enabled` serves the *translation* agent's semantic context
+    (ADR-27), while the sender's `store_memory` consent serves the *assistant's*
+    long-term memory. Turning the assistant on must not silently switch on RAG
+    for translation, and vice versa, so neither is expressed in terms of the
+    other. The consent half needs a session, so it is checked in `_store`.
+
     Args:
         message_id: Message to remember.
         conversation_id: Its conversation, denormalised onto the row so the
             nearest-neighbour search can be scoped without a join.
         text: The message body.
+        sender_id: Whose consent governs remembering this message. ``None``
+            falls back to the configuration flag alone.
         session_factory: Session source; defaults to the application's.
         settings: Configuration to read; defaults to the process settings.
     """
     settings = settings or get_settings()
-    if not settings.rag_context_enabled:
+    if not settings.rag_context_enabled and sender_id is None:
         return
     if not message_id or not conversation_id or not (text or "").strip():
         return
@@ -71,6 +82,7 @@ def schedule_message_embedding(
             message_id=message_id,
             conversation_id=conversation_id,
             text=text,
+            sender_id=sender_id,
             session_factory=session_factory or get_async_session_maker(),
             settings=settings,
         )
@@ -86,6 +98,7 @@ async def _store(
     text: str,
     session_factory: Callable[[], AsyncSession],
     settings: Settings,
+    sender_id: str | None = None,
 ) -> None:
     """Embed the text and store it, replacing any vector already held.
 
@@ -96,6 +109,14 @@ async def _store(
     covers it.
     """
     try:
+        if not settings.rag_context_enabled:
+            # Only reachable with a sender: the scheduler returns early
+            # otherwise. Checked before embedding so a message nobody agreed to
+            # remember is never sent to the embedding provider at all.
+            async with session_factory() as session:
+                if sender_id is None or not await has_consent(session, sender_id, "store_memory"):
+                    return
+
         vector, model = await embed_with_model(text, settings=settings)
         if vector is None:
             return

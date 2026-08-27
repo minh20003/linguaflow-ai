@@ -26,6 +26,7 @@ from src.schemas.chat import (
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.agent_consent import has_consent
 from src.services.assistant_mentions import schedule_assistant_mention
 from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
@@ -346,7 +347,14 @@ async def websocket_endpoint(
                             sender_id=user_id,
                         ).model_dump(mode="json"),
                     )
-                if any(mention.get("type") == "assistant" for mention in realtime_message.mentions):
+                if any(
+                    mention.get("type") == "assistant" for mention in realtime_message.mentions
+                ) and await has_consent(db, user_id, "read_conversations"):
+                    # The reply itself reads recent conversation content and
+                    # sends it to an LLM, so it needs the same permission the
+                    # extraction path does. Without it the tag is simply an
+                    # ordinary message: no reply, no proposals, and nothing
+                    # about the conversation leaves the database.
                     member_ids = (user_id, *result.recipient_ids)
                     assistant_result = await service.create_assistant_reply(
                         trigger_message=result.message,
@@ -391,6 +399,7 @@ async def websocket_endpoint(
                     message_id=result.message.id,
                     conversation_id=result.message.conversation_id,
                     text=result.message.original_text,
+                    sender_id=result.message.sender_id,
                 )
     except WebSocketDisconnect:
         return

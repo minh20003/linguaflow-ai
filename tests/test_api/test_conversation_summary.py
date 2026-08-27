@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
 from src.database.models import Conversation, ConversationMember, Message, User
+from src.services.agent_consent import set_consents
 
 
 @pytest_asyncio.fixture
@@ -84,6 +85,11 @@ async def summary_setup(test_db: AsyncSession):
     )
     test_db.add_all([m1, m2, m3])
     await test_db.commit()
+
+    # Granted to all three, the outsider included: these tests measure
+    # membership and summary quality, not permissions (ADR-30).
+    for account in (user1, user2, outsider):
+        await set_consents(test_db, account.id, {"read_conversations": True})
 
     return {
         "user1": user1,
@@ -178,6 +184,11 @@ async def test_empty_conversation_bypasses_llm(client: AsyncClient, test_db: Asy
 
     test_db.add(ConversationMember(conversation_id=conv.id, user_id=user.id))
     await test_db.commit()
+
+    # This account is built here rather than by the fixture, so it needs its own
+    # grant; what is under test is that an empty conversation skips the model,
+    # which only becomes observable once the request gets past permissions.
+    await set_consents(test_db, user.id, {"read_conversations": True})
 
     token = create_access_token(subject=user.id)
 
