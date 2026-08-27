@@ -125,3 +125,48 @@ def default_reminder_at(starts_at: datetime, minutes_before: int | None) -> date
     from datetime import timedelta
 
     return starts_at - timedelta(minutes=minutes_before)
+
+
+class GoogleAuthorizeResponse(BaseModel):
+    """Where to send the user to grant calendar access."""
+
+    authorization_url: str
+
+
+class GoogleCalendarCallbackRequest(BaseModel):
+    """What the browser hands back after the consent screen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=2048)
+    # Echoed by Google verbatim. Signed on the way out and verified against the
+    # authenticated caller on the way back, so a replayed callback cannot attach
+    # one person's authorization to another person's account.
+    state: str = Field(min_length=1, max_length=4096)
+
+
+class CalendarLinkResponse(BaseModel):
+    """The connection's state, with no token material in it.
+
+    Deliberately carries neither token nor cursor: this is rendered in a browser
+    and logged by proxies, and nothing here needs them to describe the link.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    google_calendar_id: str
+    sync_enabled: bool
+    last_synced_at: UtcDatetime | None = None
+    last_sync_error: str | None = None
+    created_at: UtcDatetime
+
+
+class CalendarSyncResultResponse(BaseModel):
+    """What one sync cycle did."""
+
+    pushed: int
+    pulled: int
+    last_synced_at: UtcDatetime | None = None
+    # Surfaced rather than swallowed: silence after a failed sync looks exactly
+    # like a calendar with nothing to sync.
+    last_sync_error: str | None = None

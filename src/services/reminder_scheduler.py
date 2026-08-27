@@ -172,6 +172,28 @@ def start_reminder_scheduler(*, publisher: Any, settings: Any = None) -> Any | N
         # back afterwards would achieve nothing the next scan does not.
         coalesce=True,
     )
+    # The Google Calendar pull, on its own much slower interval. Minutes rather
+    # than the reminder loop's seconds because each cycle costs a Google API
+    # call per linked account, and a calendar edited on a phone is not urgent to
+    # mirror. Registered only when Calendar is actually configured, so a
+    # deployment without Google credentials does not run a job that can only
+    # fail (ADR-36).
+    from src.services.google_calendar import is_configured_for_calendar, sync_all_enabled_links
+
+    if is_configured_for_calendar(effective):
+        scheduler.add_job(
+            sync_all_enabled_links,
+            "interval",
+            seconds=effective.calendar_sync_interval_seconds,
+            id="calendar_sync",
+            max_instances=1,
+            coalesce=True,
+        )
+        logger.info(
+            "Google Calendar sync started, pulling every %ss",
+            effective.calendar_sync_interval_seconds,
+        )
+
     scheduler.start()
     logger.info(
         "Reminder scheduler started, scanning every %ss",
