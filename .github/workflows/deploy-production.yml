@@ -17,7 +17,7 @@ concurrency:
 jobs:
   gate:
     name: Validate approved release SHA
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       actions: read
@@ -78,7 +78,7 @@ jobs:
   build-or-reuse:
     name: Build or reuse immutable production images
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -108,6 +108,14 @@ jobs:
           [[ -n "$NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID" ]] \
             || { echo 'NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID Actions Variable is required.' >&2; exit 1; }
 
+      - name: Verify Docker and Buildx prerequisites on shared runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null
+          docker version --format '{{.Server.Version}}' >/dev/null
+          docker buildx version >/dev/null
+
       - name: Define immutable image references
         id: images
         shell: bash
@@ -124,9 +132,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+          logout: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          install: false
+          cleanup: true
+          keep-state: false
 
       - name: Determine exact-SHA image state without overwrite
         id: image_state
