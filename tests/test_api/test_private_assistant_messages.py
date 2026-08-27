@@ -17,6 +17,7 @@ all feature areas.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -37,12 +38,20 @@ async def group_with_private_reply(
     conversation = await conversation_factory(
         test_user, [test_user, test_user_two, test_user_three], conversation_type="group"
     )
+    # Explicit timestamps, and this is not decoration. PostgreSQL's `now()` is
+    # the *transaction* start time, so two rows inserted in one transaction take
+    # the identical `created_at` and the preview's `ORDER BY created_at DESC,
+    # id DESC` falls through to a random uuid — a coin flip deciding which
+    # message is "newest". Stating the order in the data is what makes the
+    # preview assertions below mean anything.
+    base = datetime(2026, 8, 27, 9, 0, tzinfo=UTC)
     public = Message(
         client_message_id=f"m-{uuid.uuid4().hex[:8]}",
         conversation_id=conversation.id,
         sender_id=test_user.id,
         original_text="Deadline nộp báo cáo là thứ sáu",
         source_language="vi",
+        created_at=base,
     )
     test_db.add(public)
     await test_db.flush()
@@ -57,6 +66,7 @@ async def group_with_private_reply(
         reply_to_message_id=public.id,
         visibility="private",
         visible_to_user_id=test_user.id,
+        created_at=base + timedelta(minutes=1),
     )
     test_db.add(private)
     await test_db.commit()
