@@ -58,6 +58,7 @@ import {
   updateUserSettings,
   uploadAttachment,
   type AgentConsentScope,
+  type ApiActionProposal,
   type ApiAgentConsents,
   type ApiAttachment,
   type ApiCall,
@@ -75,6 +76,7 @@ import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
+import { TaskInboxPanel } from "./TaskInboxPanel";
 import { CallModal, type ActiveCall } from "./CallModal";
 import { ToastContainer } from "./ToastContainer";
 import { ForwardMessageModal } from "./ForwardMessageModal";
@@ -174,6 +176,20 @@ export const AppShell: React.FC = () => {
   // closed default the backend applies when no row exists.
   const [agentConsents, setAgentConsents] = useState<Partial<Record<AgentConsentScope, boolean>>>({});
   const [agentConsentsAnswered, setAgentConsentsAnswered] = useState(true);
+  // Mirrors the `token` ref. The ref is right for handlers, but a pane
+  // rendered from `token.current` would never re-render when the token
+  // arrives asynchronously — it would just stay empty.
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  // Read inside the socket handler. A ref rather than the setting itself
+  // because the socket effect already re-runs on its dependencies, and
+  // adding a cosmetic preference to that list would tear down and rebuild
+  // the WebSocket every time somebody toggled sound.
+  const soundEnabledRef = useRef(true);
+  const [pendingTaskCount, setPendingTaskCount] = useState(0);
+  const [incomingProposals, setIncomingProposals] = useState<ApiActionProposal[]>([]);
+  // A counter rather than a boolean: two calendar changes in a row must
+  // both trigger a reload, and a boolean flipped twice reads as unchanged.
+  const [calendarRefreshCount, setCalendarRefreshCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
@@ -214,6 +230,7 @@ export const AppShell: React.FC = () => {
       socket.current?.close();
       socket.current = null;
       token.current = null;
+      setAccessToken(null);
       clearSession();
       router.replace("/login");
     }
@@ -320,6 +337,7 @@ export const AppShell: React.FC = () => {
     const accessToken = getAccessToken();
     if (!accessToken) { router.replace("/login"); return; }
     token.current = accessToken;
+    setAccessToken(accessToken);
     let active = true;
     getMe(accessToken).then(async (profile) => {
       if (profile.role?.toLowerCase() === "admin") {
@@ -426,6 +444,39 @@ export const AppShell: React.FC = () => {
           }
           void refreshConversations();
         }
+        // The assistant found something the user may want on their calendar.
+        // It is only a proposal: nothing is scheduled until they approve it in
+        // the task inbox.
+        if (eventType === "action_proposal_created") {
+          const proposal = payload.proposal as ApiActionProposal | undefined;
+          if (proposal) {
+            setIncomingProposals((current) => [proposal, ...current].slice(0, 50));
+            addToast("Trợ lý đề xuất một việc", proposal.title, "info");
+          }
+        }
+        // A reminder came due. Kept as a toast rather than anything modal: it
+        // arrives while the person is doing something else, and interrupting
+        // them to dismiss a box is worse than the reminder is useful.
+        if (eventType === "reminder_due") {
+          const reminder = payload.reminder as { title?: string; starts_at?: string } | undefined;
+          if (reminder) {
+            addToast(
+              "Sắp đến giờ",
+              reminder.title,
+              "info",
+            );
+            if (soundEnabledRef.current) {
+              try {
+                new Audio("/notification.mp3").play().catch(() => undefined);
+              } catch {
+                // No sound is not a failure worth surfacing.
+              }
+            }
+          }
+        }
+        if (eventType === "action_proposal_confirmed" || eventType === "calendar_event_updated") {
+          setCalendarRefreshCount((count) => count + 1);
+        }
         // This is the authoritative result produced by the LangGraph translation
         // agent. The server persists it before publishing, so REST history also
         // restores it after a reconnect.
@@ -525,6 +576,7 @@ export const AppShell: React.FC = () => {
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
   }, [addToast, conversations, currentUser.id, refreshConversations, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
+  useEffect(() => { soundEnabledRef.current = settings.soundEnabled; }, [settings.soundEnabled]);
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
   useEffect(() => {
     document.documentElement.lang = settings.interfaceLanguage;
@@ -916,7 +968,7 @@ export const AppShell: React.FC = () => {
 
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
-    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} /></div>
+    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} pendingTaskCount={pendingTaskCount} /></div>
     {activeTab !== "calendar" && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
       {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} assistantSelected={isAssistantChatOpen} onOpenAssistant={() => {
         if (!token.current) return;
@@ -945,7 +997,23 @@ export const AppShell: React.FC = () => {
       {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.preferredLanguage} />}
     </div>}
     <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${activeTab === "calendar" ? "w-full" : mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}>
-      {activeTab === "calendar" ? <PersonalCalendar /> :
+      {/* Guarded on the token rather than defaulting it to "": an empty bearer
+          would turn "not signed in yet" into a 401 the user has to interpret,
+          and this shell is already on its way to the login screen without one. */}
+      {activeTab === "calendar" && accessToken ? (
+        <PersonalCalendar
+          token={accessToken}
+          onNotify={addToast}
+          refreshToken={calendarRefreshCount}
+        />
+      ) : activeTab === "tasks" && accessToken ? (
+        <TaskInboxPanel
+          token={accessToken}
+          incoming={incomingProposals}
+          onCountChange={setPendingTaskCount}
+          onNotify={addToast}
+        />
+      ) :
       <ChatView
         conversation={activeConversation}
         messages={currentMessages}

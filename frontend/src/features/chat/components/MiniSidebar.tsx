@@ -5,6 +5,7 @@ import {
   BookUser,
   UsersRound,
   CalendarDays,
+  ListTodo,
   Settings,
   Globe2
 } from 'lucide-react';
@@ -21,6 +22,7 @@ interface MiniSidebarProps {
   onLogout: () => void;
   isLoggingOut?: boolean;
   unreadChatsCount: number;
+  pendingTaskCount?: number;
 }
 
 export const MiniSidebar: React.FC<MiniSidebarProps> = ({
@@ -33,6 +35,7 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
   onLogout,
   isLoggingOut,
   unreadChatsCount,
+  pendingTaskCount = 0,
 }) => {
   const [profileOpen, setProfileOpen] = useState(false);
   const interfaceLanguage = settings.interfaceLanguage;
@@ -58,6 +61,15 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
       id: 'calendar' as SidebarTab,
       label: 'Personal calendar',
       icon: CalendarDays,
+    },
+    {
+      id: 'tasks' as SidebarTab,
+      label: 'Task inbox',
+      icon: ListTodo,
+      // The count is what makes this discoverable: a proposal the assistant
+      // made is invisible until someone opens the pane, and an unapproved one
+      // never reaches a calendar.
+      badge: pendingTaskCount > 0 ? pendingTaskCount : null,
     },
   ];
 

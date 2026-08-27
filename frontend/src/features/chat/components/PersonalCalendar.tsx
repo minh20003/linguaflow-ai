@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ApiCalendarEvent } from "../api/chat-api";
+import {
+  cancelCalendarEvent,
+  createCalendarEvent,
+  listCalendarEvents,
+  syncGoogleCalendarNow,
+  updateCalendarEvent,
+} from "../api/chat-api";
 import {
   Bot, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
   CirclePlus, Clock3, ExternalLink, ListTodo, Plus, RefreshCw, Search, SendHorizontal, Settings, Trash2, X,
@@ -26,7 +34,34 @@ interface CalendarTask {
   link?: string;
 }
 
-const STORAGE_KEY = "linguachat.personal-calendar.tasks";
+/** Map one stored event onto the shape this component was written around.
+ *
+ *  The component predates the API and models a "task" with a duration and a
+ *  status; the server models an event with a start and an end. Converting here
+ *  keeps the whole rendering layer — day, week and month grids, the detail
+ *  modal, the filters — working unchanged, which is most of the file.
+ */
+function toCalendarTask(event: ApiCalendarEvent): CalendarTask {
+  const starts = new Date(event.starts_at);
+  const ends = event.ends_at ? new Date(event.ends_at) : null;
+  const minutes = ends ? Math.max(15, Math.round((+ends - +starts) / 60000)) : 60;
+  return {
+    id: event.id,
+    title: event.title,
+    note: event.details ?? undefined,
+    dueAt: event.starts_at,
+    duration: event.all_day ? 1440 : minutes,
+    // Everything on the calendar has already been decided; a pending proposal
+    // is in the task inbox, not here.
+    status: event.status === "cancelled" ? "rejected" : "approved",
+    source: event.source,
+    priority: "medium",
+    category: event.all_day ? "personal" : "task",
+    location: event.location ?? undefined,
+    kind: event.all_day ? "event" : "task",
+  };
+}
+
 const HOUR_HEIGHT = 64;
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR = 22;
@@ -110,21 +145,6 @@ function tasksOfDay(tasks: CalendarTask[], day: Date) {
   return tasks.filter((task) => sameDay(new Date(task.dueAt), day));
 }
 
-const defaultTasks = (): CalendarTask[] => {
-  const today = new Date();
-  const at = (offset: number, hour: number, minute: number) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() + offset);
-    date.setHours(hour, minute, 0, 0);
-    return date.toISOString();
-  };
-  return [
-    { id: "proposal-review", title: "Rà soát nội dung cuộc họp", note: "Đề xuất sau khi @assistant tóm tắt cuộc trò chuyện.", dueAt: at(0, 9, 30), duration: 45, status: "pending", source: "assistant", priority: "high" },
-    { id: "focus-work", title: "Hoàn thiện giao diện lịch cá nhân", dueAt: at(0, 14, 0), duration: 90, status: "approved", source: "manual", priority: "high" },
-    { id: "google-event", title: "Cuộc hẹn đã đồng bộ", note: "Sự kiện từ Google Calendar chỉ để xem.", dueAt: at(2, 10, 0), duration: 60, status: "approved", source: "google", priority: "medium" },
-  ];
-};
-
 function startOfWeek(value: Date) {
   const date = new Date(value);
   const offset = (date.getDay() + 6) % 7;
@@ -152,8 +172,19 @@ function statusLabel(status: TaskStatus) {
   return ({ pending: "Chờ duyệt", approved: "Đã lên lịch", rejected: "Đã từ chối", done: "Hoàn thành" })[status];
 }
 
-export const PersonalCalendar: React.FC = () => {
-  const [tasks, setTasks] = useState<CalendarTask[]>(defaultTasks);
+interface PersonalCalendarProps {
+  token: string;
+  onNotify?: (title: string, detail?: string, tone?: "success" | "warning") => void;
+  /** Bumped by the parent when a socket event says the calendar moved. */
+  refreshToken?: number;
+}
+
+export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
+  token,
+  onNotify,
+  refreshToken = 0,
+}) => {
+  const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(() => new Date());
   const [query, setQuery] = useState("");
@@ -187,20 +218,26 @@ export const PersonalCalendar: React.FC = () => {
     return () => window.removeEventListener("mousedown", handleOutside);
   }, [showCreateMenu]);
 
-  useEffect(() => {
+  // The calendar lives on the server, not in this browser. It used to be held
+  // in localStorage, which meant it existed only on one machine, could not be
+  // reminded about, and could never reach Google.
+  const reload = useCallback(async () => {
     try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) setTasks(JSON.parse(saved) as CalendarTask[]);
-    } catch {
-      // A malformed local value should never prevent calendar access.
+      const events = await listCalendarEvents(token);
+      setTasks(events.map(toCalendarTask));
+      hydrated.current = true;
+    } catch (error) {
+      onNotify?.(
+        "Không tải được lịch",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
     }
-    hydrated.current = true;
-  }, []);
+  }, [token, onNotify]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  }, [tasks]);
+    void reload();
+  }, [reload, refreshToken]);
 
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     const matchesSearch = `${task.title} ${task.note ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase());
@@ -230,11 +267,90 @@ export const PersonalCalendar: React.FC = () => {
   const weekStart = weekDays[0];
   const hours = useMemo(() => hourRange(scheduledTasks), [scheduledTasks]);
 
-  const updateTask = (id: string, update: Partial<CalendarTask>) => setTasks((items) => items.map((task) => task.id === id ? { ...task, ...update } : task));
+  const updateTask = (id: string, update: Partial<CalendarTask>) =>
+    setTasks((items) => items.map((task) => (task.id === id ? { ...task, ...update } : task)));
+
+  // Approval lives in the task inbox, where the proposal and its clarification
+  // question are. The calendar shows what was already decided, so these three
+  // only exist for entries that reached it.
   const approve = (task: CalendarTask) => updateTask(task.id, { status: "approved" });
   const reject = (task: CalendarTask) => updateTask(task.id, { status: "rejected" });
   const finish = (task: CalendarTask) => updateTask(task.id, { status: "done" });
-  const triggerSync = () => { if (!googleSyncEnabled || isSyncing) return; setIsSyncing(true); window.setTimeout(() => setIsSyncing(false), 700); };
+
+  const removeTask = async (task: CalendarTask) => {
+    // Optimistic, then reconciled by `reload`. The server cancels rather than
+    // deletes, so a failure leaves the entry visible rather than losing it.
+    setTasks((items) => items.filter((item) => item.id !== task.id));
+    try {
+      await cancelCalendarEvent(token, task.id);
+    } catch (error) {
+      onNotify?.(
+        "Không xoá được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      await reload();
+    }
+  };
+
+  const saveTask = async (task: CalendarTask) => {
+    try {
+      if (tasks.some((item) => item.id === task.id)) {
+        await updateCalendarEvent(token, task.id, {
+          title: task.title,
+          details: task.note ?? null,
+          location: task.location ?? null,
+          starts_at: new Date(task.dueAt).toISOString(),
+          all_day: task.kind === "event",
+        });
+      } else {
+        await createCalendarEvent(token, {
+          title: task.title,
+          starts_at: new Date(task.dueAt).toISOString(),
+          details: task.note ?? null,
+          location: task.location ?? null,
+          all_day: task.kind === "event",
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+      }
+    } catch (error) {
+      onNotify?.(
+        "Không lưu được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      await reload();
+    }
+  };
+  const triggerSync = async () => {
+    if (!googleSyncEnabled || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const result = await syncGoogleCalendarNow(token);
+      await reload();
+      if (result.last_sync_error) {
+        // Surfaced rather than swallowed: a calendar that failed to sync looks
+        // identical to one with nothing to sync.
+        onNotify?.("Đồng bộ chưa xong", result.last_sync_error, "warning");
+      } else {
+        onNotify?.(
+          "Đã đồng bộ Google Calendar",
+          `Đẩy lên ${result.pushed}, nhận về ${result.pulled}`,
+          "success",
+        );
+      }
+    } catch (error) {
+      onNotify?.(
+        "Không đồng bộ được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const navigate = useCallback((direction: -1 | 1) => setCursor((date) => {
     const next = new Date(date);

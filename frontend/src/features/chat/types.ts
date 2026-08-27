@@ -124,4 +124,4 @@ export interface ToastItem {
   timestamp?: number;
 }
 
-export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'settings';
+export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'tasks' | 'settings';
