@@ -21,6 +21,7 @@ import {
   downloadAttachment,
   endCall,
   fetchAttachmentBlob,
+  getAgentConsents,
   getAssistantConversation,
   getMe,
   getMessages,
@@ -51,10 +52,13 @@ import {
   unsaveMessage,
   updateConversationPreferences,
   updateGroupDetails,
+  updateAgentConsents,
   updateGroupRole,
   updateProfile,
   updateUserSettings,
   uploadAttachment,
+  type AgentConsentScope,
+  type ApiAgentConsents,
   type ApiAttachment,
   type ApiCall,
   type ApiConversation,
@@ -130,6 +134,27 @@ function persistedSettings(settings: ApiUserSettings): Pick<AppSettings, "autoTr
   };
 }
 
+/** Flatten the consent list into the lookup the settings switches read.
+ *
+ *  The server always sends every scope, so a scope missing from this map means
+ *  the response was malformed rather than that the permission is unknown — and
+ *  an absent key reads as "not granted", which is the safe way to be wrong.
+ */
+function toConsentMap(response: ApiAgentConsents): Partial<Record<AgentConsentScope, boolean>> {
+  return Object.fromEntries(response.consents.map((entry) => [entry.scope, entry.is_granted]));
+}
+
+/** Whether every permission carries an explicit decision.
+ *
+ *  Not the same as "any are granted". The server sends all five scopes whether
+ *  or not the user has seen them, so presence proves nothing; a scope with
+ *  neither timestamp is one nobody has been asked about. Refusing is an answer,
+ *  and re-prompting someone who refused teaches them to dismiss the dialog.
+ */
+function consentsAllAnswered(response: ApiAgentConsents): boolean {
+  return response.consents.every((entry) => entry.granted_at !== null || entry.revoked_at !== null);
+}
+
 function applyDisplayPreference(messages: Message[], showOriginalByDefault: boolean): Message[] {
   return messages.map((message) => message.translation
     ? { ...message, translation: { ...message.translation, showOriginal: message.translation.showOriginal ?? showOriginalByDefault } }
@@ -145,6 +170,10 @@ export const AppShell: React.FC = () => {
   const token = useRef<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(EMPTY_USER);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_CHAT_SETTINGS);
+  // Empty until loaded, and an absent scope reads as not granted — the same
+  // closed default the backend applies when no row exists.
+  const [agentConsents, setAgentConsents] = useState<Partial<Record<AgentConsentScope, boolean>>>({});
+  const [agentConsentsAnswered, setAgentConsentsAnswered] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
@@ -298,11 +327,18 @@ export const AppShell: React.FC = () => {
         return;
       }
       const user = toChatUser(profile);
-      const [list, savedSettings] = await Promise.all([
+      const [list, savedSettings, consents] = await Promise.all([
         listConversations(accessToken),
         getUserSettings(accessToken),
+        // Never fatal: permissions default to closed, so failing to read them
+        // shows every switch off rather than blocking the whole app from loading.
+        getAgentConsents(accessToken).catch(() => null),
       ]);
       if (!active) return;
+      if (consents) {
+        setAgentConsents(toConsentMap(consents));
+        setAgentConsentsAnswered(consentsAllAnswered(consents));
+      }
       const visible = list.filter((item) => !isAssistantConversation(item));
       const contacts = conversationUsers(visible).filter((contact) => contact.id !== user.id);
       setCurrentUser(user);
@@ -781,6 +817,31 @@ export const AppShell: React.FC = () => {
     }
   };
 
+  const handleUpdateAgentConsents = useCallback(
+    (changes: Partial<Record<AgentConsentScope, boolean>>) => {
+      if (!token.current) {
+        addToast("Could not save permissions", "Please sign in again.", "warning");
+        return;
+      }
+      // No optimistic update. A switch that flips and then silently flips back
+      // would leave someone believing they had withdrawn a permission they
+      // still hold, which is the one mistake this screen must not make.
+      void updateAgentConsents(token.current, changes)
+        .then((saved) => {
+          setAgentConsents(toConsentMap(saved));
+          setAgentConsentsAnswered(consentsAllAnswered(saved));
+        })
+        .catch((error: unknown) =>
+          addToast(
+            "Could not save permissions",
+            error instanceof Error ? error.message : undefined,
+            "warning",
+          ),
+        );
+    },
+    [addToast],
+  );
+
   const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
     const serverChanges: Partial<ApiUserSettings> = {};
     if (value.autoTranslate !== undefined) serverChanges.auto_translate = value.autoTranslate;
@@ -931,7 +992,7 @@ export const AppShell: React.FC = () => {
     </div>
     <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
-    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} />
+    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} agentConsents={agentConsents} agentConsentsAnswered={agentConsentsAnswered} onUpdateAgentConsents={handleUpdateAgentConsents} />
     <CallModal
       key={activeCall?.id ?? "no-active-call"}
       call={activeCall}

@@ -107,6 +107,27 @@ export interface ApiUserSettings {
   ai_smart_assistance: boolean;
 }
 
+/** Assistant permissions. Separate from settings above: these are grants the
+ *  user gives, not preferences — see `docs/CONTRACT.md` §3.15. */
+export type AgentConsentScope =
+  | "read_conversations"
+  | "proactive_scan"
+  | "store_memory"
+  | "calendar_read"
+  | "calendar_write";
+
+export interface ApiAgentConsent {
+  scope: AgentConsentScope;
+  is_granted: boolean;
+  granted_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ApiAgentConsents {
+  policy_version: string;
+  consents: ApiAgentConsent[];
+}
+
 export interface ApiAttachment {
   id: string;
   conversation_id: string;
@@ -417,6 +438,16 @@ export function updateUserSettings(token: string, changes: Partial<ApiUserSettin
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(changes),
+  });
+}
+export function getAgentConsents(token: string) {
+  return request<ApiAgentConsents>("/api/v1/auth/me/agent-consents", token);
+}
+export function updateAgentConsents(token: string, consents: Partial<Record<AgentConsentScope, boolean>>) {
+  return request<ApiAgentConsents>("/api/v1/auth/me/agent-consents", token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consents }),
   });
 }
 export function updateProfile(token: string, changes: { display_name?: string; bio?: string }) {

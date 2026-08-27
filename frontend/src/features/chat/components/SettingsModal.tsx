@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { AppSettings, User, LanguageCode } from '../types';
+import type { AgentConsentScope } from '../api/chat-api';
+import { AssistantConsentDialog } from './AssistantConsentDialog';
 import { CHAT_LANGUAGES } from '../constants';
 import { settingText, t } from '../i18n';
 import {
@@ -23,11 +25,52 @@ interface SettingsModalProps {
   onUpdateSettings: (newSettings: Partial<AppSettings>) => void;
   currentUser: User;
   onUpdateUser: (newUser: Partial<User>) => void;
+  agentConsents?: Partial<Record<AgentConsentScope, boolean>>;
+  /** False while any scope has never been answered — the cue to ask. Distinct
+   *  from "nothing granted": a refusal is an answer and must not re-prompt. */
+  agentConsentsAnswered?: boolean;
+  onUpdateAgentConsents?: (changes: Partial<Record<AgentConsentScope, boolean>>) => void;
 }
 
 type SettingsSection = 'language' | 'profile' | 'notifications' | 'privacy' | 'ai';
 
 const copy = settingText;
+
+/** The permission list the user is asked to agree to, in the order shown.
+ *
+ *  Each line says what the assistant does with the data, in one sentence and in
+ *  plain words. The order runs from the least to the most exposing, so someone
+ *  who stops reading part way has still seen the mildest ones first. Kept beside
+ *  the component rather than in a locale file because the wording *is* the
+ *  consent — a translation that drifts changes what was agreed to.
+ */
+const CONSENT_COPY: { scope: AgentConsentScope; title: string; detail: string }[] = [
+  {
+    scope: 'read_conversations',
+    title: 'Đọc nội dung hội thoại',
+    detail: 'Trợ lý đọc tin nhắn trong hội thoại bạn mở để tóm tắt và tìm việc cần làm.',
+  },
+  {
+    scope: 'proactive_scan',
+    title: 'Tự phát hiện việc khi bạn nhắn',
+    detail: 'Mỗi tin nhắn bạn gửi được quét để tìm cam kết và lịch hẹn, kể cả khi bạn không hỏi.',
+  },
+  {
+    scope: 'store_memory',
+    title: 'Ghi nhớ hội thoại lâu dài',
+    detail: 'Tin nhắn của bạn được lưu thêm dạng vector để trợ lý nhớ được chuyện đã nói từ lâu.',
+  },
+  {
+    scope: 'calendar_read',
+    title: 'Đọc lịch Google của bạn',
+    detail: 'Sự kiện bạn tạo trên Google Calendar hiện trong trang lịch của ứng dụng.',
+  },
+  {
+    scope: 'calendar_write',
+    title: 'Ghi sự kiện lên lịch Google',
+    detail: 'Việc bạn đã duyệt được tạo thành sự kiện trên Google Calendar của bạn.',
+  },
+];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -36,6 +79,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   currentUser,
   onUpdateUser,
+  agentConsents = {},
+  agentConsentsAnswered = true,
+  onUpdateAgentConsents,
 }) => {
   // `preferredLanguage` controls message translation; labels must follow the
   // separately persisted interface language selected by this account.
@@ -43,6 +89,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
+  const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
 
   if (!isOpen) return null;
 
@@ -346,11 +393,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <p className="text-xs text-[#74798C]">{copy(language, 'Show the assistant in your conversations')}</p>
                   </div>
                   <button
-                    onClick={() =>
-                      onUpdateSettings({
-                        aiSmartAssistance: !settings.aiSmartAssistance,
-                      })
-                    }
+                    onClick={() => {
+                      const enabling = !settings.aiSmartAssistance;
+                      onUpdateSettings({ aiSmartAssistance: enabling });
+                      // Ask on the way in, and only while something is still
+                      // unanswered. Re-prompting someone who already decided
+                      // trains them to dismiss the dialog without reading it.
+                      if (enabling && onUpdateAgentConsents && !agentConsentsAnswered) {
+                        setIsConsentDialogOpen(true);
+                      }
+                    }}
                     className={`relative w-11 h-6 rounded-full transition-colors ${
                       settings.aiSmartAssistance ? 'bg-[#2563EB]' : 'bg-[#CED2DE] dark:bg-[#3A3F50]'
                     }`}
@@ -362,11 +414,76 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     />
                   </button>
                 </div>
+
+                {/* Permissions. Deliberately below the switch above and visually
+                    separated: that switch only decides whether the assistant is
+                    shown, while these decide what it is allowed to do with the
+                    account's data. Rendered even when the assistant is hidden so
+                    a permission can be withdrawn without turning it back on. */}
+                <div className="pt-2">
+                  <h5 className="px-1 text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
+                    {copy(language, 'Quyền bạn cấp cho trợ lý')}
+                  </h5>
+                  <p className="mt-1 px-1 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
+                    {copy(
+                      language,
+                      'Mỗi quyền độc lập với nhau, mặc định đều tắt, và rút lại được bất cứ lúc nào.',
+                    )}
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {CONSENT_COPY.map(({ scope, title, detail }) => {
+                      const granted = agentConsents[scope] === true;
+                      return (
+                        <div
+                          key={scope}
+                          className="flex items-start justify-between gap-3 rounded-2xl border border-[#E8EAF0] bg-[#F7F8FC] p-3.5 dark:border-[#2A2E3D] dark:bg-[#232630]/60"
+                        >
+                          <div className="min-w-0">
+                            <h6 className="text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
+                              {copy(language, title)}
+                            </h6>
+                            <p className="mt-0.5 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
+                              {copy(language, detail)}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={granted}
+                            aria-label={copy(language, title)}
+                            disabled={!onUpdateAgentConsents}
+                            onClick={() => onUpdateAgentConsents?.({ [scope]: !granted })}
+                            className={`relative mt-0.5 w-11 h-6 flex-none rounded-full transition-colors disabled:opacity-50 ${
+                              granted ? 'bg-[#2563EB]' : 'bg-[#CED2DE] dark:bg-[#3A3F50]'
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-1 left-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                                granted ? 'translate-x-5' : ''
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             )}
           </div>
         </main>
       </div>
+
+      <AssistantConsentDialog
+        isOpen={isConsentDialogOpen}
+        items={CONSENT_COPY}
+        granted={agentConsents}
+        onCancel={() => setIsConsentDialogOpen(false)}
+        onConfirm={(changes) => {
+          onUpdateAgentConsents?.(changes);
+          setIsConsentDialogOpen(false);
+        }}
+      />
     </div>
   );
 };
