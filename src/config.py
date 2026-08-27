@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     # and the secondary provider. The per-call timeouts below do not bound the
     # total, so this is what stops a background task running forever (ADR-14).
     translation_timeout_seconds: int = Field(default=30, ge=5, le=300)
+    # How often the reminder queue is polled (ADR-33). Sixty seconds is the
+    # resolution a reminder is worth — nobody can tell 14:45:00 from 14:45:40 —
+    # and a tighter loop is a query per second against a usually empty table.
+    reminder_scan_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    # Set to false to stop the background scheduler without removing the code
+    # path. Tests need it off: a loop firing mid-suite would deliver another
+    # test's reminders and make failures depend on timing (ADR-15's rule about
+    # every background flow having a switch).
+    reminder_scheduler_enabled: bool = True
 
     # Embeddings (ADR-25). pgvector stores and compares the vectors; something
     # still has to produce them, and the requirement that decides the choice is

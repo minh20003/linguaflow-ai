@@ -23,10 +23,12 @@ from src.agents.observability import verify_tracing_credentials
 from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
+from src.api.websocket import connection_manager
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
 from src.database import get_db
 from src.services.agent_consent import ConsentRequiredError
+from src.services.reminder_scheduler import start_reminder_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +47,18 @@ async def lifespan(app: FastAPI):
     # container runs `alembic upgrade head` before this process starts, so an
     # application that also created tables would let the two disagree in silence
     # — `create_all` adds missing tables but never alters an existing one.
+
+    # The reminder clock. Started here because this is the only place with a
+    # lifecycle, and stopped below so a reload does not leave a second loop
+    # running against the same table (ADR-33).
+    scheduler = start_reminder_scheduler(
+        publisher=connection_manager, settings=settings
+    )
+
     yield
 
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
     logger.info("Shutting down")
 
 
