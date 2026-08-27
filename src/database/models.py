@@ -1768,3 +1768,65 @@ class Reminder(Base):
 
     def __repr__(self) -> str:
         return f"<Reminder(id={self.id}, remind_at={self.remind_at}, delivered={self.delivered_at is not None})>"
+
+
+class CalendarLink(Base):
+    """One user's connection to their Google Calendar (B-14).
+
+    Keyed by `user_id` like `UserSettings`, because a person has one calendar
+    connection or none. A surrogate id would allow two rows per user, and the
+    second one would be a silent source of double-pushed events.
+
+    Tokens are stored encrypted (ADR-35). A refresh token is not application
+    data: it is standing permission to read and write somebody's real calendar,
+    valid until they revoke it, so it does not belong in a column anyone with a
+    database dump can read.
+
+    `sync_token` is Google's incremental cursor. Holding it is what turns each
+    poll into "what changed since last time" rather than a full listing, and
+    Google expires it — a `410 Gone` means drop it and take one full pass.
+    """
+
+    __tablename__ = "calendar_links"
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Which calendar to write to. `primary` unless the user picks another, and
+    # stored rather than assumed so a later change does not orphan the events
+    # already pushed to the old one.
+    google_calendar_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="primary", server_default="primary"
+    )
+    refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    # Cached so a short burst of calls does not refresh on every one. Short-lived
+    # by Google's design, so losing it costs one extra round trip, not access.
+    access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The user's own switch, separate from having a link at all: pausing sync
+    # should not require disconnecting and consenting again.
+    sync_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Kept so the interface can say why nothing has moved. Silence after a
+    # failed sync looks identical to a calendar with nothing in it.
+    last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CalendarLink(user_id={self.user_id}, sync_enabled={self.sync_enabled})>"

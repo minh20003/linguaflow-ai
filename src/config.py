@@ -92,9 +92,35 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     mistral_api_key: str = ""
 
-    # Google Identity Services authentication. This is an OAuth client ID, not
-    # a secret; the browser needs the same value to request an ID token.
+    # Google Identity Services authentication, and Google Calendar (ADR-35).
+    #
+    # The client ID is not a secret — the browser needs the same value to
+    # request an ID token. Declared once here; it used to appear twice in this
+    # file, the later one silently shadowing the earlier, which was harmless
+    # only until a second Google field was added beside one of them.
+    #
+    # Obtain both from Google Cloud Console → APIs & Services → Credentials →
+    # OAuth client ID (Web application).
     google_oauth_client_id: str = ""
+    # Required for Calendar and nothing else. Sign-In verifies an ID token
+    # locally and never exchanges a code, so it needs no secret; Calendar runs a
+    # full authorization-code flow and cannot work without one.
+    google_oauth_client_secret: str = ""
+    # Where Google sends the user back. Must match the Console entry exactly,
+    # including scheme and any trailing path — a mismatch fails at Google with
+    # `redirect_uri_mismatch` before the application sees the request.
+    google_oauth_redirect_uri: str = ""
+    # How often the incoming half of calendar sync runs. Minutes rather than the
+    # reminder loop's seconds: this one costs a Google API call per linked
+    # account, and a calendar edited on a phone is not urgent to mirror
+    # (ADR-36).
+    calendar_sync_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    # Fernet key protecting stored Google refresh tokens. Empty disables the
+    # Calendar link entirely rather than storing tokens in the clear: leaking a
+    # refresh token leaks standing access to somebody's real calendar, which is
+    # a different order of harm from leaking data held in this application.
+    # Generate with `Fernet.generate_key()`.
+    token_encryption_key: str = ""
 
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
@@ -250,12 +276,6 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     smtp_timeout_seconds: int = Field(default=15, ge=3, le=60)
     email_provider: Literal["smtp", "console", "memory"] = "memory"
-
-    # Google Sign-In (Batch G)
-    # OAuth 2.0 client ID from Google Cloud Console. Obtain from
-    # https://console.cloud.google.com/apis/credentials?project=_ → Web client
-    # or https://console.cloud.google.com/apis/credentials?project=_ → OAuth client ID (Web application)
-    google_oauth_client_id: str = ""
 
     @field_validator("database_url")
     @classmethod
