@@ -170,3 +170,22 @@ class CalendarSyncResultResponse(BaseModel):
     # Surfaced rather than swallowed: silence after a failed sync looks exactly
     # like a calendar with nothing to sync.
     last_sync_error: str | None = None
+
+
+class CalendarCapabilityResponse(BaseModel):
+    """Whether Google Calendar is usable here, and how far this account got.
+
+    The interface needs three separate facts, and collapsing them loses the one
+    that matters. `configured` is about the deployment — no credentials means
+    the feature does not exist here and its controls should not be drawn at all.
+    `consented` is about permission. `linked` is about whether they finished the
+    Google flow. Showing a "Sync now" button for any of the three missing states
+    promises something that will answer with an error.
+    """
+
+    configured: bool
+    consented: bool
+    linked: bool
+    sync_enabled: bool = False
+    last_synced_at: UtcDatetime | None = None
+    last_sync_error: str | None = None
