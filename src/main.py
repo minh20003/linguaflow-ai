@@ -26,6 +26,7 @@ from src.api.routes import router
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
 from src.database import get_db
+from src.services.agent_consent import ConsentRequiredError
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,29 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=422,
         content={"detail": _redact_validation_errors(encoded_errors)},
+    )
+
+
+@app.exception_handler(ConsentRequiredError)
+async def consent_required_handler(request: Request, exc: ConsentRequiredError):
+    """Return 403 CONSENT_REQUIRED naming the scope the caller still needs.
+
+    Handled once here rather than in each route's except chain: every assistant
+    endpoint needs the same answer, and the ones not written yet should get it
+    without anyone remembering to add a clause.
+
+    The scope travels in the body because this 403 is one the user can clear
+    themselves — the interface reads it and opens that permission, instead of
+    making them hunt through settings (`docs/CONTRACT.md` §6).
+    """
+    return JSONResponse(
+        status_code=403,
+        content={
+            "code": "CONSENT_REQUIRED",
+            "message": "The assistant needs your permission for this action.",
+            "scope": exc.scope,
+            "detail": str(exc),
+        },
     )
 
 settings = get_settings()

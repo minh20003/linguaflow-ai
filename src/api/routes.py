@@ -44,6 +44,7 @@ from src.core.security import (
 )
 from src.database import get_db
 from src.database.models import (
+    AGENT_CONSENT_POLICY_VERSION,
     Attachment,
     BlockedUser,
     CallSession,
@@ -56,6 +57,11 @@ from src.database.models import (
     RefreshSession,
     TranslationResult,
     User,
+)
+from src.schemas.agent_consent import (
+    AgentConsentEntry,
+    AgentConsentsResponse,
+    AgentConsentsUpdate,
 )
 from src.schemas.auth import (
     SUPPORTED_LANGUAGES,
@@ -130,6 +136,7 @@ from src.services.action_proposals import (
     ActionProposalService,
     ActionProposalStatusError,
 )
+from src.services.agent_consent import get_consents, set_consents
 from src.services.blocking import (
     DirectMessagingBlockedError,
     block_user,
@@ -1168,6 +1175,37 @@ async def patch_current_user_settings(
         db, current_user.id, request.model_dump(exclude_unset=True)
     )
     return UserSettingsResponse.model_validate(settings)
+
+
+@router.get("/auth/me/agent-consents", response_model=AgentConsentsResponse)
+async def get_current_user_agent_consents(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AgentConsentsResponse:
+    """Return every assistant permission for the caller (`CONTRACT.md` §3.15)."""
+    return AgentConsentsResponse(
+        policy_version=AGENT_CONSENT_POLICY_VERSION,
+        consents=[
+            AgentConsentEntry.model_validate(row)
+            for row in await get_consents(db, current_user.id)
+        ],
+    )
+
+
+@router.put("/auth/me/agent-consents", response_model=AgentConsentsResponse)
+async def put_current_user_agent_consents(
+    request: AgentConsentsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AgentConsentsResponse:
+    """Grant or revoke the named scopes and return the full current set."""
+    return AgentConsentsResponse(
+        policy_version=AGENT_CONSENT_POLICY_VERSION,
+        consents=[
+            AgentConsentEntry.model_validate(row)
+            for row in await set_consents(db, current_user.id, request.consents)
+        ],
+    )
 
 
 @router.put("/auth/me/language", response_model=UserResponse)
