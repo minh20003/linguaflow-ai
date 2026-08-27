@@ -429,6 +429,23 @@ class ActionProposalService:
         if result.rowcount != 1:
             await self.db.rollback()
             raise ActionProposalStatusError("Proposal was already transitioned")
+
+        # Before the commit, not after. The conditional UPDATE above is what
+        # makes exactly one caller the winner of a concurrent confirm; putting
+        # the calendar write inside the same transaction means the winner is
+        # also the only one that schedules anything, and that a confirmation
+        # cannot succeed while leaving the calendar empty.
+        #
+        # Imported here rather than at module scope: `calendar` imports
+        # `ActionProposal` from the models module this one also uses, and a
+        # top-level import would close the cycle.
+        from src.services.calendar import CalendarService
+
+        confirmed = await self.db.get(ActionProposal, proposal_id)
+        if confirmed is not None:
+            await self.db.refresh(confirmed)
+            await CalendarService(self.db).schedule_from_proposal(confirmed, commit=False)
+
         await self.db.commit()
         return await self.get_proposal(proposal_id)
 
