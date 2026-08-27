@@ -7,6 +7,7 @@ import { ConversationDetailsDrawer } from './ConversationDetailsDrawer';
 import { MessageSearchPanel, type ConversationSearchResult } from './MessageSearchPanel';
 import { MessageSquare, Sparkles, Plus, Globe } from 'lucide-react';
 import { emptyChatText } from '../i18n';
+import type { VoiceRecorderStage } from '../voice-recorder';
 
 interface ChatViewProps {
   conversation: Conversation | null;
@@ -15,11 +16,18 @@ interface ChatViewProps {
   onBack?: () => void;
   onSendMessage: (text: string, replyToMessageId?: string, mentions?: MessageMention[]) => void;
   onSendAttachment?: (file: File) => void;
+  onSendVoice?: (
+    file: File,
+    replyToMessageId: string | undefined,
+    onStage: (stage: Extract<VoiceRecorderStage, 'uploading' | 'sending'>) => void,
+  ) => Promise<void>;
   onTyping?: (isTyping: boolean) => void;
   onReact: (messageId: string, emoji: string) => void;
   onCopy: (text: string) => void;
   onToggleOriginal: (messageId: string) => void;
   onRetryTranslation: (messageId: string) => void;
+  onRetryTranscription: (messageId: string) => void;
+  retryingTranscriptionIds: ReadonlySet<string>;
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
@@ -55,11 +63,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onBack,
   onSendMessage,
   onSendAttachment,
+  onSendVoice,
   onTyping,
   onReact,
   onCopy,
   onToggleOriginal,
   onRetryTranslation,
+  onRetryTranscription,
+  retryingTranscriptionIds,
   onRateTranslation,
   onEditTranslation,
   onForward,
@@ -171,6 +182,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onCopy={onCopy}
           onToggleOriginal={onToggleOriginal}
           onRetryTranslation={onRetryTranslation}
+          onRetryTranscription={onRetryTranscription}
+          retryingTranscriptionIds={retryingTranscriptionIds}
           onRateTranslation={onRateTranslation}
           onEditTranslation={onEditTranslation}
           onForward={onForward}
@@ -189,6 +202,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           replyTo={replyTo}
           onCancelReply={() => setReplyTo(null)}
           onSendAttachment={onSendAttachment}
+          onSendVoice={onSendVoice}
           onTyping={onTyping}
           mentionCandidates={assistantMode ? [] : conversation.type === 'group'
             ? (conversation.members || []).filter((member) => member.id !== currentUser.id)

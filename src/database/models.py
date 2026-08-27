@@ -75,6 +75,23 @@ GLOSSARY_DOMAINS = ("engineering", "commercial", "support")
 # fan-out and rows cannot silently drift apart.
 TRANSLATION_TONES = ("natural", "formal", "casual", "friendly")
 
+# Voice messages reuse `original_text` for their final transcript. These two
+# small vocabularies describe only the durable lifecycle; recording, storage
+# and transcription orchestration live in later phases.
+MESSAGE_TYPES = ("text", "voice")
+TRANSCRIPTION_STATUSES = ("pending", "completed", "failed")
+
+# Keep the state machine in the database as well as in API validation. A
+# background worker or migration can write without passing through Pydantic,
+# and an impossible row would otherwise leak into history as if it were valid.
+MESSAGE_LIFECYCLE_CHECK = (
+    "(message_type = 'text' AND transcription_status IS NULL) OR "
+    "(message_type = 'voice' AND transcription_status IS NOT NULL AND ("
+    "(transcription_status IN ('pending', 'failed') AND original_text = '') OR "
+    "(transcription_status = 'completed' AND length(trim(original_text)) > 0)"
+    "))"
+)
+
 # A glossary entry is never deleted, only retired: a translation delivered last
 # month was shaped by a term that was active then, and dropping the row would
 # erase the only explanation for the wording a reader is looking at.
@@ -463,6 +480,18 @@ class Message(Base):
 
     __tablename__ = "messages"
     __table_args__ = (
+        CheckConstraint(
+            _in_clause("message_type", MESSAGE_TYPES),
+            name="ck_messages_message_type",
+        ),
+        CheckConstraint(
+            f"transcription_status IS NULL OR {_in_clause('transcription_status', TRANSCRIPTION_STATUSES)}",
+            name="ck_messages_transcription_status",
+        ),
+        CheckConstraint(
+            MESSAGE_LIFECYCLE_CHECK,
+            name="ck_messages_voice_lifecycle",
+        ),
         UniqueConstraint(
             "sender_id",
             "conversation_id",
@@ -489,6 +518,16 @@ class Message(Base):
         nullable=False,
     )
     original_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Existing and new ordinary messages remain `text` without a transcription
+    # state. Voice rows start with empty original_text/pending, then replace the
+    # same canonical field with the complete transcript before becoming
+    # completed. No second transcript column is intentionally introduced.
+    message_type: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="text", server_default="text"
+    )
+    transcription_status: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )
     # Structured @mentions are stored alongside the original text so history
     # and realtime deliveries agree without reparsing display names.
     mentions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default="[]")

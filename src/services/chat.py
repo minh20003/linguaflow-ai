@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from src.config import get_settings
 from src.database.models import (
     ActionProposal,
     Attachment,
@@ -30,6 +31,7 @@ from src.schemas.chat import ConversationType
 from src.services.blocking import DirectMessagingBlockedError, is_blocked_between
 from src.services.llm import LLMConfigError, extract_text, get_llm
 from src.services.profiles import profile_for, select_for_reader
+from src.services.transcription import InvalidAudioError, validate_audio_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,73 @@ class ClientMessageIdConflictError(ChatServiceError):
         super().__init__("client_message_id was already used with different text")
 
 
+class VoiceMessageIdConflictError(ChatServiceError):
+    """Raised when a voice idempotency key names a different request."""
+
+    def __init__(self, client_message_id: str) -> None:
+        self.client_message_id = client_message_id
+        super().__init__("client_message_id was already used for a different voice request")
+
+
+class VoiceAttachmentError(ChatServiceError):
+    """Base class for explicit voice attachment validation failures."""
+
+    def __init__(self, attachment_id: str, message: str) -> None:
+        self.attachment_id = attachment_id
+        super().__init__(message)
+
+
+class VoiceAttachmentNotFoundError(VoiceAttachmentError):
+    """The requested attachment record does not exist."""
+
+    def __init__(self, attachment_id: str) -> None:
+        super().__init__(attachment_id, "Voice attachment was not found")
+
+
+class VoiceAttachmentConversationError(VoiceAttachmentError):
+    """The attachment belongs to a different conversation."""
+
+    def __init__(self, attachment_id: str) -> None:
+        super().__init__(attachment_id, "Voice attachment belongs to a different conversation")
+
+
+class VoiceAttachmentOwnershipError(VoiceAttachmentError):
+    """The authenticated sender did not upload the attachment."""
+
+    def __init__(self, attachment_id: str) -> None:
+        super().__init__(attachment_id, "Voice attachment belongs to a different uploader")
+
+
+class VoiceAttachmentClaimedError(VoiceAttachmentError):
+    """The attachment is already carried by another message."""
+
+    def __init__(self, attachment_id: str) -> None:
+        super().__init__(attachment_id, "Voice attachment is already claimed")
+
+
+class VoiceAttachmentNotAudioError(VoiceAttachmentError):
+    """The attachment metadata is not eligible for the Phase 2 STT boundary."""
+
+    def __init__(self, attachment_id: str) -> None:
+        super().__init__(attachment_id, "Voice attachment is not supported audio")
+
+
+class VoiceTranscriptionRetryStateError(ChatServiceError):
+    """A message is not an eligible failed voice transcription retry."""
+
+    def __init__(self, message_id: str) -> None:
+        self.message_id = message_id
+        super().__init__("Only a live failed voice message can be retried")
+
+
+class VoiceTranscriptionRetryAttachmentError(ChatServiceError):
+    """The failed message no longer has the required valid audio attachment."""
+
+    def __init__(self, message_id: str) -> None:
+        self.message_id = message_id
+        super().__init__("The voice message audio attachment is unavailable")
+
+
 class ConversationValidationError(ChatServiceError):
     """Raised when a conversation or message violates a domain rule."""
 
@@ -132,6 +201,15 @@ class SendMessageResult:
     message: Message
     recipient_ids: tuple[str, ...]
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceTranscriptionRetryResult:
+    """Identifiers for the one request that owns failed-to-pending."""
+
+    message_id: str
+    conversation_id: str
+    attachment_id: str
 
 
 def message_mentions(message: Message) -> list[dict[str, str]]:
@@ -357,7 +435,7 @@ class ChatService:
         reader_language: str,
         reader_profiles: Mapping[str, str] | None = None,
         reader_tones: Mapping[str, str] | None = None,
-    ) -> dict[str, tuple[str, datetime]]:
+    ) -> dict[str, tuple[str, datetime, str | None, str | None]]:
         """Summarise the newest message of each conversation for one reader.
 
         Two queries regardless of how many conversations are passed: ranking the
@@ -394,6 +472,8 @@ class ChatService:
                 Message.original_text,
                 Message.created_at,
                 Message.deleted_at,
+                Message.message_type,
+                Message.transcription_status,
                 func.row_number()
                 .over(
                     partition_by=Message.conversation_id,
@@ -459,6 +539,8 @@ class ChatService:
                 "" if row.deleted_at is not None
                 else translated.get(row.id, row.original_text),
                 row.created_at,
+                None if row.deleted_at is not None else row.message_type,
+                None if row.deleted_at is not None else row.transcription_status,
             )
             for row in newest
         }
@@ -629,6 +711,74 @@ class ChatService:
             user_id=user_id,
             conversation_id=conversation_id,
             message_id=message_id,
+        )
+
+    async def retry_voice_transcription(
+        self,
+        *,
+        user_id: str,
+        message_id: str,
+    ) -> VoiceTranscriptionRetryResult:
+        """Atomically re-queue one live failed voice message for existing STT.
+
+        Membership and attachment eligibility are checked before the guarded
+        update. Only the request whose ``failed -> pending`` update returns a
+        row may schedule transcription; a concurrent loser receives a
+        controlled state conflict and cannot launch duplicate provider work.
+        """
+        message = await self._db.get(Message, message_id)
+        if message is None:
+            raise MessageNotFoundError(message_id)
+        await self._require_membership(
+            conversation_id=message.conversation_id,
+            user_id=user_id,
+        )
+        if message.deleted_at is not None:
+            raise MessageAlreadyDeletedError(message_id)
+        if message.message_type != "voice" or message.transcription_status != "failed":
+            raise VoiceTranscriptionRetryStateError(message_id)
+
+        attachment = await self._db.scalar(
+            select(Attachment).where(
+                Attachment.message_id == message.id,
+                Attachment.conversation_id == message.conversation_id,
+            )
+        )
+        if attachment is None:
+            raise VoiceTranscriptionRetryAttachmentError(message_id)
+        try:
+            validate_audio_attachment(
+                filename=attachment.filename,
+                content_type=attachment.content_type,
+                size_bytes=attachment.size,
+                max_size_bytes=get_settings().max_upload_size_bytes,
+            )
+        except InvalidAudioError as exc:
+            raise VoiceTranscriptionRetryAttachmentError(message_id) from exc
+
+        transitioned = (
+            await self._db.execute(
+                update(Message)
+                .where(
+                    Message.id == message.id,
+                    Message.conversation_id == message.conversation_id,
+                    Message.message_type == "voice",
+                    Message.transcription_status == "failed",
+                    Message.original_text == "",
+                    Message.deleted_at.is_(None),
+                )
+                .values(original_text="", transcription_status="pending")
+                .returning(Message.id, Message.conversation_id)
+            )
+        ).one_or_none()
+        if transitioned is None:
+            await self._db.rollback()
+            raise VoiceTranscriptionRetryStateError(message_id)
+        await self._db.commit()
+        return VoiceTranscriptionRetryResult(
+            message_id=transitioned.id,
+            conversation_id=transitioned.conversation_id,
+            attachment_id=attachment.id,
         )
 
     async def mark_conversation_read(
@@ -881,6 +1031,146 @@ class ChatService:
             recipient_ids=recipient_ids,
             created=True,
         )
+
+    async def send_voice_message(
+        self,
+        *,
+        sender_id: str,
+        conversation_id: str,
+        client_message_id: str,
+        attachment_id: str,
+        reply_to_message_id: str | None = None,
+    ) -> SendMessageResult:
+        """Atomically persist a pending voice message and claim its audio.
+
+        The ordinary text method intentionally keeps its established two-commit,
+        best-effort attachment behavior. Voice cannot use that path: its empty
+        canonical text is valid only when an eligible audio attachment becomes
+        durable in the same transaction.
+        """
+        self._validate_send_voice_message_request(
+            sender_id=sender_id,
+            conversation_id=conversation_id,
+            client_message_id=client_message_id,
+            attachment_id=attachment_id,
+        )
+
+        conversation = await self._db.get(Conversation, conversation_id)
+        if conversation is None:
+            raise ConversationNotFoundError(conversation_id)
+        member_ids = await self.get_conversation_member_ids(
+            conversation_id=conversation_id,
+        )
+        if sender_id not in member_ids:
+            raise ConversationMembershipError(conversation_id, sender_id)
+        if conversation.type == "direct":
+            other_ids = [member_id for member_id in member_ids if member_id != sender_id]
+            if other_ids and await is_blocked_between(self._db, sender_id, other_ids[0]):
+                raise DirectMessagingBlockedError("Direct messaging is unavailable")
+        recipient_ids = tuple(
+            member_id for member_id in member_ids if member_id != sender_id
+        )
+        reply_target_id = await self._resolve_reply_target(
+            conversation_id=conversation_id,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        existing_message = await self._find_message_by_client_message_id(
+            sender_id=sender_id,
+            conversation_id=conversation_id,
+            client_message_id=client_message_id,
+        )
+        if existing_message is not None:
+            await self._raise_if_voice_conflicts(
+                existing_message,
+                attachment_id=attachment_id,
+                reply_to_message_id=reply_target_id,
+            )
+            await self._db.commit()
+            return SendMessageResult(existing_message, recipient_ids, False)
+
+        # Lock the one attachment row that makes this request a voice message.
+        # Concurrent claims of the same audio serialize here. A second
+        # idempotency lookup after acquiring the lock recognizes the winner of
+        # an equivalent concurrent request instead of rejecting its now-claimed
+        # attachment.
+        attachment = await self._db.scalar(
+            select(Attachment)
+            .where(Attachment.id == attachment_id)
+            .with_for_update()
+        )
+        existing_message = await self._find_message_by_client_message_id(
+            sender_id=sender_id,
+            conversation_id=conversation_id,
+            client_message_id=client_message_id,
+        )
+        if existing_message is not None:
+            await self._raise_if_voice_conflicts(
+                existing_message,
+                attachment_id=attachment_id,
+                reply_to_message_id=reply_target_id,
+            )
+            await self._db.commit()
+            return SendMessageResult(existing_message, recipient_ids, False)
+
+        if attachment is None:
+            raise VoiceAttachmentNotFoundError(attachment_id)
+        if attachment.conversation_id != conversation_id:
+            raise VoiceAttachmentConversationError(attachment_id)
+        if attachment.uploader_id != sender_id:
+            raise VoiceAttachmentOwnershipError(attachment_id)
+        if attachment.message_id is not None:
+            raise VoiceAttachmentClaimedError(attachment_id)
+        try:
+            validate_audio_attachment(
+                filename=attachment.filename,
+                content_type=attachment.content_type,
+                size_bytes=attachment.size,
+                max_size_bytes=get_settings().max_upload_size_bytes,
+            )
+        except InvalidAudioError:
+            raise VoiceAttachmentNotAudioError(attachment_id) from None
+
+        sender_language = await self._db.scalar(
+            select(User.preferred_language).where(User.id == sender_id)
+        )
+        message = Message(
+            client_message_id=client_message_id,
+            conversation_id=conversation_id,
+            sender_id=sender_id,
+            original_text="",
+            message_type="voice",
+            transcription_status="pending",
+            source_language=sender_language or "en",
+            reply_to_message_id=reply_target_id,
+        )
+        self._db.add(message)
+
+        try:
+            # Flush allocates Message.id, but neither row is durable until the
+            # single commit below succeeds. A failed claim therefore cannot
+            # leave a durable voice message without its required audio.
+            await self._db.flush()
+            attachment.message_id = message.id
+            await self._db.commit()
+        except IntegrityError:
+            await self._db.rollback()
+            existing_message = await self._find_message_by_client_message_id(
+                sender_id=sender_id,
+                conversation_id=conversation_id,
+                client_message_id=client_message_id,
+            )
+            if existing_message is None:
+                raise
+            await self._raise_if_voice_conflicts(
+                existing_message,
+                attachment_id=attachment_id,
+                reply_to_message_id=reply_target_id,
+            )
+            await self._db.commit()
+            return SendMessageResult(existing_message, recipient_ids, False)
+
+        return SendMessageResult(message, recipient_ids, True)
 
     async def create_assistant_reply(
         self,
@@ -1547,6 +1837,23 @@ class ChatService:
         if existing_message.original_text != text:
             raise ClientMessageIdConflictError(existing_message.client_message_id)
 
+    async def _raise_if_voice_conflicts(
+        self,
+        existing_message: Message,
+        *,
+        attachment_id: str,
+        reply_to_message_id: str | None,
+    ) -> None:
+        linked_attachment_id = await self._db.scalar(
+            select(Attachment.id).where(Attachment.message_id == existing_message.id)
+        )
+        if (
+            existing_message.message_type != "voice"
+            or linked_attachment_id != attachment_id
+            or existing_message.reply_to_message_id != reply_to_message_id
+        ):
+            raise VoiceMessageIdConflictError(existing_message.client_message_id)
+
     @staticmethod
     def _validate_conversation_request(
         *,
@@ -1587,3 +1894,27 @@ class ChatService:
             raise ConversationValidationError("text must not be blank")
         if len(text) > cls.max_message_length:
             raise ConversationValidationError("text must be at most 5000 characters")
+
+    @classmethod
+    def _validate_send_voice_message_request(
+        cls,
+        *,
+        sender_id: str,
+        conversation_id: str,
+        client_message_id: str,
+        attachment_id: str,
+    ) -> None:
+        if not isinstance(sender_id, str) or not sender_id.strip():
+            raise ConversationValidationError("sender_id must be a non-empty string")
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ConversationValidationError("conversation_id must be a non-empty string")
+        if not isinstance(client_message_id, str) or not client_message_id.strip():
+            raise ConversationValidationError("client_message_id must be a non-empty string")
+        if len(client_message_id) > cls.max_client_message_id_length:
+            raise ConversationValidationError(
+                "client_message_id must be at most 128 characters"
+            )
+        if not isinstance(attachment_id, str) or not attachment_id.strip():
+            raise ConversationValidationError("attachment_id must be a non-empty string")
+        if len(attachment_id) > 255:
+            raise ConversationValidationError("attachment_id must be at most 255 characters")

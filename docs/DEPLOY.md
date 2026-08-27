@@ -91,13 +91,21 @@ chỉ cũ. Địa chỉ WebSocket suy ra từ chính biến này (`https` → `w
 
 ```bash
 docker compose up --build      # backend + PostgreSQL, giống production
-cd frontend-v1 && npm run dev  # giao diện, trỏ vào localhost:8000
+cd frontend && npm run dev     # giao diện, trỏ vào localhost:8000
 ```
+
+Wheel `imageio-ffmpeg` cung cấp binary FFmpeg cho cả container và local vì trình
+duyệt phổ biến thường ghi WebM/Opus, OGG/Opus hoặc MP4/AAC, trong khi Gemini
+Transcribe nhận một tập input trực tiếp hẹp hơn. Không cần cài gói multimedia hệ
+thống; wheel Linux khoảng 29,5 MiB thay vì dependency closure Debian khoảng
+466 MiB. Nếu binary wheel bị thiếu/hỏng, voice message cần chuyển mã đi vào
+trạng thái `failed`, còn text/file/image và audio Gemini nhận trực tiếp không bị
+đổi.
 
 Chỉ cần cơ sở dữ liệu thôi thì dựng riêng nó, rồi chạy backend ở ngoài container:
 
 ```bash
-docker compose up -d postgres   # PostgreSQL + pgvector, cổng 5432
+docker compose up -d postgres   # PostgreSQL + pgvector, cổng host 5433
 make migrate              # bắt buộc: ứng dụng không còn tự tạo bảng
 make reset-db             # xoá sạch rồi tạo lại, kèm hai tài khoản mẫu
 make seed-glossary        # nạp bộ thuật ngữ mẫu en↔vi (88 mục)
@@ -129,6 +137,69 @@ alembic stamp head
 alembic check     # "No new upgrade operations detected" là đúng
 ```
 
+### 4.1. Voice message và Gemini STT
+
+Voice ở đây là **tin nhắn ghi âm**, tách biệt hoàn toàn với tính năng gọi
+thoại/video. Luồng production là:
+
+```text
+audio gốc trong attachment private
+→ chuyển mã tạm sang mono 16 kHz FLAC khi cần
+→ Gemini Files API
+→ gemini-3.5-transcribe / Interactions API / mode=verbatim / tự phát hiện ngôn ngữ
+→ xoá best-effort file Gemini tạm
+→ Message.original_text
+→ pipeline dịch văn bản hiện có
+```
+
+`STT_PROVIDER` và `STT_MODEL` không thay đổi `LLM_PROVIDER` hoặc model dịch.
+`GOOGLE_API_KEY` được ưu tiên; `GEMINI_API_KEY` là alias tương thích. Không đặt
+cả hai khoá vào frontend và không ghi chúng vào log.
+
+Recorder chọn định dạng bằng `MediaRecorder.isTypeSupported()`, không dò tên
+trình duyệt. Backend nhận WebM/Opus, OGG/Opus hoặc Vorbis, MP4/AAC hoặc Opus,
+AAC, AIFF, FLAC, MP3 và WAV khi phần mở rộng khớp container. Audio browser-native
+không được Gemini nhận trực tiếp được chuyển mã qua stdin/stdout bằng câu lệnh
+FFmpeg cố định; audio gốc bền vững không bị thay thế, file chuyển mã không ghi ra
+đĩa và không đi vào context dịch. Mỗi input/output bị chặn bởi
+`MAX_UPLOAD_SIZE_BYTES`, thời gian chuyển mã dùng cùng giới hạn
+`STT_TIMEOUT_SECONDS`, và tối đa hai tiến trình chuyển mã chạy đồng thời trong
+một backend process.
+
+Lifecycle bền vững là `pending → completed` hoặc `pending → failed`.
+`completed` bắt buộc có transcript đầy đủ khác rỗng trong
+`Message.original_text`; `pending`/`failed` bắt buộc để trường này rỗng. Retry
+dùng lại cùng Message và attachment, chỉ request thắng cập nhật atomic
+`failed → pending` mới khởi chạy STT. Lịch sử REST khôi phục trạng thái khi client
+bỏ lỡ sự kiện; không có job queue bền vững, nên vẫn tồn tại crash window giữa
+commit và publication/scheduling. Audio được buffer toàn bộ trong bộ nhớ, được
+giới hạn bởi cap 20 MiB mặc định; Phase này không dùng streaming STT.
+
+Audio và transcript được xử lý plaintext phía server/provider qua TLS và chỉ
+truy cập attachment qua xác thực + kiểm tra thành viên. Đây **không phải mã hoá
+đầu-cuối**. Gemini file name/URI, provider body, key, audio và transcript không
+được ghi vào operational logs; file Gemini tạm được xoá best-effort sau success
+hoặc failure sau upload.
+
+Kiểm tra trước deploy:
+
+```bash
+alembic upgrade head
+alembic heads                 # đúng một head: a3f1c7e9b2d4
+pytest -q
+cd frontend
+npm test
+npx tsc --noEmit
+npm run lint
+npm run build
+```
+
+Browser support là capability thực tế của từng browser/OS. Chrome/Edge hiện tại
+trên Windows đã được kiểm tra có WebM/Opus và MP4/AAC; Firefox và Safari/WebKit
+phải được kiểm tra thủ công trên OS đích dù candidate OGG/Opus, WebM/Opus và
+MP4/AAC tương ứng đã có. Khi không có candidate tương thích, client báo lỗi trước
+upload thay vì đổi đuôi hoặc gửi byte sai nhãn.
+
 ## 5. Biến môi trường
 
 Nguồn sự thật là `src/config.py`; `.env.example` là bản chép có chú thích.
@@ -149,6 +220,9 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `SUPABASE_SERVICE_ROLE_KEY` | rỗng | Chỉ đặt ở backend, không bao giờ dùng `NEXT_PUBLIC_*` |
 | `SUPABASE_STORAGE_BUCKET` | `attachments` | Bucket private chứa nội dung file |
 | `LLM_PROVIDER` + khoá tương ứng | `groq` | `groq` \| `deepseek` \| `gemini` \| `openai` |
+| `STT_PROVIDER` | `gemini` | Provider chuyển giọng nói thành văn bản; độc lập với `LLM_PROVIDER` |
+| `STT_MODEL` | `gemini-3.5-transcribe` | Model file transcription non-live cho voice message |
+| `STT_TIMEOUT_SECONDS` | `60` | Giới hạn 1..300 giây cho một yêu cầu STT |
 | `JWT_EXPIRE_MINUTES` | 1440 | Access token **không thu hồi được** trước khi hết hạn |
 | `REFRESH_EXPIRE_DAYS` | 30 | |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | 30 | |
@@ -167,8 +241,9 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | Khoá | Bắt buộc? | Hậu quả nếu thiếu |
 |---|---|---|
 | `JWT_SECRET` | **Có** | Tiến trình dừng ngay lúc khởi động |
-| `GROQ_API_KEY` (hoặc khoá của provider đang chọn) | **Có, trên thực tế** | Server vẫn chạy, nhưng mọi tin nhắn rơi xuống đường dự phòng rồi trả nguyên bản |
-| `DATABASE_URL` | Có, khi triển khai | Mặc định là tệp SQLite trong container — mất sạch sau mỗi lần deploy |
+| Khoá của `LLM_PROVIDER` | **Có, trên thực tế** | Server vẫn chạy, nhưng dịch văn bản rơi xuống đường dự phòng hoặc trả nguyên bản |
+| `GOOGLE_API_KEY` hoặc `GEMINI_API_KEY` khi `STT_PROVIDER=gemini` | **Có để dùng voice message** | Tin voice được lưu cùng audio nhưng transcription chuyển sang `failed`; có thể retry sau khi sửa cấu hình |
+| `DATABASE_URL` | Có, khi triển khai | Phải trỏ tới PostgreSQL có pgvector; local `docker-compose.yml` publish ở `localhost:5433` |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Có, ở production** | Server từ chối khởi động nếu thiếu ở `APP_ENV=production` |
 | `AI_LOG_API_KEY`, `AI_LOG_SERVER` | Chỉ trên máy lập trình viên | Hook trước khi push không nộp được nhật ký. **Không cần** đặt trên máy chủ |
 | `BRAINTRUST_API_KEY` (hoặc `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` khi chọn Langfuse) | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |

@@ -14,6 +14,8 @@ WORKDIR /app
 
 # The virtual environment is outside /root so the non-root runtime user can
 # execute console scripts such as Alembic as well as import installed packages.
+# It includes imageio-ffmpeg's platform binary for bounded, temporary STT-only
+# conversion without the full Debian multimedia dependency closure.
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 

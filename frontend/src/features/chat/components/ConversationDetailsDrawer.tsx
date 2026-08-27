@@ -18,6 +18,7 @@ import {
   Crown,
   Pencil,
   Check,
+  Volume2,
 } from 'lucide-react';
 
 interface ConversationDetailsDrawerProps {
@@ -213,11 +214,15 @@ export const ConversationDetailsDrawer: React.FC<ConversationDetailsDrawerProps>
                 className="group w-full flex items-center gap-3 rounded-xl p-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#232630] transition-colors"
               >
                 <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-[#EFF6FF] dark:bg-[#2563EB]/20 text-[#2563EB]">
-                  <FileText className="w-4 h-4" />
+                  {attachment.type === 'audio'
+                    ? <Volume2 className="w-4 h-4" />
+                    : <FileText className="w-4 h-4" />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
-                    {attachment.name}
+                    {attachment.type === 'audio'
+                      ? interactionText(language, 'Voice message')
+                      : attachment.name}
                   </span>
                   <span className="block text-[10px] text-[#74798C] dark:text-[#9DA3B4]">
                     {attachment.size}

@@ -50,6 +50,9 @@ async def test_uploaded_file_is_recorded_and_downloadable_by_another_member(
         headers=auth_headers_for_user(test_user_two),
     )
     assert download.status_code == 200
+    assert download.content == b"%PDF-1.4 test"
+    assert download.headers["content-type"] == "application/pdf"
+    assert download.headers["content-disposition"] == 'attachment; filename="bao-cao.pdf"'
 
 
 @pytest.mark.asyncio
@@ -107,13 +110,15 @@ async def test_sending_with_an_attachment_binds_it_to_that_message(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "with-file-1",
-            "conversation_id": conversation.id,
-            "text": "Gửi anh bản kế hoạch",
-            "attachment_id": attachment_id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "with-file-1",
+                "conversation_id": conversation.id,
+                "text": "Gửi anh bản kế hoạch",
+                "attachment_id": attachment_id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     assert acknowledgement["type"] == "message_created"
@@ -169,13 +174,15 @@ async def test_a_reply_records_the_message_it_answers(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "reply-1",
-            "conversation_id": conversation.id,
-            "text": "3 giờ chiều nhé",
-            "reply_to_message_id": parent.id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "reply-1",
+                "conversation_id": conversation.id,
+                "text": "3 giờ chiều nhé",
+                "reply_to_message_id": parent.id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     assert acknowledgement["message"]["reply_to_message_id"] == parent.id
@@ -187,9 +194,7 @@ async def test_a_reply_records_the_message_it_answers(
     # Found by identity rather than by position: both messages land in the same
     # second, and SQLite's CURRENT_TIMESTAMP has no finer resolution, so the
     # order between them is decided by a random id.
-    stored_reply = next(
-        row for row in history.json() if row["client_message_id"] == "reply-1"
-    )
+    stored_reply = next(row for row in history.json() if row["client_message_id"] == "reply-1")
     assert stored_reply["reply_to_message_id"] == parent.id
 
 
@@ -217,13 +222,15 @@ async def test_a_reply_pointing_outside_the_conversation_is_dropped(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "reply-foreign",
-            "conversation_id": conversation.id,
-            "text": "Trả lời nhầm chỗ",
-            "reply_to_message_id": foreign.id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "reply-foreign",
+                "conversation_id": conversation.id,
+                "text": "Trả lời nhầm chỗ",
+                "reply_to_message_id": foreign.id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     # The message still goes through; only the bad link is discarded.
@@ -243,30 +250,32 @@ async def test_unread_counts_only_other_peoples_messages(
     """Your own messages are never unread, and neither are withdrawn ones."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     now = datetime.now(UTC)
-    test_db.add_all([
-        Message(
-            client_message_id="theirs-1",
-            conversation_id=conversation.id,
-            sender_id=test_user_two.id,
-            original_text="Tin của người khác",
-            created_at=now,
-        ),
-        Message(
-            client_message_id="mine-1",
-            conversation_id=conversation.id,
-            sender_id=test_user.id,
-            original_text="Tin của tôi",
-            created_at=now + timedelta(seconds=1),
-        ),
-        Message(
-            client_message_id="theirs-deleted",
-            conversation_id=conversation.id,
-            sender_id=test_user_two.id,
-            original_text="",
-            created_at=now + timedelta(seconds=2),
-            deleted_at=now + timedelta(seconds=3),
-        ),
-    ])
+    test_db.add_all(
+        [
+            Message(
+                client_message_id="theirs-1",
+                conversation_id=conversation.id,
+                sender_id=test_user_two.id,
+                original_text="Tin của người khác",
+                created_at=now,
+            ),
+            Message(
+                client_message_id="mine-1",
+                conversation_id=conversation.id,
+                sender_id=test_user.id,
+                original_text="Tin của tôi",
+                created_at=now + timedelta(seconds=1),
+            ),
+            Message(
+                client_message_id="theirs-deleted",
+                conversation_id=conversation.id,
+                sender_id=test_user_two.id,
+                original_text="",
+                created_at=now + timedelta(seconds=2),
+                deleted_at=now + timedelta(seconds=3),
+            ),
+        ]
+    )
     await test_db.commit()
 
     listed = (await client.get("/api/v1/conversations", headers=test_user_headers)).json()[0]

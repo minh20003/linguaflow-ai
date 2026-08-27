@@ -281,3 +281,71 @@ async def test_an_embedding_survives_a_translation_being_deleted(
 
     remaining = (await test_db.scalars(select(MessageEmbedding))).all()
     assert len(remaining) == 1
+
+
+@pytest.mark.asyncio
+async def test_text_message_database_defaults_remain_unchanged(
+    message: Message,
+) -> None:
+    """Omitting lifecycle fields must keep every existing write a text write."""
+    assert message.message_type == "text"
+    assert message.transcription_status is None
+    assert message.original_text == "Anh check lai UI giup em"
+
+
+@pytest.mark.parametrize(
+    ("status", "original_text"),
+    [
+        ("pending", ""),
+        ("completed", "Đây là toàn bộ nội dung tin nhắn thoại."),
+        ("failed", ""),
+    ],
+)
+@pytest.mark.asyncio
+async def test_database_accepts_each_valid_voice_lifecycle_state(
+    test_db: AsyncSession,
+    message: Message,
+    status: str,
+    original_text: str,
+) -> None:
+    message.message_type = "voice"
+    message.transcription_status = status
+    message.original_text = original_text
+
+    await test_db.commit()
+    await test_db.refresh(message)
+
+    assert message.message_type == "voice"
+    assert message.transcription_status == status
+    assert message.original_text == original_text
+
+
+@pytest.mark.parametrize(
+    ("message_type", "status", "original_text"),
+    [
+        ("text", "pending", "Hello"),
+        ("voice", None, ""),
+        ("voice", "pending", "Voice message"),
+        ("voice", "completed", ""),
+        ("voice", "completed", "   "),
+        ("voice", "failed", "Transcription unavailable"),
+        ("audio", None, ""),
+        ("voice", "translating", ""),
+    ],
+)
+@pytest.mark.asyncio
+async def test_database_rejects_impossible_message_lifecycle_states(
+    test_db: AsyncSession,
+    message: Message,
+    message_type: str,
+    status: str | None,
+    original_text: str,
+) -> None:
+    message.message_type = message_type
+    message.transcription_status = status
+    message.original_text = original_text
+
+    with pytest.raises(IntegrityError):
+        await test_db.commit()
+
+    await test_db.rollback()

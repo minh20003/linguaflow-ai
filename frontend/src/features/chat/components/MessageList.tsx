@@ -13,6 +13,8 @@ interface MessageListProps {
   onCopy: (text: string) => void;
   onToggleOriginal: (messageId: string) => void;
   onRetryTranslation: (messageId: string) => void;
+  onRetryTranscription: (messageId: string) => void;
+  retryingTranscriptionIds: ReadonlySet<string>;
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
@@ -33,6 +35,8 @@ export const MessageList: React.FC<MessageListProps> = ({
   onCopy,
   onToggleOriginal,
   onRetryTranslation,
+  onRetryTranscription,
+  retryingTranscriptionIds,
   onRateTranslation,
   onEditTranslation,
   onForward,
@@ -123,6 +127,8 @@ export const MessageList: React.FC<MessageListProps> = ({
               onCopy={onCopy}
               onToggleOriginal={onToggleOriginal}
               onRetryTranslation={onRetryTranslation}
+              onRetryTranscription={onRetryTranscription}
+              isRetryingTranscription={retryingTranscriptionIds.has(message.id)}
               onRateTranslation={onRateTranslation}
               onEditTranslation={onEditTranslation}
               onForward={onForward}

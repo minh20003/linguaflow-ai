@@ -13,6 +13,16 @@ langgraph>=0.2.0
 langchain-openai>=0.3.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
+# Direct dependency for the Files + Interactions APIs used by the dedicated
+# Gemini 3.5 Transcribe adapter. It is also pulled transitively by recent
+# langchain-google-genai releases, but older compatible releases do not expose
+# the Interactions API contract this service requires.
+google-genai>=2.18.1
+# Platform wheels bundle the FFmpeg executable (~25-31 MiB) used only for
+# bounded STT preprocessing of browser-native WebM/Opus, OGG/Opus and MP4/AAC.
+# This avoids the much larger Debian multimedia dependency closure while
+# keeping local and container behavior identical.
+imageio-ffmpeg>=0.6.0,<0.7.0
 langchain-mistralai>=0.2.0
 # Observability cho Agent (F-03.4). Backend chon bang OBSERVABILITY_PROVIDER;
 # mac dinh la Braintrust (ADR-29). Tich hop LangChain nam trong chinh goi
