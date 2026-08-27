@@ -2,6 +2,7 @@ import { API_BASE } from "@/config/env";
 import { getApiErrorMessage, parseJson, type ApiErrorBody } from "@/shared/api/response";
 import type { AuthUser } from "@/shared/types/auth";
 import type { Conversation, Message, MessageAttachment, User } from "../types";
+import { interactionText } from "../i18n";
 
 interface ApiMention {
   type: "user" | "assistant";
@@ -29,6 +30,8 @@ export interface ApiConversation {
   members: ApiUser[];
   last_message: string | null;
   last_message_at: string | null;
+  last_message_type?: "text" | "voice" | null;
+  last_message_transcription_status?: null | "pending" | "completed" | "failed";
   online_member_ids: string[];
   unread_count: number;
   created_by?: string;
@@ -59,6 +62,8 @@ export interface ApiMessage {
   conversation_id: string;
   sender_id: string;
   original_text: string;
+  message_type: "text" | "voice";
+  transcription_status: null | "pending" | "completed" | "failed";
   source_language: string;
   translations: ApiTranslation[];
   created_at: string;
@@ -71,6 +76,21 @@ export interface ApiMessage {
   visibility?: "public" | "private";
   is_saved?: boolean;
   reactions?: ApiMessageReaction[];
+}
+
+export interface ApiRealtimeMessage {
+  id: string;
+  conversation_id: string;
+  sender_id: string;
+  original_text: string;
+  message_type: "text" | "voice";
+  transcription_status: null | "pending" | "completed" | "failed";
+  created_at: string;
+  reply_to_message_id?: string | null;
+  forwarded_from_message_id?: string | null;
+  attachment?: ApiAttachment | null;
+  mentions?: ApiMention[];
+  assistant_generated?: boolean;
 }
 
 export interface ApiMessageReaction {
@@ -188,7 +208,11 @@ export function toChatUser(user: ApiUser | AuthUser): User {
   };
 }
 
-export function toConversation(item: ApiConversation, currentUserId: string): Conversation {
+export function toConversation(
+  item: ApiConversation,
+  currentUserId: string,
+  interfaceLanguage: User["nativeLanguage"] = "en",
+): Conversation {
   const others = item.members.filter((member) => member.id !== currentUserId);
   const recipient = others[0] ? toChatUser(others[0]) : undefined;
   const isGroup = item.type === "group";
@@ -197,6 +221,9 @@ export function toConversation(item: ApiConversation, currentUserId: string): Co
     ...member,
     onlineStatus: (item.online_member_ids.includes(member.id) ? "online" : "offline") as User["onlineStatus"],
   }));
+  const voiceWithoutTranscript = item.last_message_type === "voice"
+    && (item.last_message_transcription_status === "pending"
+      || item.last_message_transcription_status === "failed");
   return {
     id: item.id,
     type: item.type,
@@ -206,8 +233,12 @@ export function toConversation(item: ApiConversation, currentUserId: string): Co
     recipient: recipient && { ...recipient, onlineStatus: item.online_member_ids.includes(recipient.id) ? "online" : "offline" },
     members: isGroup ? members : undefined,
     memberCount: isGroup ? members.length : undefined,
-    lastMessage: item.last_message || "No messages yet",
+    lastMessage: voiceWithoutTranscript
+      ? interactionText(interfaceLanguage, "Voice message")
+      : item.last_message || "No messages yet",
     lastMessageTime: time(item.last_message_at),
+    lastMessageType: item.last_message_type ?? undefined,
+    lastMessageTranscriptionStatus: item.last_message_transcription_status ?? null,
     unreadCount: item.unread_count,
     isPinned: item.is_pinned ?? false,
     pinnedAt: item.pinned_at ?? null,
@@ -262,11 +293,14 @@ export function toMessage(
   const visibleTranslation = isSameLanguage ? undefined : translation;
   return {
     id: item.id,
+    clientMessageId: item.client_message_id,
     senderId: item.sender_id,
     senderName: isAssistant ? 'Trợ lý thông minh' : sender?.name,
     senderAvatar: isAssistant ? assistantAvatar() : sender?.avatar,
     conversationId: item.conversation_id,
     content: item.deleted_at ? "This message was deleted" : item.original_text,
+    messageType: item.message_type,
+    transcriptionStatus: item.transcription_status,
     translation: visibleTranslation ? {
       translationId: visibleTranslation.translation_id,
       originalText: item.original_text,
@@ -283,6 +317,7 @@ export function toMessage(
     } : undefined,
     timestamp: time(item.created_at),
     createdAt: item.created_at,
+    deletedAt: item.deleted_at ?? undefined,
     status: "delivered",
     replyTo: item.reply_to_message_id ? { id: item.reply_to_message_id, senderName: "Reply", content: "" } : undefined,
     forwardedFromMessageId: item.forwarded_from_message_id ?? undefined,
@@ -300,9 +335,14 @@ export function toMessage(
 }
 
 export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
+  const normalizedContentType = item.content_type.toLowerCase();
   return {
     id: item.id,
-    type: item.content_type.startsWith("image/") ? "image" : "file",
+    type: normalizedContentType.startsWith("image/")
+      ? "image"
+      : normalizedContentType.startsWith("audio/")
+        ? "audio"
+        : "file",
     name: item.filename,
     size: item.size < 1024 * 1024
       ? `${Math.max(1, Math.ceil(item.size / 1024))} KB`
@@ -310,6 +350,31 @@ export function toMessageAttachment(item: ApiAttachment): MessageAttachment {
     url: `${API_BASE}${item.download_url}`,
     contentType: item.content_type,
     createdAt: item.created_at,
+  };
+}
+
+export function toApiMessageFromRealtime(
+  item: ApiRealtimeMessage,
+  clientMessageId: string | undefined,
+  fallbackSourceLanguage: string,
+): ApiMessage {
+  return {
+    id: item.id,
+    client_message_id: clientMessageId || item.id,
+    conversation_id: item.conversation_id,
+    sender_id: item.sender_id,
+    original_text: item.original_text,
+    message_type: item.message_type,
+    transcription_status: item.transcription_status,
+    source_language: fallbackSourceLanguage,
+    translations: [],
+    created_at: item.created_at,
+    deleted_at: null,
+    reply_to_message_id: item.reply_to_message_id ?? null,
+    forwarded_from_message_id: item.forwarded_from_message_id ?? null,
+    attachment: item.attachment,
+    mentions: item.mentions,
+    assistant_generated: Boolean(item.assistant_generated),
   };
 }
 
@@ -431,6 +496,14 @@ export function removeReaction(token: string, conversationId: string, messageId:
 export function retryTranslation(token: string, conversationId: string, messageId: string, reviewRecipient = false) {
   const query = reviewRecipient ? "?review_recipient=true" : "";
   return request<{ message_id: string; status: "scheduled" }>(`/api/v1/conversations/${conversationId}/messages/${messageId}/translate${query}`, token, { method: "POST" });
+}
+export function retryVoiceTranscription(token: string, messageId: string) {
+  return request<{
+    message_id: string;
+    conversation_id: string;
+    transcription_status: "pending";
+    status: "scheduled";
+  }>(`/api/v1/messages/${messageId}/transcription/retry`, token, { method: "POST" });
 }
 export function getUserSettings(token: string) {
   return request<ApiUserSettings>("/api/v1/auth/me/settings", token);

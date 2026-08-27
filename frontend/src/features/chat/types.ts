@@ -42,7 +42,7 @@ export interface MessageReply {
 
 export interface MessageAttachment {
   id: string;
-  type: 'image' | 'file';
+  type: 'image' | 'file' | 'audio';
   url: string;
   name: string;
   size?: string;
@@ -57,14 +57,18 @@ export interface MessageMention {
 
 export interface Message {
   id: string;
+  clientMessageId?: string;
   senderId: string;
   senderName?: string;
   senderAvatar?: string;
   conversationId: string;
   content: string;
+  messageType: 'text' | 'voice';
+  transcriptionStatus: null | 'pending' | 'completed' | 'failed';
   translation?: TranslationData;
   timestamp: string;
   createdAt?: string;
+  deletedAt?: string;
   status: 'sending' | 'sent' | 'delivered' | 'read';
   replyTo?: MessageReply;
   forwardedFromMessageId?: string;
@@ -91,6 +95,8 @@ export interface Conversation {
   recipient?: User;
   lastMessage: string;
   lastMessageTime: string;
+  lastMessageType?: 'text' | 'voice';
+  lastMessageTranscriptionStatus?: null | 'pending' | 'completed' | 'failed';
   unreadCount: number;
   isTyping?: boolean;
   typingUser?: string;

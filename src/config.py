@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     mistral_api_key: str = ""
 
+    # Speech-to-text is configured independently from LLM_PROVIDER. Gemini STT
+    # reuses the existing GOOGLE_API_KEY/GEMINI_API_KEY resolution above, but
+    # changing either provider/model role must never mutate the other.
+    stt_provider: Literal["gemini"] = "gemini"
+    stt_model: str = "gemini-3.5-transcribe"
+    stt_timeout_seconds: int = Field(default=60, ge=1, le=300)
+
     # Google Identity Services authentication, and Google Calendar (ADR-35).
     #
     # The client ID is not a secret — the browser needs the same value to

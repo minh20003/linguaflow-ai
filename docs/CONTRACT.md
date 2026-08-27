@@ -60,7 +60,12 @@ Hai trường khác nhau ở thời điểm có hiệu lực, và đây là đi�
 
 **Giao diện phải có đủ nhãn cho toàn bộ ngôn ngữ hệ thống hỗ trợ** — tức cả 14 mã trong `SUPPORTED_LANGUAGES` (`src/schemas/auth.py`), cùng danh sách mà `GET /languages` trả về. Không có ngôn ngữ hạng hai: đã cho chọn trong ô ngôn ngữ thì phải có nhãn.
 
-Cơ chế lùi về `en` cho từng nhãn còn thiếu (quy tắc `altLabel` sẵn có ở `frontend-v1/src/shared/lib/i18n.ts`) vẫn giữ, nhưng từ nay nó là **lưới an toàn cho lúc thêm nhãn mới**, không phải cách làm bình thường: thêm một nhãn vào giao diện mà chưa dịch thì người dùng `ar` thấy đúng dòng đó bằng tiếng Anh chứ không thấy chuỗi khoá hay màn hình trắng.
+Cơ chế lùi về `en` cho từng nhãn còn thiếu (catalog đang áp dụng ở
+`frontend/src/features/chat/i18n.ts`) vẫn giữ, nhưng từ nay nó là **lưới an toàn
+cho lúc thêm nhãn mới**, không phải cách làm bình thường: thêm một nhãn vào giao
+diện mà chưa dịch thì người dùng `ar` thấy đúng dòng đó bằng tiếng Anh chứ không
+thấy chuỗi khoá hay màn hình trắng. `frontend-v1/` là cây legacy, không phải
+frontend production.
 
 ### 1.3. Ngôn ngữ trước khi đăng nhập
 
@@ -170,6 +175,7 @@ Ba endpoint thuộc nhóm `/auth` đã được hiện thực hoá tại nhánh 
 | `DELETE` | `/conversations/{conversation_id}/messages/{message_id}` | — | `204 No Content` | Đã hiện thực |
 | `POST` | `/conversations/{conversation_id}/attachments` | `multipart/form-data`, trường `file` | `AttachmentDTO`, xem §3.7 | Đã hiện thực |
 | `GET` | `/conversations/{conversation_id}/attachments/{attachment_id}` | — | Nội dung tệp | Đã hiện thực |
+| `POST` | `/messages/{message_id}/transcription/retry` | — | `202`, `{"message_id", "conversation_id", "transcription_status":"pending", "status":"scheduled"}` | Đã hiện thực; chỉ retry voice `failed` còn audio hợp lệ |
 | `POST` | `/conversations/{conversation_id}/read` | — | `{"unread_count": 0}` | Đã hiện thực |
 | `GET` | `/conversations` | — | `[ConversationDTO]`, xem §3.5 | Đã hiện thực |
 | `GET` | `/stats?days=` | — | Xem §3.4 | Đã hiện thực |
@@ -265,7 +271,10 @@ Google hoạt động như một nhà cung cấp xác thực đầy đủ (Full 
   "id": "uuid",
   "conversation_id": "uuid",
   "sender_id": "uuid",
+  "client_message_id": "uuid-or-client-id",
   "original_text": "string",
+  "message_type": "text",
+  "transcription_status": null,
   "source_language": "vi",
   "created_at": "2026-08-10T09:00:00Z",
   "translations": [
@@ -378,6 +387,13 @@ Lý do không đẩy qua socket: xác định "ai cần biết" đòi hỏi mộ
 
 Hai trường `last_message` và `last_message_at` mô tả tin nhắn mới nhất của hội thoại, `null` khi hội thoại chưa có tin nào.
 
+`ConversationDTO` còn mang `last_message_type` và
+`last_message_transcription_status`. Với voice `pending`/`failed`, server giữ
+`last_message` rỗng đúng dữ liệu bền vững và frontend hiển thị nhãn i18n “Voice
+message”; không ghi placeholder vào message. Với voice `completed`, quy tắc
+preview bản dịch/`original_text` ngay dưới đây được dùng y hệt text. Timestamp,
+unread và ordering không đổi.
+
 **Tin mới nhất đã bị gỡ thì `last_message` là chuỗi rỗng, `last_message_at` vẫn giữ nguyên** (sửa 16/08). Trước đây tin đã gỡ bị loại khỏi phép tính, nên dòng xem trước lùi về tin trước đó — hoặc trống hẳn khi không còn tin nào — và người dùng không có cách nào biết chuyện gì vừa xảy ra. Chuỗi rỗng là tín hiệu không nhập nhằng vì tin nhắn thường **không bao giờ** rỗng: endpoint gửi tin từ chối nội dung trắng (§3.6). Câu chữ hiển thị ("Tin nhắn đã được thu hồi") do client quyết định — đó là chữ giao diện và phải theo ngôn ngữ người đọc, không phải thứ server áp đặt. Chúng tồn tại để danh sách hội thoại hiển thị được dòng xem trước và thời gian mà không phải gọi thêm một request cho mỗi hội thoại.
 
 `last_message` là **dữ liệu riêng theo người gọi**, cùng nguyên tắc với `my_rating` ở §3.2: nếu tin nhắn đó đã có bản dịch sang `preferred_language` của tài khoản đang gọi thì trả về bản dịch, không thì trả về `original_text`. Lý do: danh sách hội thoại mà hiển thị thứ tiếng người đọc không hiểu thì không dùng để nhận ra hội thoại được. Vì vậy tuyệt đối không cache chung giá trị này giữa các tài khoản.
@@ -420,6 +436,39 @@ Tệp được tải lên **trước**, sau đó mới gửi tin nhắn kèm `at
 `MessageDTO` mang thêm `attachment` (AttachmentDTO hoặc `null`) và `reply_to_message_id` (uuid hoặc `null`).
 
 `reply_to_message_id` dùng `ON DELETE SET NULL`: gỡ tin nhắn gốc **không** kéo theo các tin trả lời nó — đó là lời của người khác. Client thấy `reply_to_message_id` trỏ tới tin đã bị gỡ thì hiển thị trích dẫn rỗng chứ không ẩn cả tin trả lời.
+
+#### 3.7.1. Voice message ghi âm
+
+Voice là **tin nhắn ghi âm**, không phải media của cuộc gọi. Client tải audio qua
+endpoint attachment có xác thực, sau đó gửi `send_voice_message` (§4.1). Server
+không tin `sender_id`, `message_type` hay lifecycle do client đưa lên: danh tính
+đến từ JWT; attachment phải thuộc cùng hội thoại, do đúng người gửi upload, chưa
+được claim và có MIME/container audio hợp lệ. Việc tạo Message và claim attachment
+là một transaction.
+
+Các invariant bền vững:
+
+| `message_type` | `transcription_status` | `original_text` |
+|---|---|---|
+| `text` | `null` | nội dung text khác rỗng |
+| `voice` | `pending` | `""` |
+| `voice` | `completed` | transcript nguyên ngôn ngữ, khác rỗng |
+| `voice` | `failed` | `""` |
+
+Gemini 3.5 Transcribe chỉ làm STT ở `mode=verbatim`, tự phát hiện ngôn ngữ; file
+provider là bản sao tạm và bị xoá best-effort. WebM/Opus, OGG/Opus và MP4/AAC
+từ MediaRecorder được giữ nguyên trong attachment; backend có thể chuyển mã tạm
+sang FLAC chỉ để gửi STT. Audio, filename, MIME và URI provider không bao giờ đi
+vào Translation Agent. Chỉ sau commit `pending → completed`, các service
+text-dependent hiện có mới đọc lại `Message.original_text` và chạy pipeline dịch,
+context, glossary, tone/honorific, commitment/profile/embedding như text.
+
+Retry chỉ dành cho thành viên hiện tại, message chưa xoá, `message_type=voice`,
+`transcription_status=failed` và attachment gốc vẫn gắn đúng message. Nó dùng lại
+cùng message/audio và guarded update `failed → pending`; chỉ request thắng update
+mới khởi chạy detached STT task. History REST là nguồn phục hồi sau refresh hoặc
+bỏ lỡ event, không cần replay event. Các nhãn “Voice message”, “Transcribing…” và
+“Transcription unavailable” chỉ là i18n UI, không được ghi vào `original_text`.
 
 ### 3.8. Đếm chưa đọc
 
@@ -854,6 +903,7 @@ Mọi thông điệp trên kênh WebSocket bắt buộc chứa trường `type` 
 | `user.message` | `{"type": "user.message", "text": "string"}` | Gửi tin nhắn mới |
 | `typing` | `{"type": "typing", "conversation_id": uuid, "is_typing": bool}` | Người dùng bắt đầu hoặc ngừng soạn tin. Server kiểm tra tư cách thành viên rồi mới phát tiếp |
 | `send_message` | thêm hai trường tuỳ chọn `attachment_id` và `reply_to_message_id` | Gửi tin kèm tệp đã tải lên trước đó (§3.7) hoặc trả lời một tin cụ thể |
+| `send_voice_message` | `{"type":"send_voice_message", "client_message_id", "conversation_id", "attachment_id", "reply_to_message_id"?}` | Claim audio đã upload và tạo voice `pending`; không có trường text hoặc lifecycle từ client |
 
 ### 4.2. Chiều Server đến Client
 
@@ -868,6 +918,9 @@ Trình tự sự kiện khi cần dịch: `message.received` (trạng thái `str
 | `message_updated` | `{"type": "message_updated", "message_id", "conversation_id", "original_text", "edited_at"}` | Sau khi người gửi sửa tin nhắn (§3.6). Phát tới các thành viên khác; bản dịch mới đến sau bằng `translation_completed` như tin nhắn thường |
 | `message_deleted` | `{"type": "message_deleted", "message_id", "conversation_id", "deleted_at"}` | Sau khi người gửi gỡ tin nhắn (§3.6). Phát tới các thành viên khác |
 | `message_read` | `{"type": "message_read", "conversation_id", "user_id", "read_at"}` | Khi một thành viên đánh dấu đã đọc (§3.8). Phát tới các thành viên khác để họ đổi dấu ✓ thành ✓✓ |
+| `message_created` / `message_received` | `{"type", "message": RealtimeMessage, ...}` | Ack cho sender / giao cho recipients sau commit. Voice mới mang `message_type="voice"`, `transcription_status="pending"`, `original_text=""` và attachment audio |
+| `voice_transcription_completed` | `{"type":"voice_transcription_completed", "message_id", "conversation_id", "original_text", "source_language", "transcription_status":"completed"}` | Chỉ sau khi transcript nguyên văn đã commit; `translation_completed` tiếp tục qua handler chung |
+| `voice_transcription_failed` | `{"type":"voice_transcription_failed", "message_id", "conversation_id", "transcription_status":"failed", "retryable":true}` | Chỉ sau khi trạng thái failed và `original_text=""` đã commit; không lộ provider detail |
 | `error` | `{"type": "error", "code": "string", "message": "string"}` | Khi phát sinh lỗi kết nối hoặc xác thực (xem §6) |
 
 **Góp ý bản dịch (§3.10) không có sự kiện WebSocket nào.** Bản góp ý là dữ liệu riêng của người viết, không ai khác đọc được, nên không có gì để phát đi — phản hồi của lời gọi REST là đủ. Việc "người nhận thấy nội dung mới" thuộc về §3.6: người gửi sửa **tin nhắn gốc**, server dịch lại, cả phòng nhận `message_updated` rồi `translation_completed` như một tin nhắn thường và bóng chat hiện trạng thái đã sửa. Đừng gộp hai luồng này.
@@ -1020,6 +1073,22 @@ nhưng không trả token phòng. Người nhận gọi `POST /calls/{call_id}/a
 Các sự kiện `call_rejected`, `call_ended`, `call_failed` chỉ mang trạng thái
 phiên, tuyệt đối không mang API key/token của nhà cung cấp RTC. Đây là media RTC
 bình thường, không có dịch giọng nói, STT, TTS hay phụ đề trực tiếp.
+
+### 5.3. Schema lifecycle của voice message
+
+Migration `a3f1c7e9b2d4` (down revision `9c4d2e7f1a6b`) thêm
+`messages.message_type` (`text|voice`, mặc định/backfill `text`) và
+`messages.transcription_status` (`null|pending|completed|failed`). Ba CHECK
+constraint thực thi bảng invariant ở §3.7.1 ngay tại PostgreSQL: text luôn có
+status null; voice pending/failed luôn có text rỗng; completed bắt buộc
+`length(trim(original_text)) > 0`.
+
+Không có bảng transcript riêng. `messages.original_text` là canonical transcript
+và cũng là nguồn duy nhất mà `DatabaseContextProvider`, search, translation và
+các service text-dependent đọc. Vì pending/failed giữ chuỗi rỗng, chúng tự bị
+loại khỏi context/search; completed voice tham gia mọi tổ hợp text→voice,
+voice→text và voice→voice giống một dòng text. Attachment audio chỉ liên kết qua
+`attachments.message_id`; provider file URI/name không được persist.
 
 ## 6. Đặc tả lỗi
 

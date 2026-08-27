@@ -66,6 +66,7 @@ from src.services import correction_log as correction_log_module
 from src.services import message_memory as message_memory_module
 from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
+from src.services import voice_transcription as voice_transcription_module
 from src.services.connection_manager import ConnectionManager
 
 # ========================
@@ -242,6 +243,7 @@ async def _settle_background_translations() -> None:
         *profile_inference_module._BACKGROUND_TASKS,
         *message_memory_module._BACKGROUND_TASKS,
         *correction_log_module._BACKGROUND_TASKS,
+        *voice_transcription_module._BACKGROUND_TASKS,
     )
     pending = [task for task in tracked if not task.done()]
     for task in pending:
