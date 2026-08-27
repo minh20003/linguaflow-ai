@@ -102,6 +102,12 @@ AGENT_CONSENT_SCOPES = (
     "calendar_write",
 )
 
+# Who a stored message may be read by. `public` means every member of its
+# conversation, which is what an ordinary chat message is and therefore the
+# server default: an existing row predates this column and was visible to
+# everybody. `private` means exactly the account in `visible_to_user_id`.
+MESSAGE_VISIBILITIES = ("public", "private")
+
 # Stamped onto every grant. When this list changes, existing grants must not
 # silently extend to a scope the user was never shown: the interface compares a
 # row's version against this constant and asks again. Without it, adding a sixth
@@ -544,6 +550,16 @@ class Message(Base):
             name="uq_messages_sender_conversation_client_message",
         ),
         Index("ix_messages_conversation_created_at_id", "conversation_id", "created_at", "id"),
+        CheckConstraint(
+            _in_clause("visibility", MESSAGE_VISIBILITIES),
+            name="ck_messages_visibility",
+        ),
+        # A private message nobody is named on would be readable by no one and
+        # deletable by no process that knows to look for it.
+        CheckConstraint(
+            "visibility = 'public' OR visible_to_user_id IS NOT NULL",
+            name="ck_messages_private_names_a_reader",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -569,6 +585,22 @@ class Message(Base):
     # Assistant replies are ordinary durable messages, but the UI renders them
     # as the in-thread assistant rather than as the member who invoked it.
     assistant_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    # Who may read this row. `public` is every member, and is what an ordinary
+    # message is; `private` is the person named below and nobody else.
+    #
+    # This exists because the assistant answers a mention inside a group, and
+    # its answer can summarise what other people committed to. Delivered to the
+    # whole group that is both noisy and a disclosure about members who never
+    # asked for it, so the answer belongs to the person who invoked it (ADR-31).
+    #
+    # Enforced in the WHERE clause of every read, never by dropping rows after
+    # fetching them: a filter in the serializer still puts the text on the wire.
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="public", server_default="public"
+    )
+    visible_to_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     # Provisional on insert — it is the sender's preferred_language, which says
     # what they usually write in, not what this message is in. The agent's
     # detect_language node overwrites it (docs/CONTRACT.md section 4.3).
