@@ -68,6 +68,7 @@ export interface ApiMessage {
   attachment?: ApiAttachment | null;
   mentions?: ApiMention[];
   assistant_generated?: boolean;
+  visibility?: "public" | "private";
   is_saved?: boolean;
   reactions?: ApiMessageReaction[];
 }
@@ -288,6 +289,7 @@ export function toMessage(
     attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
     mentions: item.mentions?.map((mention) => ({ type: mention.type, userId: mention.user_id ?? undefined })),
     isAssistant,
+    isPrivate: item.visibility === "private",
     isSaved: item.is_saved ?? false,
     reactions: item.reactions?.map((reaction) => ({
       emoji: reaction.emoji,
