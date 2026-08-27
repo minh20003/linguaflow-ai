@@ -1,0 +1,250 @@
+name: Build immutable production images
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full 40-character SHA from approved develop_v2 history
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: linguaflow-production
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Validate approved release SHA
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      ci_run_id: ${{ steps.ci.outputs.ci_run_id }}
+    steps:
+      - name: Checkout workflow repository context
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate immutable SHA and develop_v2 ancestry
+        id: release
+        shell: bash
+        env:
+          RELEASE_SHA_INPUT: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_SHA_INPUT" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+            echo 'release_sha must be exactly 40 hexadecimal characters.' >&2
+            exit 1
+          fi
+
+          release_sha="${RELEASE_SHA_INPUT,,}"
+          git fetch --no-tags origin develop_v2
+          git cat-file -e "${release_sha}^{commit}"
+          if ! git merge-base --is-ancestor "$release_sha" origin/develop_v2; then
+            echo 'release_sha is not an ancestor of approved origin/develop_v2 history.' >&2
+            exit 1
+          fi
+
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful push CI for this exact SHA
+        id: ci
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          runs_json="$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&status=completed&head_sha=${RELEASE_SHA}&per_page=100")"
+          ci_run_id="$(jq -r --arg sha "$RELEASE_SHA" '
+            [.workflow_runs[]
+              | select(.event == "push" and .head_sha == $sha and .conclusion == "success")
+              | .id]
+            | first // empty
+          ' <<< "$runs_json")"
+          if [[ -z "$ci_run_id" ]]; then
+            echo 'No successful push CI run exists for this exact release SHA.' >&2
+            exit 1
+          fi
+
+          echo "ci_run_id=$ci_run_id" >> "$GITHUB_OUTPUT"
+
+  build-or-reuse:
+    name: Build or reuse immutable production images
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      release_sha: ${{ needs.gate.outputs.release_sha }}
+      backend_image: ${{ steps.images.outputs.backend_image }}
+      frontend_image: ${{ steps.images.outputs.frontend_image }}
+      backend_digest: ${{ steps.build_evidence.outputs.backend_digest || steps.reuse_evidence.outputs.backend_digest }}
+      frontend_digest: ${{ steps.build_evidence.outputs.frontend_digest || steps.reuse_evidence.outputs.frontend_digest }}
+      image_status: ${{ steps.image_state.outputs.image_status }}
+    steps:
+      - name: Checkout the approved release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Require public frontend build configuration
+        shell: bash
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$NEXT_PUBLIC_API_URL" ]] \
+            || { echo 'NEXT_PUBLIC_API_URL Actions Variable is required.' >&2; exit 1; }
+          [[ -n "$NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID" ]] \
+            || { echo 'NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID Actions Variable is required.' >&2; exit 1; }
+
+      - name: Define immutable image references
+        id: images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          echo "backend_image=ghcr.io/ai20k-build-phase-cohort-3/p-217-backend:$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=ghcr.io/ai20k-build-phase-cohort-3/p-217-frontend:$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine exact-SHA image state without overwrite
+        id: image_state
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          image_presence() {
+            local image result
+            image=$1
+            if result="$(docker buildx imagetools inspect "$image" --raw 2>&1)"; then
+              printf '%s\n' present
+              return 0
+            fi
+
+            if grep -Eqi 'manifest unknown|name unknown|not found|404' <<< "$result"; then
+              printf '%s\n' absent
+              return 0
+            fi
+
+            echo "Could not safely determine existing-image state for $image." >&2
+            return 1
+          }
+
+          backend_state="$(image_presence "$BACKEND_IMAGE")"
+          frontend_state="$(image_presence "$FRONTEND_IMAGE")"
+          case "$backend_state:$frontend_state" in
+            absent:absent)
+              echo 'Both exact-SHA images are absent; a new immutable release will be built.'
+              echo 'image_status=build' >> "$GITHUB_OUTPUT"
+              ;;
+            present:present)
+              echo 'Both exact-SHA images already exist; they will be validated and reused.'
+              echo 'image_status=reuse' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'PARTIAL RELEASE STATE: exactly one SHA-tagged image exists. Operator review is required; no image will be overwritten or deleted.' >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate existing immutable image metadata
+        id: reuse_evidence
+        if: steps.image_state.outputs.image_status == 'reuse'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          docker pull "$BACKEND_IMAGE"
+          docker pull "$FRONTEND_IMAGE"
+
+          backend_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$BACKEND_IMAGE")"
+          frontend_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$FRONTEND_IMAGE")"
+          [[ "$backend_revision" == "$RELEASE_SHA" ]] \
+            || { echo 'Existing backend image revision metadata does not match release SHA.' >&2; exit 1; }
+          [[ "$frontend_revision" == "$RELEASE_SHA" ]] \
+            || { echo 'Existing frontend image revision metadata does not match release SHA.' >&2; exit 1; }
+
+          backend_digest="$(docker image inspect --format '{{ index .RepoDigests 0 }}' "$BACKEND_IMAGE")"
+          frontend_digest="$(docker image inspect --format '{{ index .RepoDigests 0 }}' "$FRONTEND_IMAGE")"
+          [[ "$backend_digest" == *@sha256:* ]] \
+            || { echo 'Existing backend image did not provide an immutable digest.' >&2; exit 1; }
+          [[ "$frontend_digest" == *@sha256:* ]] \
+            || { echo 'Existing frontend image did not provide an immutable digest.' >&2; exit 1; }
+
+          echo "backend_digest=${backend_digest#*@}" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=${frontend_digest#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish backend image
+        id: build_backend
+        if: steps.image_state.outputs.image_status == 'build'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.backend_image }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.gate.outputs.release_sha }}
+            org.opencontainers.image.source=https://github.com/AI20K-Build-Phase-Cohort-3/P-217
+          cache-from: type=gha,scope=linguaflow-backend
+          cache-to: type=gha,mode=max,scope=linguaflow-backend
+
+      - name: Build and publish frontend image
+        id: build_frontend
+        if: steps.image_state.outputs.image_status == 'build'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.frontend_image }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.gate.outputs.release_sha }}
+            org.opencontainers.image.source=https://github.com/AI20K-Build-Phase-Cohort-3/P-217
+          cache-from: type=gha,scope=linguaflow-frontend
+          cache-to: type=gha,mode=max,scope=linguaflow-frontend
+
+      - name: Record newly published image digests
+        id: build_evidence
+        if: steps.image_state.outputs.image_status == 'build'
+        shell: bash
+        env:
+          BACKEND_DIGEST: ${{ steps.build_backend.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.build_frontend.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$BACKEND_DIGEST" == sha256:* ]] \
+            || { echo 'Backend build did not return an immutable digest.' >&2; exit 1; }
+          [[ "$FRONTEND_DIGEST" == sha256:* ]] \
+            || { echo 'Frontend build did not return an immutable digest.' >&2; exit 1; }
+          echo "backend_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
