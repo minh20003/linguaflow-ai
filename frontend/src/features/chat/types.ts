@@ -77,6 +77,10 @@ export interface Message {
   attachments?: MessageAttachment[];
   mentions?: MessageMention[];
   isAssistant?: boolean;
+  /** True for an assistant answer nobody else in the conversation can read.
+   *  Purely a label: the backend already excluded it from everyone else's
+   *  queries, so this never decides whether to render (ADR-31). */
+  isPrivate?: boolean;
   dateDivider?: string;
 }
 
@@ -126,4 +130,4 @@ export interface ToastItem {
   timestamp?: number;
 }
 
-export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'settings';
+export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'tasks' | 'settings';

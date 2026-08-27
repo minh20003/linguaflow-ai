@@ -93,6 +93,49 @@ graph TD
 | langdetect mâu thuẫn, cần dịch | 2 | ~2800ms |
 | LLM lỗi, provider dự phòng dịch thay | 1 (thất bại) | phụ thuộc mạng, giới hạn bởi `FALLBACK_TRANSLATOR_TIMEOUT_SECONDS` |
 
+### 2.1. Assistant Agent — planner-executor có cổng người duyệt
+
+Agent thứ hai, chạy song song và độc lập với agent dịch (`docs/NewFeature.md` §1.1).
+Khác ba điểm: kích hoạt **theo yêu cầu** chứ không tự động, chấp nhận độ trễ **giây** chứ
+không phải mili-giây, và đầu ra là **hàng dữ liệu chờ người duyệt** chứ không phải văn bản
+giao ngay.
+
+```mermaid
+graph TD
+    START([Kích hoạt: @assistant hoặc chat riêng]) --> Perm{Đã cấp quyền<br/>read_conversations?}
+    Perm -->|Chưa| Ask[Trả lời bằng lời:<br/>cần bật quyền nào] --> END1([Kết thúc])
+    Perm -->|Rồi| Mem[load_memory<br/>cửa sổ thời gian + truy hồi ngữ nghĩa]
+    Mem --> Plan[plan — model lớn<br/>xuất danh sách thao tác có cấu trúc]
+    Plan --> Route{route}
+
+    Route -->|summarize| Sum[Tóm tắt B-03] --> Resp
+    Route -->|extract_actions| Ext[Trích việc B-04]
+    Route -->|không thao tác nào| Resp
+
+    Ext --> Any{Có đề xuất nào?}
+    Any -->|Không| Resp
+    Any -->|Có| HC[[human_confirm<br/>interrupt&#40;&#41; — treo lượt chạy]]
+
+    HC -->|Command&#40;resume&#41;| Exec[execute<br/>confirm_proposal từng mục được duyệt]
+    Exec --> Resp[respond] --> END2([Kết thúc])
+
+    style HC fill:#fde68a,stroke:#b45309
+```
+
+**`human_confirm` là ràng buộc bắt buộc, không có đường vòng** — không việc nào tới lịch
+mà không có người nói đồng ý. Node này gọi `interrupt()` thật của LangGraph, tức là lượt
+chạy **treo lại** chứ không phải chỉ ghi một hàng rồi kết thúc.
+
+Điểm cần hiểu đúng: chỗ treo nằm trong checkpointer **trong bộ nhớ tiến trình**, còn thứ
+sống sót qua restart là các hàng `action_proposals` mà node đã ghi **trước khi** treo. Mất
+chỗ treo thì các hàng vẫn còn, và endpoint duyệt thực thi thẳng từ chúng — một hàm tác
+dụng, hai chỗ kích hoạt (ADR-32).
+
+`plan` không được tự do chọn công cụ: nó xuất danh sách thao tác có cấu trúc và `route`
+mới dispatch, nên tập việc có thể xảy ra **cố định trong mã**. Tên thao tác lạ bị loại bỏ,
+vì `route` so khớp bằng phép bằng và một tên bịa sẽ không tới executor nào — lượt chạy kết
+thúc trông như thành công mà không làm gì.
+
 ## 3. Data Flow
 
 ```mermaid
@@ -131,6 +174,12 @@ erDiagram
     messages ||--o{ translation_attempts : attempted
     translation_results ||--o{ feedbacks : receives
     translation_results |o--o{ translation_attempts : "produced (nullable)"
+    users ||--o{ agent_consents : grants
+    users ||--o{ calendar_events : owns
+    users ||--o{ reminders : owed
+    users ||--o| calendar_links : links
+    action_proposals |o--o{ calendar_events : "scheduled as (nullable)"
+    calendar_events ||--o{ reminders : "nudges"
 
     users {
         string id PK
@@ -203,6 +252,45 @@ erDiagram
         string fallback_reason "mã máy đọc, rỗng khi không fallback"
         string translation_id FK "NULL, ON DELETE SET NULL"
         datetime created_at
+    }
+    agent_consents {
+        string id PK
+        string user_id FK
+        string scope "read_conversations | proactive_scan | store_memory | calendar_read | calendar_write"
+        boolean is_granted "mặc định false — không có hàng nghĩa là chưa cấp"
+        datetime granted_at
+        datetime revoked_at "giữ hàng khi thu hồi, để phân biệt chưa hỏi với đã từ chối"
+        string policy_version
+    }
+    calendar_events {
+        string id PK
+        string user_id FK
+        string action_proposal_id FK "SET NULL — nguồn gốc sống lâu hơn đề xuất"
+        string source "assistant | manual | google"
+        string title
+        datetime starts_at
+        datetime ends_at
+        string status "active | cancelled — không xoá hàng"
+        string google_event_id
+        string google_etag "so trước khi áp thay đổi đến, chặn vòng lặp đồng bộ"
+        string sync_state "local_only | pending_push | synced | remote_only"
+    }
+    reminders {
+        string id PK
+        string user_id FK
+        string calendar_event_id FK
+        datetime remind_at
+        datetime delivered_at "NULL = chưa gửi; cũng là hàng đợi của scheduler"
+        datetime dismissed_at
+    }
+    calendar_links {
+        string user_id PK "một liên kết mỗi người hoặc không có"
+        string google_calendar_id
+        string refresh_token_encrypted "Fernet — không bao giờ lưu dạng rõ"
+        string sync_token "con trỏ incremental của Google; 410 = hết hạn"
+        boolean sync_enabled
+        datetime last_synced_at
+        string last_sync_error
     }
 ```
 
@@ -304,6 +392,56 @@ sequenceDiagram
 | 5 | Với chat nhóm, hệ thống thực hiện một lần dịch cho mỗi ngôn ngữ đích, không phải cho mỗi người nhận |
 | 6 | Mọi sự kiện từ Agent đều đi qua Chat Service. Agent độc lập với tầng truyền tải WebSocket |
 | 7 | Glossary thuộc phạm vi Post-MVP, sẽ được chèn vào bước "Build prompt" khi triển khai. Không có trong luồng MVP |
+
+### 5.1. Từ một lời hứa trong chat đến lịch Google
+
+```mermaid
+sequenceDiagram
+    participant U as Người dùng
+    participant WS as WebSocket
+    participant AG as Assistant Agent
+    participant DB as PostgreSQL
+    participant SC as Scheduler
+    participant GC as Google Calendar
+
+    U->>WS: "Tôi sẽ gửi báo cáo sáng mai lúc 9h"
+    WS-->>U: message_created
+    Note over WS,AG: Tách rời khỏi đường gửi tin —<br/>không bao giờ làm chậm hay hỏng việc gửi
+
+    WS->>AG: quét chủ động (cần quyền proactive_scan)
+    AG->>DB: ghi action_proposals (pending_confirmation)
+    AG-->>U: action_proposal_created (chỉ chủ sở hữu)
+    Note over AG: Graph treo ở human_confirm.<br/>Chưa có gì trên lịch.
+
+    U->>DB: POST /action-proposals/{id}/confirm
+    activate DB
+    Note over DB: Cùng MỘT giao dịch:<br/>chuyển trạng thái + tạo calendar_events + reminders.<br/>Duyệt thành công không thể để lại lịch trống.
+    DB-->>U: proposal confirmed
+    deactivate DB
+
+    loop mỗi 60s
+        SC->>DB: UPDATE reminders WHERE remind_at <= now()<br/>AND delivered_at IS NULL RETURNING
+        DB-->>SC: các hàng đã giành được
+        SC-->>U: reminder_due
+    end
+
+    loop mỗi 5 phút
+        SC->>GC: đẩy các mục pending_push
+        GC-->>SC: google_event_id + etag → lưu lại
+        SC->>GC: events.list kèm syncToken
+        GC-->>SC: chỉ phần thay đổi
+        Note over SC: etag trùng cái đã lưu = bản ghi của chính ta<br/>quay về → BỎ QUA, nếu không hai bên vọng nhau mãi
+        SC->>DB: áp thay đổi thật
+        SC-->>U: calendar_event_updated
+    end
+```
+
+**Ba chỗ dễ làm sai, đánh dấu sẵn trên sơ đồ.** Việc tạo mục lịch nằm **trong cùng giao
+dịch** với lần chuyển trạng thái, vì `UPDATE` có điều kiện là thứ chọn ra đúng một người
+thắng khi duyệt đồng thời. Scheduler **giành hàng bằng một `UPDATE` duy nhất** chứ không
+đọc rồi ghi, nên hai lượt quét chồng nhau không thể cùng gửi một lời nhắc. Và **so etag
+trước khi áp** thay đổi đến — thiếu bước này thì ta đẩy lên, Google báo về, ta áp vào rồi
+đánh dấu cần đẩy tiếp, và hai bên trao qua trao lại mãi mà lịch vẫn trông đúng.
 
 ## 6. Use Case Diagram
 

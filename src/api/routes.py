@@ -33,7 +33,8 @@ from src.agents.conversation_intelligence.errors import (
 )
 from src.api.websocket import get_connection_manager
 from src.config import get_settings
-from src.core.deps import get_current_user
+from src.core.crypto import encrypt as encrypt_secret
+from src.core.deps import get_current_user, get_user_by_token
 from src.core.security import (
     create_access_token,
     create_refresh_token,
@@ -43,8 +44,11 @@ from src.core.security import (
 )
 from src.database import get_db
 from src.database.models import (
+    AGENT_CONSENT_POLICY_VERSION,
     Attachment,
     BlockedUser,
+    CalendarEvent,
+    CalendarLink,
     CallSession,
     Conversation,
     ConversationMember,
@@ -55,6 +59,11 @@ from src.database.models import (
     RefreshSession,
     TranslationResult,
     User,
+)
+from src.schemas.agent_consent import (
+    AgentConsentEntry,
+    AgentConsentsResponse,
+    AgentConsentsUpdate,
 )
 from src.schemas.auth import (
     SUPPORTED_LANGUAGES,
@@ -78,6 +87,17 @@ from src.schemas.auth import (
     UserSettingsResponse,
     UserSettingsUpdate,
     VerifyRegisterRequest,
+)
+from src.schemas.calendar import (
+    CalendarCapabilityResponse,
+    CalendarEventCreateRequest,
+    CalendarEventResponse,
+    CalendarEventUpdateRequest,
+    CalendarLinkResponse,
+    CalendarSyncResultResponse,
+    GoogleAuthorizeResponse,
+    GoogleCalendarCallbackRequest,
+    ReminderResponse,
 )
 from src.schemas.chat import (
     AttachmentResponse,
@@ -130,6 +150,12 @@ from src.services.action_proposals import (
     ActionProposalService,
     ActionProposalStatusError,
 )
+from src.services.agent_consent import (
+    get_consents,
+    has_consent,
+    require_consent,
+    set_consents,
+)
 from src.services.attachment_storage import (
     AttachmentStorage,
     AttachmentStorageError,
@@ -141,6 +167,12 @@ from src.services.blocking import (
     list_blocked_user_ids,
     unblock_user,
 )
+from src.services.calendar import (
+    CalendarEventNotFoundError,
+    CalendarEventReadOnlyError,
+    CalendarService,
+)
+from src.services.calendar_push import schedule_calendar_push
 from src.services.chat import (
     ChatService,
     ChatServiceError,
@@ -166,6 +198,14 @@ from src.services.email import (
     send_registration_otp_email,
 )
 from src.services.google_auth import GoogleAuthError, GoogleUserInfo, verify_google_token
+from src.services.google_calendar import (
+    GoogleCalendarError,
+    GoogleCalendarNotLinkedError,
+    build_authorization_url,
+    exchange_code,
+    is_configured_for_calendar,
+    sync_user,
+)
 from src.services.profiles import (
     profile_for,
     resolve_profiles,
@@ -1130,6 +1170,317 @@ async def patch_current_user_settings(
     return UserSettingsResponse.model_validate(settings)
 
 
+@router.get("/auth/me/agent-consents", response_model=AgentConsentsResponse)
+async def get_current_user_agent_consents(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AgentConsentsResponse:
+    """Return every assistant permission for the caller (`CONTRACT.md` §3.15)."""
+    return AgentConsentsResponse(
+        policy_version=AGENT_CONSENT_POLICY_VERSION,
+        consents=[
+            AgentConsentEntry.model_validate(row)
+            for row in await get_consents(db, current_user.id)
+        ],
+    )
+
+
+@router.put("/auth/me/agent-consents", response_model=AgentConsentsResponse)
+async def put_current_user_agent_consents(
+    request: AgentConsentsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AgentConsentsResponse:
+    """Grant or revoke the named scopes and return the full current set."""
+    return AgentConsentsResponse(
+        policy_version=AGENT_CONSENT_POLICY_VERSION,
+        consents=[
+            AgentConsentEntry.model_validate(row)
+            for row in await set_consents(db, current_user.id, request.consents)
+        ],
+    )
+
+
+@router.get("/me/calendar/events", response_model=list[CalendarEventResponse])
+async def list_calendar_events(
+    starts_after: datetime | None = None,
+    starts_before: datetime | None = None,
+    include_cancelled: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CalendarEventResponse]:
+    """Return the caller's calendar over a range (`CONTRACT.md` §3.16)."""
+    events = await CalendarService(db).list_events(
+        user_id=current_user.id,
+        starts_after=starts_after,
+        starts_before=starts_before,
+        include_cancelled=include_cancelled,
+    )
+    return [CalendarEventResponse.model_validate(event) for event in events]
+
+
+@router.post(
+    "/me/calendar/events",
+    response_model=CalendarEventResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_calendar_event(
+    request: CalendarEventCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarEventResponse:
+    """Add an entry the caller typed themselves."""
+    lead = (
+        timedelta(minutes=request.reminder_minutes_before)
+        if request.reminder_minutes_before is not None
+        else None
+    )
+    scheduled = await CalendarService(db).create_event(
+        user_id=current_user.id,
+        title=request.title,
+        starts_at=request.starts_at,
+        ends_at=request.ends_at,
+        details=request.details,
+        location=request.location,
+        all_day=request.all_day,
+        timezone=request.timezone,
+        source="manual",
+        reminder_lead=lead,
+    )
+    # Scheduled rather than awaited: the entry is saved and the response is
+    # owed now. Google being slow or down must not delay or fail a save the
+    # user already made (ADR-36).
+    schedule_calendar_push(event_id=scheduled.event.id, user_id=current_user.id)
+    return CalendarEventResponse.model_validate(scheduled.event)
+
+
+@router.patch("/me/calendar/events/{event_id}", response_model=CalendarEventResponse)
+async def update_calendar_event(
+    event_id: str,
+    request: CalendarEventUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarEventResponse:
+    """Change an entry the caller owns and did not import from Google."""
+    try:
+        event = await CalendarService(db).update_event(
+            user_id=current_user.id,
+            event_id=event_id,
+            changes=request.model_dump(exclude_unset=True),
+        )
+        schedule_calendar_push(event_id=event.id, user_id=current_user.id)
+    except CalendarEventReadOnlyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This entry mirrors a Google Calendar event and is read-only here",
+        ) from exc
+    except CalendarEventNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Calendar entry was not found"
+        ) from exc
+    return CalendarEventResponse.model_validate(event)
+
+
+@router.delete("/me/calendar/events/{event_id}", response_model=CalendarEventResponse)
+async def cancel_calendar_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarEventResponse:
+    """Withdraw an entry. The row stays; a reminder may already have fired."""
+    try:
+        event = await CalendarService(db).cancel_event(
+            user_id=current_user.id, event_id=event_id
+        )
+        # A cancellation is a change like any other; Google needs to hear about
+        # it or the meeting stays on the user's phone after they called it off.
+        schedule_calendar_push(event_id=event.id, user_id=current_user.id)
+    except CalendarEventReadOnlyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This entry mirrors a Google Calendar event and is read-only here",
+        ) from exc
+    except CalendarEventNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Calendar entry was not found"
+        ) from exc
+    return CalendarEventResponse.model_validate(event)
+
+
+@router.get("/me/calendar/google/status", response_model=CalendarCapabilityResponse)
+async def get_google_calendar_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarCapabilityResponse:
+    """Report what the interface may offer for Google Calendar.
+
+    Three facts rather than one flag, because the right thing to show differs
+    for each. Not configured means the deployment has no credentials and the
+    controls should not be drawn; not consented means show the permission, not
+    the connect button; not linked means show connect rather than sync.
+
+    Deliberately not gated on consent: the interface has to be able to ask this
+    *before* the user has granted anything, or it cannot decide what to render.
+    Nothing here reveals calendar content.
+    """
+    link = await db.get(CalendarLink, current_user.id)
+    return CalendarCapabilityResponse(
+        configured=is_configured_for_calendar(),
+        consented=await has_consent(db, current_user.id, "calendar_read"),
+        linked=link is not None,
+        sync_enabled=bool(link and link.sync_enabled),
+        last_synced_at=link.last_synced_at if link else None,
+        last_sync_error=link.last_sync_error if link else None,
+    )
+
+
+@router.get("/me/calendar/google/authorize", response_model=GoogleAuthorizeResponse)
+async def start_google_calendar_link(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> GoogleAuthorizeResponse:
+    """Return the Google consent URL for connecting a calendar.
+
+    Requires `calendar_read` up front. Sending someone through a consent screen
+    for a permission they have not granted here would collect access this
+    application has already been told not to use.
+    """
+    await require_consent(db, current_user.id, "calendar_read")
+    if not is_configured_for_calendar():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Calendar is not configured on this deployment",
+        )
+    # A signed, short-lived state. Google echoes it back verbatim, so signing it
+    # is what stops a stranger's authorization code being attached to somebody
+    # else's account by crafting the callback URL.
+    state = create_access_token(subject=current_user.id, expires_delta=timedelta(minutes=10))
+    return GoogleAuthorizeResponse(authorization_url=build_authorization_url(state=state))
+
+
+@router.post("/me/calendar/google/callback", response_model=CalendarLinkResponse)
+async def complete_google_calendar_link(
+    request: GoogleCalendarCallbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarLinkResponse:
+    """Exchange the authorization code and store the encrypted tokens.
+
+    The state is verified against the authenticated caller rather than merely
+    checked for validity: a token signed for a different account proves the
+    callback was replayed, which is exactly what the signature is there to
+    catch.
+    """
+    await require_consent(db, current_user.id, "calendar_read")
+    subject = await get_user_by_token(request.state, db)
+    if subject is None or subject.id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The authorization state did not match this account",
+        )
+
+    try:
+        tokens = await exchange_code(request.code)
+    except GoogleCalendarError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
+
+    link = await db.get(CalendarLink, current_user.id) or CalendarLink(user_id=current_user.id)
+    link.refresh_token_encrypted = encrypt_secret(tokens["refresh_token"])
+    link.access_token_encrypted = encrypt_secret(tokens["access_token"])
+    link.token_expires_at = datetime.now(UTC) + timedelta(
+        seconds=int(tokens.get("expires_in", 3600))
+    )
+    # A fresh authorization invalidates whatever cursor the old one produced.
+    link.sync_token = None
+    link.sync_enabled = True
+    link.last_sync_error = None
+    db.add(link)
+    await db.commit()
+    await db.refresh(link)
+    return CalendarLinkResponse.model_validate(link)
+
+
+@router.delete("/me/calendar/google/link", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_google_calendar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Disconnect the calendar and delete the stored tokens.
+
+    Idempotent: disconnecting something already disconnected is the state the
+    caller asked for, not an error.
+
+    Events already pushed to Google are left there. They are the user's real
+    appointments, and deleting them because they unlinked an integration would
+    be destroying data they never asked to lose.
+    """
+    link = await db.get(CalendarLink, current_user.id)
+    if link is None:
+        return
+    await db.delete(link)
+    await db.commit()
+
+
+@router.post("/me/calendar/sync", response_model=CalendarSyncResultResponse)
+async def sync_google_calendar_now(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CalendarSyncResultResponse:
+    """Run one sync cycle immediately, for the "Sync now" button.
+
+    Polling is what carries incoming changes (ADR-36), so this exists to make
+    the wait skippable rather than to be the mechanism.
+    """
+    await require_consent(db, current_user.id, "calendar_read")
+    try:
+        counts = await sync_user(db, current_user.id)
+    except GoogleCalendarNotLinkedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No Google Calendar is connected to this account",
+        ) from exc
+    link = await db.get(CalendarLink, current_user.id)
+    return CalendarSyncResultResponse(
+        pushed=counts["pushed"],
+        pulled=counts["pulled"],
+        last_synced_at=link.last_synced_at if link else None,
+        last_sync_error=link.last_sync_error if link else None,
+    )
+
+
+@router.get("/me/reminders", response_model=list[ReminderResponse])
+async def list_reminders(
+    include_delivered: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[ReminderResponse]:
+    """Return the caller's pending nudges, soonest first."""
+    reminders = await CalendarService(db).list_reminders(
+        user_id=current_user.id, include_delivered=include_delivered
+    )
+    return [ReminderResponse.model_validate(reminder) for reminder in reminders]
+
+
+@router.post("/me/reminders/{reminder_id}/dismiss", response_model=ReminderResponse)
+async def dismiss_reminder(
+    reminder_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ReminderResponse:
+    """Mark one nudge as dealt with."""
+    try:
+        reminder = await CalendarService(db).dismiss_reminder(
+            user_id=current_user.id, reminder_id=reminder_id
+        )
+    except CalendarEventNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Reminder was not found"
+        ) from exc
+    return ReminderResponse.model_validate(reminder)
+
+
 @router.put("/auth/me/language", response_model=UserResponse)
 async def update_preferred_language(
     request: UpdateLanguageRequest,
@@ -1584,6 +1935,7 @@ async def list_conversations(
     last_messages = await service.get_last_messages(
         conversation_ids=conversation_ids,
         reader_language=current_user.preferred_language,
+        reader_id=current_user.id,
         # The caller's own standing per conversation, so the sidebar preview
         # picks the same translation the conversation itself will show.
         reader_profiles={
@@ -2347,6 +2699,15 @@ async def confirm_action_proposal(
     service = ActionProposalService(db)
     try:
         confirmed = await service.confirm_proposal(proposal_id=proposal_id, user_id=current_user.id, corrections=payload.model_dump(exclude_none=True))
+        # Approving a proposal is the product's main way of putting something on
+        # a calendar, so it gets the same immediate push a manual entry does.
+        # The entry only exists when the proposal carried a time; one without is
+        # a task in the inbox and has nothing to send.
+        scheduled = await db.scalar(
+            select(CalendarEvent.id).where(CalendarEvent.action_proposal_id == confirmed.id)
+        )
+        if scheduled:
+            schedule_calendar_push(event_id=scheduled, user_id=current_user.id)
         return ActionProposalResponse.model_validate(confirmed)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(

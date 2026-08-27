@@ -21,6 +21,7 @@ import {
   downloadAttachment,
   endCall,
   fetchAttachmentBlob,
+  getAgentConsents,
   getAssistantConversation,
   getMe,
   getMessages,
@@ -53,10 +54,14 @@ import {
   unsaveMessage,
   updateConversationPreferences,
   updateGroupDetails,
+  updateAgentConsents,
   updateGroupRole,
   updateProfile,
   updateUserSettings,
   uploadAttachment,
+  type AgentConsentScope,
+  type ApiActionProposal,
+  type ApiAgentConsents,
   type ApiCall,
   type ApiConversation,
   type ApiMessageReaction,
@@ -84,6 +89,7 @@ import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
+import { TaskInboxPanel } from "./TaskInboxPanel";
 import { CallModal, type ActiveCall } from "./CallModal";
 import { ToastContainer } from "./ToastContainer";
 import { ForwardMessageModal } from "./ForwardMessageModal";
@@ -154,6 +160,27 @@ function persistedSettings(settings: ApiUserSettings): Pick<AppSettings, "autoTr
   };
 }
 
+/** Flatten the consent list into the lookup the settings switches read.
+ *
+ *  The server always sends every scope, so a scope missing from this map means
+ *  the response was malformed rather than that the permission is unknown — and
+ *  an absent key reads as "not granted", which is the safe way to be wrong.
+ */
+function toConsentMap(response: ApiAgentConsents): Partial<Record<AgentConsentScope, boolean>> {
+  return Object.fromEntries(response.consents.map((entry) => [entry.scope, entry.is_granted]));
+}
+
+/** Whether every permission carries an explicit decision.
+ *
+ *  Not the same as "any are granted". The server sends all five scopes whether
+ *  or not the user has seen them, so presence proves nothing; a scope with
+ *  neither timestamp is one nobody has been asked about. Refusing is an answer,
+ *  and re-prompting someone who refused teaches them to dismiss the dialog.
+ */
+function consentsAllAnswered(response: ApiAgentConsents): boolean {
+  return response.consents.every((entry) => entry.granted_at !== null || entry.revoked_at !== null);
+}
+
 function applyDisplayPreference(messages: Message[], showOriginalByDefault: boolean): Message[] {
   return messages.map((message) => message.translation
     ? { ...message, translation: { ...message.translation, showOriginal: message.translation.showOriginal ?? showOriginalByDefault } }
@@ -169,6 +196,24 @@ export const AppShell: React.FC = () => {
   const token = useRef<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(EMPTY_USER);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_CHAT_SETTINGS);
+  // Empty until loaded, and an absent scope reads as not granted — the same
+  // closed default the backend applies when no row exists.
+  const [agentConsents, setAgentConsents] = useState<Partial<Record<AgentConsentScope, boolean>>>({});
+  const [agentConsentsAnswered, setAgentConsentsAnswered] = useState(true);
+  // Mirrors the `token` ref. The ref is right for handlers, but a pane
+  // rendered from `token.current` would never re-render when the token
+  // arrives asynchronously — it would just stay empty.
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  // Read inside the socket handler. A ref rather than the setting itself
+  // because the socket effect already re-runs on its dependencies, and
+  // adding a cosmetic preference to that list would tear down and rebuild
+  // the WebSocket every time somebody toggled sound.
+  const soundEnabledRef = useRef(true);
+  const [pendingTaskCount, setPendingTaskCount] = useState(0);
+  const [incomingProposals, setIncomingProposals] = useState<ApiActionProposal[]>([]);
+  // A counter rather than a boolean: two calendar changes in a row must
+  // both trigger a reload, and a boolean flipped twice reads as unchanged.
+  const [calendarRefreshCount, setCalendarRefreshCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
@@ -226,6 +271,7 @@ export const AppShell: React.FC = () => {
       socket.current?.close();
       socket.current = null;
       token.current = null;
+      setAccessToken(null);
       clearSession();
       router.replace("/login");
     }
@@ -355,6 +401,7 @@ export const AppShell: React.FC = () => {
     const accessToken = getAccessToken();
     if (!accessToken) { router.replace("/login"); return; }
     token.current = accessToken;
+    setAccessToken(accessToken);
     let active = true;
     getMe(accessToken).then(async (profile) => {
       if (profile.role?.toLowerCase() === "admin") {
@@ -362,11 +409,18 @@ export const AppShell: React.FC = () => {
         return;
       }
       const user = toChatUser(profile);
-      const [list, savedSettings] = await Promise.all([
+      const [list, savedSettings, consents] = await Promise.all([
         listConversations(accessToken),
         getUserSettings(accessToken),
+        // Never fatal: permissions default to closed, so failing to read them
+        // shows every switch off rather than blocking the whole app from loading.
+        getAgentConsents(accessToken).catch(() => null),
       ]);
       if (!active) return;
+      if (consents) {
+        setAgentConsents(toConsentMap(consents));
+        setAgentConsentsAnswered(consentsAllAnswered(consents));
+      }
       const visible = list.filter((item) => !isAssistantConversation(item));
       const contacts = conversationUsers(visible).filter((contact) => contact.id !== user.id);
       setCurrentUser(user);
@@ -476,6 +530,39 @@ export const AppShell: React.FC = () => {
             });
           }
           void refreshConversations();
+        }
+        // The assistant found something the user may want on their calendar.
+        // It is only a proposal: nothing is scheduled until they approve it in
+        // the task inbox.
+        if (eventType === "action_proposal_created") {
+          const proposal = payload.proposal as ApiActionProposal | undefined;
+          if (proposal) {
+            setIncomingProposals((current) => [proposal, ...current].slice(0, 50));
+            addToast("Trợ lý đề xuất một việc", proposal.title, "info");
+          }
+        }
+        // A reminder came due. Kept as a toast rather than anything modal: it
+        // arrives while the person is doing something else, and interrupting
+        // them to dismiss a box is worse than the reminder is useful.
+        if (eventType === "reminder_due") {
+          const reminder = payload.reminder as { title?: string; starts_at?: string } | undefined;
+          if (reminder) {
+            addToast(
+              "Sắp đến giờ",
+              reminder.title,
+              "info",
+            );
+            if (soundEnabledRef.current) {
+              try {
+                new Audio("/notification.mp3").play().catch(() => undefined);
+              } catch {
+                // No sound is not a failure worth surfacing.
+              }
+            }
+          }
+        }
+        if (eventType === "action_proposal_confirmed" || eventType === "calendar_event_updated") {
+          setCalendarRefreshCount((count) => count + 1);
         }
         if (eventType === "voice_transcription_completed") {
           const transcriptionEvent: VoiceTranscriptionCompletedPayload = {
@@ -622,6 +709,7 @@ export const AppShell: React.FC = () => {
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
   }, [addToast, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
+  useEffect(() => { soundEnabledRef.current = settings.soundEnabled; }, [settings.soundEnabled]);
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
   useEffect(() => {
     document.documentElement.lang = settings.interfaceLanguage;
@@ -1007,6 +1095,31 @@ export const AppShell: React.FC = () => {
     }
   };
 
+  const handleUpdateAgentConsents = useCallback(
+    (changes: Partial<Record<AgentConsentScope, boolean>>) => {
+      if (!token.current) {
+        addToast("Could not save permissions", "Please sign in again.", "warning");
+        return;
+      }
+      // No optimistic update. A switch that flips and then silently flips back
+      // would leave someone believing they had withdrawn a permission they
+      // still hold, which is the one mistake this screen must not make.
+      void updateAgentConsents(token.current, changes)
+        .then((saved) => {
+          setAgentConsents(toConsentMap(saved));
+          setAgentConsentsAnswered(consentsAllAnswered(saved));
+        })
+        .catch((error: unknown) =>
+          addToast(
+            "Could not save permissions",
+            error instanceof Error ? error.message : undefined,
+            "warning",
+          ),
+        );
+    },
+    [addToast],
+  );
+
   const handleUpdateSettings = useCallback((value: Partial<AppSettings>) => {
     const serverChanges: Partial<ApiUserSettings> = {};
     if (value.autoTranslate !== undefined) serverChanges.auto_translate = value.autoTranslate;
@@ -1081,7 +1194,7 @@ export const AppShell: React.FC = () => {
 
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
-    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} /></div>
+    <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} pendingTaskCount={pendingTaskCount} /></div>
     {activeTab !== "calendar" && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
       {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} assistantSelected={isAssistantChatOpen} onOpenAssistant={() => {
         if (!token.current) return;
@@ -1110,7 +1223,23 @@ export const AppShell: React.FC = () => {
       {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.preferredLanguage} />}
     </div>}
     <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${activeTab === "calendar" ? "w-full" : mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}>
-      {activeTab === "calendar" ? <PersonalCalendar /> :
+      {/* Guarded on the token rather than defaulting it to "": an empty bearer
+          would turn "not signed in yet" into a 401 the user has to interpret,
+          and this shell is already on its way to the login screen without one. */}
+      {activeTab === "calendar" && accessToken ? (
+        <PersonalCalendar
+          token={accessToken}
+          onNotify={addToast}
+          refreshToken={calendarRefreshCount}
+        />
+      ) : activeTab === "tasks" && accessToken ? (
+        <TaskInboxPanel
+          token={accessToken}
+          incoming={incomingProposals}
+          onCountChange={setPendingTaskCount}
+          onNotify={addToast}
+        />
+      ) :
       <ChatView
         conversation={activeConversation}
         messages={currentMessages}
@@ -1160,7 +1289,7 @@ export const AppShell: React.FC = () => {
     </div>
     <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
-    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} />
+    <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} agentConsents={agentConsents} agentConsentsAnswered={agentConsentsAnswered} onUpdateAgentConsents={handleUpdateAgentConsents} />
     <CallModal
       key={activeCall?.id ?? "no-active-call"}
       call={activeCall}

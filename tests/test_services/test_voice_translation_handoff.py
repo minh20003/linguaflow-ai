@@ -123,6 +123,11 @@ def test_completed_voice_schedules_the_existing_four_text_dependent_services():
         "message_id": message.id,
         "conversation_id": message.conversation_id,
         "text": FULL_TRANSCRIPT,
+        # Whose `store_memory` consent decides whether the transcript is
+        # remembered. Without it `schedule_message_embedding` falls back to the
+        # RAG flag alone, so an account that granted memory would be embedded
+        # never and nothing would report it (ADR-30).
+        "sender_id": message.sender_id,
     }
 
 

@@ -311,6 +311,84 @@ async def test_nothing_is_embedded_while_recall_is_switched_off(test_db):
 
 
 @pytest.mark.asyncio
+async def test_the_assistants_memory_consent_remembers_a_message_on_its_own(
+    test_db, test_user, conversation_factory, monkeypatch
+):
+    """Two independent reasons to embed, and this is the second one.
+
+    `rag_context_enabled` serves the translation agent (ADR-27); the sender's
+    `store_memory` consent serves the assistant (ADR-30). Turning one on must
+    not require the other, or enabling the assistant would silently switch on
+    semantic context for every translation as well.
+    """
+    from src.services.agent_consent import set_consents
+
+    conversation = await conversation_factory(test_user, [test_user], conversation_type="group")
+    message = await add_message(test_db, conversation.id, test_user.id, "remember me", minute=0)
+    await set_consents(test_db, test_user.id, {"store_memory": True})
+
+    async def fixed(text, *, settings=None):
+        return vector(0.0, 1.0), "test-embedding-model"
+
+    monkeypatch.setattr("src.services.message_memory.embed_with_model", fixed)
+
+    import tests.conftest as conftest_module
+
+    await message_memory._store(
+        message_id=message.id,
+        conversation_id=conversation.id,
+        text="remember me",
+        sender_id=test_user.id,
+        session_factory=conftest_module.test_async_session_maker,
+        settings=settings(rag_context_enabled=False),
+    )
+
+    stored = await test_db.scalar(
+        select(MessageEmbedding).where(MessageEmbedding.message_id == message.id)
+    )
+    assert stored is not None
+
+
+@pytest.mark.asyncio
+async def test_a_message_is_never_embedded_when_its_sender_withheld_memory_consent(
+    test_db, test_user, conversation_factory, monkeypatch
+):
+    """The refusal has to bite before the text reaches the embedding provider.
+
+    Asserting the embedder was never called, not merely that no row was written:
+    sending the message out and then discarding the answer would still have
+    handed the text to a third party (ADR-15).
+    """
+    conversation = await conversation_factory(test_user, [test_user], conversation_type="group")
+    message = await add_message(test_db, conversation.id, test_user.id, "private", minute=0)
+
+    calls: list[str] = []
+
+    async def recording(text, *, settings=None):
+        calls.append(text)
+        return vector(0.0, 1.0), "test-embedding-model"
+
+    monkeypatch.setattr("src.services.message_memory.embed_with_model", recording)
+
+    import tests.conftest as conftest_module
+
+    await message_memory._store(
+        message_id=message.id,
+        conversation_id=conversation.id,
+        text="private",
+        sender_id=test_user.id,
+        session_factory=conftest_module.test_async_session_maker,
+        settings=settings(rag_context_enabled=False),
+    )
+
+    assert calls == []
+    stored = await test_db.scalar(
+        select(MessageEmbedding).where(MessageEmbedding.message_id == message.id)
+    )
+    assert stored is None
+
+
+@pytest.mark.asyncio
 async def test_remembering_a_message_replaces_the_vector_it_had(
     test_db, test_user, conversation_factory, monkeypatch
 ):

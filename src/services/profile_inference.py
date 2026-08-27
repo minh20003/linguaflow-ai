@@ -48,6 +48,7 @@ from src.database.models import (
 )
 from src.services.glossary import normalize_scope
 from src.services.llm import extract_text, get_llm
+from src.services.message_visibility import public_only
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,10 @@ async def _build_transcript(
                 Message.conversation_id == conversation_id,
                 Message.deleted_at.is_(None),
                 Message.original_text != "",
+                # The profile it infers is applied to the whole conversation, so
+                # a message only one member can see must not shape how everyone
+                # else is addressed.
+                public_only(),
             )
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(TRANSCRIPT_MESSAGES)

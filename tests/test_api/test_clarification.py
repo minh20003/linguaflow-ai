@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
 from src.database.models import ActionProposal, Conversation, ConversationMember, Message, User
+from src.services.agent_consent import set_consents
 
 
 @pytest_asyncio.fixture
@@ -69,6 +70,11 @@ async def clarify_setup(test_db: AsyncSession):
     )
     test_db.add_all([m_ambiguous, m_clear])
     await test_db.commit()
+
+    # Granted to all three, the outsider included: these tests measure
+    # membership and ambiguity detection, not permissions (ADR-30).
+    for account in (alice, bob, outsider):
+        await set_consents(test_db, account.id, {"read_conversations": True})
 
     return {
         "alice": alice,

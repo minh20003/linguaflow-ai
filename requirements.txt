@@ -61,6 +61,12 @@ sentence-transformers>=3.0.0
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
 
+# Dong ho cho hang doi nhac viec (ADR-33). Chi la bo dinh thi: hang doi nam o
+# bang `reminders` trong PostgreSQL, khong dung job store cua APScheduler — mot
+# bang thi tu bat kip sau khi tien trinh tat, con job store thi khong. De bai
+# goi y BullMQ nhung do la thu vien Node; day la thu tuong duong ben Python.
+apscheduler>=3.10.0
+
 # Authentication
 # 3.5.0 declares a conflicting self-dependency for the `cryptography` extra,
 # which makes a clean Linux/Docker install fail resolution.

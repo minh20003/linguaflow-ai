@@ -102,6 +102,51 @@ GLOSSARY_ENTRY_STATUSES = ("active", "retired")
 # term is not asked again about a differently worded version of it.
 GLOSSARY_PROPOSAL_STATUSES = ("pending", "approved", "rejected")
 
+# What a user has to agree to before the assistant may act on their data
+# (`docs/CONTRACT.md` §3.15). Conversation membership answers "who may read
+# this"; it does not answer "does this person agree to a machine reading it".
+# Those are separate questions, so they get separate mechanisms.
+#
+# `proactive_scan` deliberately does not imply `read_conversations` — scanning
+# needs both. "Read it when I ask" and "read everything as it arrives" are
+# different levels of exposure, and a user must be able to say yes to the first
+# without being forced into the second.
+AGENT_CONSENT_SCOPES = (
+    "read_conversations",
+    "proactive_scan",
+    "store_memory",
+    "calendar_read",
+    "calendar_write",
+)
+
+# Who a stored message may be read by. `public` means every member of its
+# conversation, which is what an ordinary chat message is and therefore the
+# server default: an existing row predates this column and was visible to
+# everybody. `private` means exactly the account in `visible_to_user_id`.
+MESSAGE_VISIBILITIES = ("public", "private")
+
+# Where a calendar entry came from. `assistant` means it began as a proposal a
+# person approved, `manual` that they typed it, `google` that it was created in
+# Google Calendar and pulled in. The third is read-only in this product: editing
+# it here would fight whatever produced it there.
+CALENDAR_EVENT_SOURCES = ("assistant", "manual", "google")
+
+# `cancelled` rather than a deleted row: a reminder may already have fired for
+# it, and a task confirmed last week explains a calendar the user is looking at
+# now — the same reasoning `GLOSSARY_ENTRY_STATUSES` uses for retiring a term.
+CALENDAR_EVENT_STATUSES = ("active", "cancelled")
+
+# How far an entry has got with Google. `local_only` never left; `pending_push`
+# tried and failed and will be retried; `synced` matches a remote event;
+# `remote_only` came from Google and is not ours to change.
+CALENDAR_SYNC_STATES = ("local_only", "pending_push", "synced", "remote_only")
+
+# Stamped onto every grant. When this list changes, existing grants must not
+# silently extend to a scope the user was never shown: the interface compares a
+# row's version against this constant and asks again. Without it, adding a sixth
+# scope would count as pre-approved by everyone who ever agreed to the first five.
+AGENT_CONSENT_POLICY_VERSION = "1"
+
 
 def _in_clause(column: str, values: tuple[str, ...]) -> str:
     """Render a CheckConstraint body from a tuple of allowed values.
@@ -409,6 +454,57 @@ class UserSettings(Base):
     )
 
 
+class AgentConsent(Base):
+    """One permission a user has granted, or refused, to the assistant.
+
+    A table rather than five more columns on `UserSettings`, for three reasons
+    that are all mechanical rather than stylistic. A permission has to record
+    *when* it was given and taken back, which a boolean column cannot do. Its
+    `policy_version` is per-scope, so adding a sixth permission may only re-ask
+    about that one instead of invalidating the five already granted. And the
+    list will keep growing, which on `UserSettings` would mean repeatedly
+    altering a table every request reads.
+
+    Absence of a row means **not granted** — the default fails closed, the same
+    way `CorrectionLog.consent_to_share` defaults to false.
+    """
+
+    __tablename__ = "agent_consents"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("scope", AGENT_CONSENT_SCOPES),
+            name="ck_agent_consents_scope",
+        ),
+        UniqueConstraint("user_id", "scope", name="uq_agent_consents_user_scope"),
+        Index("ix_agent_consents_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_granted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # Revoking keeps the row and only clears the flag. Deleting it would make
+    # "never asked" and "asked and refused" indistinguishable, and that
+    # distinction is exactly what decides whether to prompt again.
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
 class BlockedUser(Base):
     """A directional social block between two accounts."""
 
@@ -499,6 +595,16 @@ class Message(Base):
             name="uq_messages_sender_conversation_client_message",
         ),
         Index("ix_messages_conversation_created_at_id", "conversation_id", "created_at", "id"),
+        CheckConstraint(
+            _in_clause("visibility", MESSAGE_VISIBILITIES),
+            name="ck_messages_visibility",
+        ),
+        # A private message nobody is named on would be readable by no one and
+        # deletable by no process that knows to look for it.
+        CheckConstraint(
+            "visibility = 'public' OR visible_to_user_id IS NOT NULL",
+            name="ck_messages_private_names_a_reader",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -534,6 +640,22 @@ class Message(Base):
     # Assistant replies are ordinary durable messages, but the UI renders them
     # as the in-thread assistant rather than as the member who invoked it.
     assistant_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    # Who may read this row. `public` is every member, and is what an ordinary
+    # message is; `private` is the person named below and nobody else.
+    #
+    # This exists because the assistant answers a mention inside a group, and
+    # its answer can summarise what other people committed to. Delivered to the
+    # whole group that is both noisy and a disclosure about members who never
+    # asked for it, so the answer belongs to the person who invoked it (ADR-31).
+    #
+    # Enforced in the WHERE clause of every read, never by dropping rows after
+    # fetching them: a filter in the serializer still puts the text on the wire.
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="public", server_default="public"
+    )
+    visible_to_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     # Provisional on insert — it is the sender's preferred_language, which says
     # what they usually write in, not what this message is in. The agent's
     # detect_language node overwrites it (docs/CONTRACT.md section 4.3).
@@ -1571,3 +1693,179 @@ class ActionProposal(Base):
 
     def __repr__(self) -> str:
         return f"<ActionProposal(id={self.id}, type={self.action_type}, status={self.status}, title={self.title})>"
+
+
+class CalendarEvent(Base):
+    """One entry on a user's personal calendar (B-12).
+
+    This is what a confirmed proposal becomes, and it is the reason
+    `status = "confirmed"` stopped being a dead end. A proposal records that
+    somebody said they would do something; an event records that it is on a
+    calendar at a time. Keeping them apart matters because they diverge: the
+    user moves an event, Google moves an event, an event is cancelled — none of
+    which changes the fact that the commitment was made and approved.
+
+    `action_proposal_id` uses SET NULL rather than CASCADE. Where the entry came
+    from should outlive the proposal row, the same choice `translation_attempts`
+    makes for `translation_id` (§5 note 9).
+    """
+
+    __tablename__ = "calendar_events"
+    __table_args__ = (
+        CheckConstraint(_in_clause("source", CALENDAR_EVENT_SOURCES), name="ck_calendar_events_source"),
+        CheckConstraint(_in_clause("status", CALENDAR_EVENT_STATUSES), name="ck_calendar_events_status"),
+        CheckConstraint(
+            _in_clause("sync_state", CALENDAR_SYNC_STATES), name="ck_calendar_events_sync_state"
+        ),
+        CheckConstraint(
+            "ends_at IS NULL OR ends_at >= starts_at", name="ck_calendar_events_ends_after_starts"
+        ),
+        # The calendar page always asks for one person over one date range.
+        Index("ix_calendar_events_user_starts_at", "user_id", "starts_at"),
+        # Reconciling an incoming Google change is a lookup by remote id.
+        Index("ix_calendar_events_google_event_id", "google_event_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    action_proposal_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("action_proposals.id", ondelete="SET NULL"), nullable=True
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    all_day: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # The zone the user meant, kept beside the instant rather than instead of
+    # it: "9am tomorrow" and the UTC moment it resolved to are different facts,
+    # and only the first survives them flying somewhere else.
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    google_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_calendar_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Google's version marker. Compared before applying an incoming change so a
+    # write we just made ourselves is recognised on its way back and ignored —
+    # without it the two sides echo each other indefinitely.
+    google_etag: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sync_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="local_only", server_default="local_only"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CalendarEvent(id={self.id}, title={self.title}, starts_at={self.starts_at})>"
+
+
+class Reminder(Base):
+    """A single nudge owed to one user at one moment (B-13).
+
+    A row per nudge rather than a column on the event, because an event can owe
+    several — a day before and again ten minutes before — and because
+    `delivered_at` is per nudge, not per event.
+
+    The table doubles as the scheduler's queue. `scan_due_reminders` claims rows
+    with `remind_at <= now() AND delivered_at IS NULL` in one conditional
+    UPDATE, which makes delivery idempotent under a retry and lets a restarted
+    process catch up on everything it slept through. That is why the index is on
+    exactly those two columns, in that order.
+    """
+
+    __tablename__ = "reminders"
+    __table_args__ = (
+        Index("ix_reminders_due", "remind_at", "delivered_at"),
+        Index("ix_reminders_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    calendar_event_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("calendar_events.id", ondelete="CASCADE"), nullable=False
+    )
+    remind_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<Reminder(id={self.id}, remind_at={self.remind_at}, delivered={self.delivered_at is not None})>"
+
+
+class CalendarLink(Base):
+    """One user's connection to their Google Calendar (B-14).
+
+    Keyed by `user_id` like `UserSettings`, because a person has one calendar
+    connection or none. A surrogate id would allow two rows per user, and the
+    second one would be a silent source of double-pushed events.
+
+    Tokens are stored encrypted (ADR-35). A refresh token is not application
+    data: it is standing permission to read and write somebody's real calendar,
+    valid until they revoke it, so it does not belong in a column anyone with a
+    database dump can read.
+
+    `sync_token` is Google's incremental cursor. Holding it is what turns each
+    poll into "what changed since last time" rather than a full listing, and
+    Google expires it — a `410 Gone` means drop it and take one full pass.
+    """
+
+    __tablename__ = "calendar_links"
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Which calendar to write to. `primary` unless the user picks another, and
+    # stored rather than assumed so a later change does not orphan the events
+    # already pushed to the old one.
+    google_calendar_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="primary", server_default="primary"
+    )
+    refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    # Cached so a short burst of calls does not refresh on every one. Short-lived
+    # by Google's design, so losing it costs one extra round trip, not access.
+    access_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sync_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The user's own switch, separate from having a link at all: pausing sync
+    # should not require disconnecting and consenting again.
+    sync_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Kept so the interface can say why nothing has moved. Silence after a
+    # failed sync looks identical to a calendar with nothing in it.
+    last_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    def __repr__(self) -> str:
+        return f"<CalendarLink(user_id={self.user_id}, sync_enabled={self.sync_enabled})>"

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.conversation_intelligence.self_commitment import detect_self_commitments
 from src.core.security import create_access_token, get_password_hash
 from src.database.models import ActionProposal, Conversation, ConversationMember, Message, User
+from src.services.agent_consent import set_consents
 
 
 @pytest_asyncio.fixture
@@ -77,6 +78,13 @@ async def commitment_setup(test_db: AsyncSession):
     )
     test_db.add_all([m_vi, m_en, m_casual])
     await test_db.commit()
+
+    # Granted to all three, including the outsider: these tests are about
+    # membership, ownership and detection quality. Leaving consent off would
+    # make several of them pass for the wrong reason — a 403 about permissions
+    # looks identical to a 403 about membership from the status code alone.
+    for account in (alice, bob, outsider):
+        await set_consents(test_db, account.id, {"read_conversations": True})
 
     return {
         "alice": alice,

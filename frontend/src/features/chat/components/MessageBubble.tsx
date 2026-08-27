@@ -5,6 +5,7 @@ import { MessageAttachmentCard } from './MessageAttachmentCard';
 import {
   Check,
   CheckCheck,
+  Lock,
   RotateCw,
   Sparkles,
   Smile,
@@ -206,6 +207,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         {isGroup && !isOutgoing && showSenderName && (
           <span className="text-[11px] font-bold text-[#1E2230] dark:text-[#F5F6FA] ml-2 mb-1">
             {message.senderName}
+          </span>
+        )}
+
+        {/* An assistant answer inside a group is delivered only to whoever
+            tagged it. Saying so matters: without the label this reads as a
+            message the whole group can see, and someone will reply to it
+            expecting the others to have the context. */}
+        {message.isPrivate && (
+          <span className="mb-1 ml-2 inline-flex items-center gap-1 text-[11px] font-medium text-violet-600 dark:text-violet-300">
+            <Lock className="h-3 w-3" /> {interactionText(language, 'Only you can see this')}
           </span>
         )}
 

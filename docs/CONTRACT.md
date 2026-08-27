@@ -770,6 +770,122 @@ số, không kèm gì khác. Nó tồn tại để việc "đang bị bỏ ra ng
 như chưa từng có. `shared_total` là tổng số dòng đã đồng ý chia sẻ, khác với độ dài mảng ở
 trên khi `limit` cắt bớt.
 
+### 3.15. Quyền người dùng cấp cho trợ lý AI (27/08)
+
+Trợ lý AI đọc nội dung hội thoại, ghi nhớ nó và ghi vào lịch bên ngoài. Không việc nào
+trong số đó được phép chạy chỉ vì người dùng là thành viên hội thoại — tư cách thành viên
+trả lời câu hỏi "ai được xem", không trả lời câu hỏi "người này có đồng ý cho máy đọc
+không". Đây là hai câu hỏi khác nhau và cần hai cơ chế khác nhau.
+
+**Năm quyền, độc lập với nhau, mặc định đều là `false`:**
+
+| `scope` | Cho phép điều gì | Không cấp thì mất gì |
+|---|---|---|
+| `read_conversations` | Trợ lý đọc nội dung tin nhắn để tóm tắt và trích việc | Tóm tắt, trích việc, `@assistant` đều từ chối |
+| `proactive_scan` | Tự quét mỗi tin nhắn mới để phát hiện cam kết/lịch hẹn | Vẫn dùng được trợ lý, nhưng phải tự yêu cầu |
+| `store_memory` | Lưu vector nhúng của tin nhắn làm bộ nhớ dài hạn | Trợ lý chỉ thấy ngữ cảnh gần, không nhớ chuyện cũ |
+| `calendar_read` | Đọc sự kiện từ Google Calendar về ứng dụng | Lịch trong ứng dụng không thấy sự kiện tạo ngoài |
+| `calendar_write` | Ghi sự kiện đã duyệt lên Google Calendar | Việc đã duyệt chỉ nằm trong lịch của ứng dụng |
+
+`proactive_scan` **không bao hàm** `read_conversations`: quét chủ động cần cả hai. Tách ra
+vì "cho phép đọc khi tôi hỏi" và "cho phép đọc mọi lúc kể cả khi tôi không hỏi" là hai
+mức riêng tư khác hẳn nhau, và người dùng phải nói được điều thứ nhất mà không phải chấp
+nhận điều thứ hai.
+
+```
+GET /api/v1/auth/me/agent-consents
+PUT /api/v1/auth/me/agent-consents
+```
+
+`GET` luôn trả **đủ cả năm** quyền kể cả khi người dùng chưa từng động tới — quyền chưa
+có hàng trong cơ sở dữ liệu là quyền **chưa cấp**, không phải quyền không tồn tại. Trả
+thiếu thì giao diện không dựng được danh sách để hỏi.
+
+```json
+{
+  "policy_version": "1",
+  "consents": [
+    {"scope": "read_conversations", "is_granted": true,  "granted_at": "2026-08-27T09:12:00Z", "revoked_at": null},
+    {"scope": "proactive_scan",     "is_granted": false, "granted_at": null, "revoked_at": "2026-08-27T10:03:00Z"}
+  ]
+}
+```
+
+`PUT` nhận `{"consents": {"<scope>": bool, ...}}`, chỉ những quyền muốn đổi, `extra="forbid"`.
+Trả về đúng hình dạng của `GET`. Rút một quyền chỉ đặt `is_granted = false` và ghi
+`revoked_at`; hàng không bị xoá, để trả lời được câu "người này đã từng đồng ý chưa".
+
+**`policy_version`** đi kèm mọi lần cấp. Khi danh sách quyền đổi, đồng ý cũ **không** im
+lặng áp sang quyền mới: giao diện so `policy_version` của hàng với hằng hiện hành và hỏi
+lại. Không có trường này thì việc thêm quyền thứ sáu sẽ tự động coi như đã được đồng ý.
+
+**Quan hệ với `user_settings.ai_smart_assistance`:** đó là **công tắc hiển thị**, không
+phải quyền. Tắt nó thì trợ lý biến mất khỏi giao diện; nó không thu hồi quyền nào và bật
+lại không hỏi lại điều gì. Quyền nằm ở đây.
+
+### 3.16. Lịch cá nhân và nhắc việc (27/08)
+
+```
+GET    /api/v1/me/calendar/events?starts_after=&starts_before=&include_cancelled=
+POST   /api/v1/me/calendar/events
+PATCH  /api/v1/me/calendar/events/{event_id}
+DELETE /api/v1/me/calendar/events/{event_id}
+GET    /api/v1/me/reminders?include_delivered=
+POST   /api/v1/me/reminders/{reminder_id}/dismiss
+```
+
+Tất cả đều **giới hạn theo chủ sở hữu ở cả chiều đọc lẫn chiều ghi**. Lịch là bề mặt
+riêng tư nhất của sản phẩm, và một truy vấn thiếu bộ lọc `user_id` ở đây là một vụ lộ dữ
+liệu **im lặng** chứ không phải một lỗi.
+
+Chạm tới mục của người khác bằng id trả **404 chứ không phải 403**: người gọi tự cung
+cấp id, nên phân biệt "không phải của bạn" với "không có id này" chỉ làm lộ đúng một dữ
+kiện mới — rằng id đó có tồn tại.
+
+`DELETE` là **huỷ chứ không xoá** — trả về mục với `status = 'cancelled'` (xem §5 ghi chú
+21) và tắt các nhắc việc chưa gửi của nó.
+
+Mục có `sync_state = 'remote_only'` (đến từ Google) trả **409** cho `PATCH` và `DELETE`.
+
+`POST` nhận `reminder_minutes_before`, mặc định 15. `null` nghĩa là **không nhắc** — đó
+là một lựa chọn thật, khác với "dùng mặc định". Nếu mốc nhắc rơi vào quá khứ thì **không
+tạo nhắc việc nào** thay vì bắn ngay: một thông báo về việc đang diễn ra là nhiễu, và với
+một việc nhập sau khi đã xong thì nó sẽ nổ ngay lúc bấm lưu.
+
+Duyệt một đề xuất **có thời gian** sẽ tự tạo một mục lịch, **trong cùng giao dịch** với
+lần chuyển trạng thái. Đề xuất **không có thời gian** thì không lên lịch: "tôi sẽ xem lại
+tài liệu" mà không nói khi nào là một việc có thật, và nó thuộc về hộp nhiệm vụ chứ không
+phải một ô giờ do hệ thống bịa ra.
+
+### 3.17. Liên kết Google Calendar (27/08)
+
+```
+GET    /api/v1/me/calendar/google/authorize
+POST   /api/v1/me/calendar/google/callback
+DELETE /api/v1/me/calendar/google/link
+POST   /api/v1/me/calendar/sync
+```
+
+Cả bốn đều yêu cầu quyền **`calendar_read`** (§3.15). Đưa người dùng qua màn hình đồng ý
+của Google để xin một quyền mà họ chưa cấp ở đây là thu về quyền truy cập mà chính ứng
+dụng đã được bảo là đừng dùng.
+
+`authorize` trả về URL đồng ý kèm tham số `state` là **token đã ký, hạn 10 phút**. Google
+trả lại `state` nguyên văn, và `callback` **đối chiếu nó với người gọi đã xác thực** chứ
+không chỉ kiểm tính hợp lệ: một token ký cho tài khoản khác chứng tỏ callback bị phát lại.
+
+`DELETE` **idempotent** — gỡ một liên kết vốn không có là đúng trạng thái người gọi muốn,
+không phải lỗi. Nó xoá token nhưng **giữ nguyên các sự kiện đã đẩy lên Google**: đó là
+lịch hẹn thật của người dùng, không phải tài sản của tích hợp này.
+
+`POST /me/calendar/sync` chạy một chu kỳ ngay lập tức cho nút "Đồng bộ ngay". Cơ chế mang
+thay đổi từ Google về vẫn là **polling định kỳ** (ADR-36); endpoint này chỉ để bỏ qua thời
+gian chờ. Trả về `pushed`, `pulled` và **`last_sync_error`** — lỗi được đưa lên chứ không
+nuốt đi, vì một lịch đồng bộ hỏng nhìn giống hệt một lịch không có gì để đồng bộ.
+
+Nếu deployment chưa cấu hình đủ (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+`GOOGLE_OAUTH_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY`) thì `authorize` trả **503**.
+
 ## 4. WebSocket Protocol
 
 **Endpoint:** `ws(s)://<host>/api/v1/ws` — một kênh duy nhất cho mọi hội thoại, không phải một kênh cho mỗi hội thoại.
@@ -818,6 +934,23 @@ Hai sự kiện `message_updated` và `message_deleted` đặt tên `snake_case`
 3. Với `is_fallback = true`, Frontend hiển thị chỉ báo phân biệt (ví dụ biểu tượng cảnh báo) nhưng không hiển thị dưới dạng lỗi, do tin nhắn gốc vẫn được truyền tới người nhận.
 4. Frontend sử dụng `translated_text` trong `translation.completed` làm kết quả cuối cùng. Các sự kiện `translation.chunk` chỉ phục vụ hiệu ứng hiển thị theo thời gian thực và có thể bị mất gói.
 
+### 4.2.1. Sự kiện của trợ lý và lịch (27/08)
+
+| Sự kiện | Khi nào | Gửi cho |
+|---|---|---|
+| `action_proposal_created` | Trợ lý tìm ra một việc cần duyệt | **chỉ chủ sở hữu** |
+| `reminder_due` | Tới mốc nhắc việc | chủ sở hữu |
+| `action_proposal_confirmed` | Người dùng duyệt một đề xuất | chủ sở hữu |
+| `calendar_event_updated` | Mục lịch đổi ở nơi khác (thường là từ Google) | chủ sở hữu |
+
+Bốn sự kiện này **không bao giờ phát cho cả hội thoại**, kể cả khi đề xuất sinh ra từ một
+tin nhắn nhóm: nội dung của chúng là việc riêng của một người, và người khác trong nhóm
+chưa hề yêu cầu điều đó (ADR-31).
+
+`action_proposal_created` hiện là sự kiện **duy nhất** trong hệ thống được phát dưới dạng
+dict trần thay vì `Literal` trên một model Pydantic. Đó là nợ kỹ thuật đã biết, không phải
+tiền lệ — sự kiện mới phải theo quy ước ở §4.
+
 ### 4.3. Quy tắc xác định `source_language`
 
 Tin nhắn được lưu trước khi Agent xác định ngôn ngữ, do đó cột `messages.source_language` cần giá trị tạm tại thời điểm ghi:
@@ -862,7 +995,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `users` | `id`, `email`, `username`, `display_name`, `password_hash`, `google_sub`, `role`, `preferred_language`, `interface_language`, `created_at` |
 | `conversations` | `id`, `type`, `title`, `created_by`, `created_at` |
 | `conversation_members` | `conversation_id`, `user_id`, `joined_at` |
-| `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `created_at`, `edited_at`, `deleted_at` |
+| `messages` | `id`, `client_message_id`, `conversation_id`, `sender_id`, `original_text`, `source_language`, `visibility`, `visible_to_user_id`, `created_at`, `edited_at`, `deleted_at` |
 | `translation_results` | `id`, `message_id`, `target_language`, `honorific_profile`, `translated_text`, `model`, `latency_ms`, `is_fallback`, `created_at` |
 | `feedbacks` | `id`, `translation_id`, `user_id`, `rating`, `correction`, `created_at` |
 | `translation_edits` | `id`, `translation_id`, `editor_id`, `edited_text`, `created_at` |  <!-- đã hiện thực -->
@@ -875,6 +1008,10 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `glossary_proposal_citations` | `id`, `proposal_id`, `anonymized_snippet`, `observed_at` |
 | `correction_log` | `id`, `source_phrase`, `corrected_target`, `source_language`, `target_language`, `domain`, `audience`, `user_id`, `translation_id`, `consent_to_share`, `original_snippet`, `anonymized_snippet`, `embedding`, `embedding_model`, `observed_at` |
 | `message_embeddings` | `id`, `message_id`, `conversation_id`, `embedding`, `embedding_model`, `created_at` |
+| `agent_consents` | `id`, `user_id`, `scope`, `is_granted`, `granted_at`, `revoked_at`, `policy_version`, `created_at`, `updated_at` |
+| `calendar_events` | `id`, `user_id`, `action_proposal_id`, `source`, `title`, `details`, `location`, `starts_at`, `ends_at`, `all_day`, `timezone`, `status`, `google_event_id`, `google_calendar_id`, `google_etag`, `sync_state`, `created_at`, `updated_at` |
+| `reminders` | `id`, `user_id`, `calendar_event_id`, `remind_at`, `delivered_at`, `dismissed_at`, `created_at` |
+| `calendar_links` | `user_id`, `google_calendar_id`, `refresh_token_encrypted`, `access_token_encrypted`, `token_expires_at`, `sync_token`, `sync_enabled`, `last_synced_at`, `last_sync_error`, `created_at`, `updated_at` |
 
 **Ghi chú:**
 
@@ -896,6 +1033,15 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 16. `glossary_entries` là bảng ánh xạ thuật ngữ nguồn → đích, tồn tại để ép **tính nhất quán**: nếu để tự do, model dịch `staging environment` lúc thì "môi trường staging" lúc thì "môi trường dàn dựng", và người đọc không biết hai câu có nói về cùng một thứ không. `domain` và `audience` là thứ làm cùng một thuật ngữ ra hai kết quả — dòng gắn `audience` nội bộ giữ nguyên `UI`, dòng gắn `audience` khách hàng cho ra "giao diện". Chuỗi rỗng nghĩa là "áp dụng ở mọi nơi" và đóng vai trò bậc dự phòng, nên **cả hai cột đều nằm trong ràng buộc duy nhất và không được phép `NULL`**: `NULL` không so bằng `NULL` nên bản trùng sẽ lọt lưới. `status` nhận `active` hoặc `retired`; **không xoá dòng bao giờ** — một bản dịch giao tháng trước được định hình bởi thuật ngữ đang active lúc đó, xoá đi là xoá mất lời giải thích duy nhất cho câu chữ người đọc đang nhìn. **Từ vựng của hai cột là danh sách đóng (22/08):** `audience` nhận `internal` hoặc `client`, `domain` nhận `engineering`, `commercial` hoặc `support`, ngoài ra là chuỗi rỗng. Danh sách khai báo ở `src/database/models.py` (`GLOSSARY_AUDIENCES`, `GLOSSARY_DOMAINS`) và là **cùng bộ từ** mà lượt suy luận hồ sơ hội thoại bị buộc phải trả lời, vì tra cứu so hai bên bằng phép bằng — một hội thoại ghi là "an external client" không bao giờ gặp một mục xếp dưới `client` (ADR-24). Không đặt CheckConstraint: chuỗi rỗng là một giá trị thật, và quản trị viên vẫn được nhập tay một phạm vi mà danh sách chưa biết tới.
 17. `correction_log` **tách riêng khỏi `translation_edits` một cách có chủ ý**. `translation_edits` giữ nguyên đúng những gì ADR-19 quy định: chỉ ghi thêm, riêng tư tuyệt đối với người viết, không ai khác đọc được. Khai thác thẳng bảng đó là âm thầm rút lại lời hứa ấy. `correction_log` chỉ giữ phần **dẫn xuất** — máy viết gì, người sửa thành gì — và chỉ những dòng mà tác giả đã đồng ý chia sẻ. `consent_to_share` khoá cả dòng chứ không riêng phần trích dẫn: đếm một bản sửa mà người ta không đồng ý chia sẻ thì vẫn là đang dùng nó. `glossary_proposals` dòng `rejected` **không bao giờ bị xoá**: chúng mang embedding để bộ khai thác đối chiếu ứng viên mới, nếu không thì tuần sau đúng thuật ngữ đó quay lại với cách viết hơi khác và hàng đợi duyệt biến thành nhiễu không ai đọc.
 18. `message_embeddings` là bảng riêng chứ không phải một cột trên `messages`: `messages` là bảng nóng, được liệt kê từng trường trong §5 này, còn đây là dữ liệu dẫn xuất tính lại lúc nào cũng được — đúng cách tách và đúng lý do mà ADR-16 đã áp dụng cho `translation_attempts`. `conversation_id` được lặp lại ở đây để tìm kiếm láng giềng gần nhất giới hạn được trong một hội thoại mà không phải join: một index vector chỉ được dùng khi bộ lọc đi kèm là rẻ, và việc truy hồi **tuyệt đối không được** với sang hội thoại khác. Bốn cột `embedding` trong schema dùng kiểu `vector` của pgvector với index HNSW `vector_cosine_ops`, và mỗi bảng lưu kèm `embedding_model` để một vector do model khác sinh ra nhận ra được thay vì bị âm thầm so trong sai không gian (ADR-25).
+19. `agent_consents` là **quyền**, không phải tuỳ chọn giao diện, nên nó là bảng riêng chứ không phải năm cột nữa trên `user_settings` (§3.15). Ba lý do đều mang tính cơ chế. Thứ nhất, quyền cần biết **thời điểm** cấp và thu (`granted_at`, `revoked_at`) — một cột boolean không kể lại được điều đó, mà "người này đã đồng ý từ lúc nào" đúng là câu hỏi phải trả lời được khi có tranh chấp. Thứ hai, `policy_version` gắn với **từng quyền**: thêm quyền thứ sáu chỉ được phép hỏi lại về quyền đó, không làm mất hiệu lực năm quyền đã cấp. Thứ ba, danh sách quyền sẽ còn dài ra, và mỗi lần dài ra mà phải chạy `ALTER TABLE` trên `user_settings` là mỗi lần đụng vào bảng mọi người đang đọc. **Không có hàng nghĩa là chưa cấp** — mặc định fail closed, giống hệt cách `consent_to_share` mặc định `false` ở ghi chú 17. Ràng buộc duy nhất `(user_id, scope)`; `scope` có `CheckConstraint` sinh từ `AGENT_CONSENT_SCOPES` trong `src/database/models.py`. Thu hồi **không xoá hàng**, chỉ đặt `is_granted = false` và đóng dấu `revoked_at`, vì xoá đi thì "chưa bao giờ được hỏi" và "đã hỏi rồi và bị từ chối" trở nên không phân biệt được — mà đó lại chính là thứ quyết định có nên hỏi lại hay không.
+
+20. `messages.visibility` nhận `public` hoặc `private`, có `CheckConstraint`, `server_default` là `public` — một tin nhắn có trước cột này vốn ai trong hội thoại cũng đọc được, và đó đúng là nghĩa của `public`, nên không cần backfill. `private` nghĩa là **chỉ đúng tài khoản ghi ở `visible_to_user_id`**, và một `CheckConstraint` thứ hai cấm tồn tại tin riêng tư mà không nêu tên ai. Cột này tồn tại vì trợ lý trả lời `@assistant` ngay trong nhóm, mà câu trả lời có thể tóm tắt lại cam kết của người khác — đẩy cho cả nhóm vừa gây phiền vừa là tiết lộ về những thành viên không hề yêu cầu điều đó (ADR-31). **Lọc bắt buộc nằm trong mệnh đề `WHERE` của mọi lần đọc**, không phải bỏ hàng sau khi đã nạp: lọc ở tầng serialize thì văn bản vẫn được `SELECT` ra và vẫn đi qua mạng, còn lọc ở frontend thì mở DevTools là thấy — `docs/NewFeature.md` §3.3 gọi đó là lỗi bảo mật kinh điển. Điều kiện dùng chung nằm ở `src/services/message_visibility.py`: `visible_to(user_id)` cho mọi truy vấn trả lời **một người**, và `public_only()` cho hai chỗ mà người tiêu thụ là **tiến trình phục vụ nhiều người** — ngữ cảnh của agent dịch (dựng một lần rồi giao cho mọi thành viên) và suy luận hồ sơ hội thoại (kết luận áp cho cả hội thoại). Đặc biệt lưu ý ở bản xem trước tin nhắn cuối: bộ lọc phải nằm **bên trong** phép xếp hạng, vì xếp hạng trên toàn bộ rồi mới loại thì hội thoại sẽ mất hẳn dòng xem trước thay vì lùi về tin mới nhất mà người đọc được phép thấy.
+
+21. `calendar_events` là **thứ mà một đề xuất đã duyệt trở thành**, và là lý do `action_proposals.status = 'confirmed'` thôi làm ngõ cụt — trước đó duyệt xong không có gì xảy ra tiếp. Hai bảng tách nhau vì chúng **rẽ nhánh về sau**: người dùng dời sự kiện, Google dời sự kiện, sự kiện bị huỷ — không việc nào trong đó thay đổi sự thật rằng cam kết đã được nêu ra và đã được duyệt. `action_proposal_id` dùng `ON DELETE SET NULL` chứ không `CASCADE`: nguồn gốc của một mục lịch phải sống lâu hơn hàng đề xuất, cùng lựa chọn mà ghi chú 9 đã giải thích cho `translation_id`. `source` nhận `assistant|manual|google` và `sync_state` nhận `local_only|pending_push|synced|remote_only`, đều có `CheckConstraint`; mục `remote_only` là **chỉ đọc trong ứng dụng** — sửa ở đây là đánh nhau với thứ đã tạo ra nó bên kia, và bên thua là bên đồng bộ sau. Huỷ thì đặt `status = 'cancelled'` **chứ không xoá hàng**: có thể đã có nhắc việc bắn đi rồi, và một việc duyệt tuần trước giải thích cho cái lịch người dùng đang nhìn. `timezone` giữ **múi giờ người dùng đã nói**, nằm cạnh mốc thời gian tuyệt đối chứ không thay nó: "9h sáng mai" và khoảnh khắc UTC mà nó quy ra là hai sự thật khác nhau, và chỉ cái thứ nhất còn đúng khi người đó bay sang múi giờ khác.
+
+22. `reminders` là **một hàng cho mỗi lần nhắc**, không phải một cột trên `calendar_events`, vì một sự kiện có thể nợ nhiều lần nhắc (trước một ngày, rồi trước mười phút) và `delivered_at` thuộc về từng lần nhắc chứ không thuộc về sự kiện. Bảng này đồng thời **là hàng đợi của scheduler**: `scan_due_reminders` giành hàng bằng một `UPDATE ... WHERE remind_at <= now() AND delivered_at IS NULL RETURNING ...` duy nhất, nên hai lượt quét chồng nhau **không thể** cùng giành một hàng — mệnh đề `WHERE` của lượt sau không còn khớp. Đó là điều làm việc gửi trùng trở thành **không thể** thay vì *khó xảy ra*, và là điều cho phép một tiến trình vừa khởi động lại bắt kịp mọi thứ nó đã ngủ qua mà không nhắc lại từ đầu. Chỉ mục `ix_reminders_due` đúng là hai cột đó theo đúng thứ tự đó. APScheduler chỉ làm **đồng hồ**, **không dùng job store của nó**: một scheduler giữ job thì phải được báo mỗi khi có nhắc việc mới, phải được báo lại khi bị huỷ, và không biết gì về những cái đến hạn lúc tiến trình đang tắt — một bảng thì không cần thứ nào trong đó (ADR-33).
+
+23. `calendar_links` khoá theo `user_id` như `user_settings`: một người có một liên kết Google hoặc không có, và một id thay thế sẽ cho phép hàng thứ hai mà hệ quả duy nhất là sự kiện bị đẩy lên hai lần. **Token được mã hoá khi lưu** (Fernet, `src/core/crypto.py`) và **thiếu khoá mã hoá thì tính năng tắt hẳn**, không bao giờ lưu dạng rõ: một refresh token không phải dữ liệu của ứng dụng mà là quyền truy cập thường trực vào lịch thật của một người, còn hiệu lực tới khi họ tự thu hồi (ADR-35). Cột `sync_token` là con trỏ incremental của Google — giữ nó là thứ biến mỗi lần kéo thành "có gì đổi từ lần trước" thay vì tải lại toàn bộ; Google cho nó hết hạn, và `410 Gone` nghĩa là bỏ con trỏ rồi chạy một lượt đầy đủ. `last_sync_error` được giữ lại để giao diện nói được **vì sao** lịch không nhúc nhích: im lặng sau một lần đồng bộ hỏng trông y hệt một cái lịch không có gì để đồng bộ.
 
 ### 5.1. Hoàn thiện các điều khiển hội thoại và cài đặt
 
@@ -951,7 +1097,7 @@ voice→text và voice→voice giống một dòng text. Attachment audio chỉ 
 ```json
 {
   "type": "error",
-  "code": "AUTH_FAILED | VALIDATION_ERROR | TRANSLATION_TIMEOUT | NOT_FOUND | INTERNAL_ERROR",
+  "code": "AUTH_FAILED | VALIDATION_ERROR | TRANSLATION_TIMEOUT | NOT_FOUND | CONSENT_REQUIRED | INTERNAL_ERROR",
   "message": "Thông điệp dành cho người dùng, không chứa stack trace"
 }
 ```
@@ -963,8 +1109,21 @@ voice→text và voice→voice giống một dòng text. Attachment audio chỉ 
 | `AUTH_FAILED` | 401 |
 | `VALIDATION_ERROR` | 422 |
 | `NOT_FOUND` | 404 |
+| `CONSENT_REQUIRED` | 403 |
 | `TRANSLATION_TIMEOUT` | 500 |
 | `INTERNAL_ERROR` | 500 |
+
+**`CONSENT_REQUIRED` mang thêm trường `scope`** — tên quyền còn thiếu, lấy từ danh sách ở
+§3.15:
+
+```json
+{"code": "CONSENT_REQUIRED", "message": "...", "scope": "read_conversations"}
+```
+
+Đây là lý do nó không dùng chung `403` trơn với lỗi phân quyền thường: hai lỗi cần hai
+hành động khác nhau ở phía client. `403` vì không phải thành viên hội thoại là ngõ cụt,
+còn `CONSENT_REQUIRED` là thứ người dùng tự sửa được ngay — giao diện đọc `scope` rồi mở
+đúng ô cần bật thay vì bắt họ tự dò trong trang cài đặt.
 
 ## 7. Danh mục kiểm tra trước khi hiện thực hoá
 

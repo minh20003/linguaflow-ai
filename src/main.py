@@ -23,9 +23,12 @@ from src.agents.observability import verify_tracing_credentials
 from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
+from src.api.websocket import connection_manager
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
 from src.database import get_db
+from src.services.agent_consent import ConsentRequiredError
+from src.services.reminder_scheduler import start_reminder_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +47,18 @@ async def lifespan(app: FastAPI):
     # container runs `alembic upgrade head` before this process starts, so an
     # application that also created tables would let the two disagree in silence
     # — `create_all` adds missing tables but never alters an existing one.
+
+    # The reminder clock. Started here because this is the only place with a
+    # lifecycle, and stopped below so a reload does not leave a second loop
+    # running against the same table (ADR-33).
+    scheduler = start_reminder_scheduler(
+        publisher=connection_manager, settings=settings
+    )
+
     yield
 
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
     logger.info("Shutting down")
 
 
@@ -107,6 +120,29 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=422,
         content={"detail": _redact_validation_errors(encoded_errors)},
+    )
+
+
+@app.exception_handler(ConsentRequiredError)
+async def consent_required_handler(request: Request, exc: ConsentRequiredError):
+    """Return 403 CONSENT_REQUIRED naming the scope the caller still needs.
+
+    Handled once here rather than in each route's except chain: every assistant
+    endpoint needs the same answer, and the ones not written yet should get it
+    without anyone remembering to add a clause.
+
+    The scope travels in the body because this 403 is one the user can clear
+    themselves — the interface reads it and opens that permission, instead of
+    making them hunt through settings (`docs/CONTRACT.md` §6).
+    """
+    return JSONResponse(
+        status_code=403,
+        content={
+            "code": "CONSENT_REQUIRED",
+            "message": "The assistant needs your permission for this action.",
+            "scope": exc.scope,
+            "detail": str(exc),
+        },
     )
 
 settings = get_settings()

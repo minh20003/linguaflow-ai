@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ApiCalendarEvent } from "../api/chat-api";
+import { GoogleCalendarControls } from "./GoogleCalendarControls";
+import {
+  cancelCalendarEvent,
+  createCalendarEvent,
+  listCalendarEvents,
+  updateCalendarEvent,
+} from "../api/chat-api";
 import {
   Bot, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
   CirclePlus, Clock3, ExternalLink, ListTodo, Plus, RefreshCw, Search, SendHorizontal, Settings, Trash2, X,
@@ -26,7 +34,34 @@ interface CalendarTask {
   link?: string;
 }
 
-const STORAGE_KEY = "linguachat.personal-calendar.tasks";
+/** Map one stored event onto the shape this component was written around.
+ *
+ *  The component predates the API and models a "task" with a duration and a
+ *  status; the server models an event with a start and an end. Converting here
+ *  keeps the whole rendering layer — day, week and month grids, the detail
+ *  modal, the filters — working unchanged, which is most of the file.
+ */
+function toCalendarTask(event: ApiCalendarEvent): CalendarTask {
+  const starts = new Date(event.starts_at);
+  const ends = event.ends_at ? new Date(event.ends_at) : null;
+  const minutes = ends ? Math.max(15, Math.round((+ends - +starts) / 60000)) : 60;
+  return {
+    id: event.id,
+    title: event.title,
+    note: event.details ?? undefined,
+    dueAt: event.starts_at,
+    duration: event.all_day ? 1440 : minutes,
+    // Everything on the calendar has already been decided; a pending proposal
+    // is in the task inbox, not here.
+    status: event.status === "cancelled" ? "rejected" : "approved",
+    source: event.source,
+    priority: "medium",
+    category: event.all_day ? "personal" : "task",
+    location: event.location ?? undefined,
+    kind: event.all_day ? "event" : "task",
+  };
+}
+
 const HOUR_HEIGHT = 64;
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR = 22;
@@ -110,21 +145,6 @@ function tasksOfDay(tasks: CalendarTask[], day: Date) {
   return tasks.filter((task) => sameDay(new Date(task.dueAt), day));
 }
 
-const defaultTasks = (): CalendarTask[] => {
-  const today = new Date();
-  const at = (offset: number, hour: number, minute: number) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() + offset);
-    date.setHours(hour, minute, 0, 0);
-    return date.toISOString();
-  };
-  return [
-    { id: "proposal-review", title: "Rà soát nội dung cuộc họp", note: "Đề xuất sau khi @assistant tóm tắt cuộc trò chuyện.", dueAt: at(0, 9, 30), duration: 45, status: "pending", source: "assistant", priority: "high" },
-    { id: "focus-work", title: "Hoàn thiện giao diện lịch cá nhân", dueAt: at(0, 14, 0), duration: 90, status: "approved", source: "manual", priority: "high" },
-    { id: "google-event", title: "Cuộc hẹn đã đồng bộ", note: "Sự kiện từ Google Calendar chỉ để xem.", dueAt: at(2, 10, 0), duration: 60, status: "approved", source: "google", priority: "medium" },
-  ];
-};
-
 function startOfWeek(value: Date) {
   const date = new Date(value);
   const offset = (date.getDay() + 6) % 7;
@@ -152,8 +172,19 @@ function statusLabel(status: TaskStatus) {
   return ({ pending: "Chờ duyệt", approved: "Đã lên lịch", rejected: "Đã từ chối", done: "Hoàn thành" })[status];
 }
 
-export const PersonalCalendar: React.FC = () => {
-  const [tasks, setTasks] = useState<CalendarTask[]>(defaultTasks);
+interface PersonalCalendarProps {
+  token: string;
+  onNotify?: (title: string, detail?: string, tone?: "success" | "warning") => void;
+  /** Bumped by the parent when a socket event says the calendar moved. */
+  refreshToken?: number;
+}
+
+export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
+  token,
+  onNotify,
+  refreshToken = 0,
+}) => {
+  const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(() => new Date());
   const [query, setQuery] = useState("");
@@ -166,8 +197,6 @@ export const PersonalCalendar: React.FC = () => {
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   const [sourceFilter, setSourceFilter] = useState<TaskSource | "all">("all");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
-  const [googleSyncEnabled, setGoogleSyncEnabled] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const createMenuRef = useRef<HTMLDivElement | null>(null);
@@ -187,20 +216,26 @@ export const PersonalCalendar: React.FC = () => {
     return () => window.removeEventListener("mousedown", handleOutside);
   }, [showCreateMenu]);
 
-  useEffect(() => {
+  // The calendar lives on the server, not in this browser. It used to be held
+  // in localStorage, which meant it existed only on one machine, could not be
+  // reminded about, and could never reach Google.
+  const reload = useCallback(async () => {
     try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) setTasks(JSON.parse(saved) as CalendarTask[]);
-    } catch {
-      // A malformed local value should never prevent calendar access.
+      const events = await listCalendarEvents(token);
+      setTasks(events.map(toCalendarTask));
+      hydrated.current = true;
+    } catch (error) {
+      onNotify?.(
+        "Không tải được lịch",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
     }
-    hydrated.current = true;
-  }, []);
+  }, [token, onNotify]);
 
   useEffect(() => {
-    if (!hydrated.current) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-  }, [tasks]);
+    void reload();
+  }, [reload, refreshToken]);
 
   const visibleTasks = useMemo(() => tasks.filter((task) => {
     const matchesSearch = `${task.title} ${task.note ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase());
@@ -230,11 +265,63 @@ export const PersonalCalendar: React.FC = () => {
   const weekStart = weekDays[0];
   const hours = useMemo(() => hourRange(scheduledTasks), [scheduledTasks]);
 
-  const updateTask = (id: string, update: Partial<CalendarTask>) => setTasks((items) => items.map((task) => task.id === id ? { ...task, ...update } : task));
+  const updateTask = (id: string, update: Partial<CalendarTask>) =>
+    setTasks((items) => items.map((task) => (task.id === id ? { ...task, ...update } : task)));
+
+  // Approval lives in the task inbox, where the proposal and its clarification
+  // question are. The calendar shows what was already decided, so these three
+  // only exist for entries that reached it.
   const approve = (task: CalendarTask) => updateTask(task.id, { status: "approved" });
   const reject = (task: CalendarTask) => updateTask(task.id, { status: "rejected" });
   const finish = (task: CalendarTask) => updateTask(task.id, { status: "done" });
-  const triggerSync = () => { if (!googleSyncEnabled || isSyncing) return; setIsSyncing(true); window.setTimeout(() => setIsSyncing(false), 700); };
+
+  const removeTask = async (task: CalendarTask) => {
+    // Optimistic, then reconciled by `reload`. The server cancels rather than
+    // deletes, so a failure leaves the entry visible rather than losing it.
+    setTasks((items) => items.filter((item) => item.id !== task.id));
+    try {
+      await cancelCalendarEvent(token, task.id);
+    } catch (error) {
+      onNotify?.(
+        "Không xoá được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      await reload();
+    }
+  };
+
+  const saveTask = async (task: CalendarTask) => {
+    try {
+      if (tasks.some((item) => item.id === task.id)) {
+        await updateCalendarEvent(token, task.id, {
+          title: task.title,
+          details: task.note ?? null,
+          location: task.location ?? null,
+          starts_at: new Date(task.dueAt).toISOString(),
+          all_day: task.kind === "event",
+        });
+      } else {
+        await createCalendarEvent(token, {
+          title: task.title,
+          starts_at: new Date(task.dueAt).toISOString(),
+          details: task.note ?? null,
+          location: task.location ?? null,
+          all_day: task.kind === "event",
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+      }
+    } catch (error) {
+      onNotify?.(
+        "Không lưu được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      await reload();
+    }
+  };
 
   const navigate = useCallback((direction: -1 | 1) => setCursor((date) => {
     const next = new Date(date);
@@ -280,7 +367,7 @@ export const PersonalCalendar: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={triggerSync} disabled={!googleSyncEnabled || isSyncing} title={googleSyncEnabled ? "Đồng bộ Google Calendar" : "Đồng bộ Google đang tắt"} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-300"><RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />{isSyncing ? "Đang đồng bộ" : "Google"}</button>
+              <GoogleCalendarControls token={token} onSynced={() => void reload()} onNotify={onNotify} />
               <button onClick={() => setShowAssistant(true)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-300">Lập lịch bằng Trợ lý</button>
               <button onClick={() => setShowSidebar(true)} aria-label="Mở danh sách việc" className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8EAF0] bg-white px-3 py-2 text-xs font-semibold text-[#4E5568] hover:bg-[#F7F8FC] dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6] dark:hover:bg-[#2E3342] xl:hidden"><ListTodo className="h-4 w-4" />Việc</button>
               <div className="relative" ref={createMenuRef}><button onClick={() => setShowCreateMenu((value) => !value)} className="inline-flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1D4ED8]"><Plus className="h-4 w-4" />Thêm</button>{showCreateMenu && <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1.5 shadow-xl dark:border-[#2E3342] dark:bg-[#232630]"><button onClick={() => { setNewItemKind("event"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#60A5FA]"><CalendarDays className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Sự kiện</span></button><button onClick={() => { setNewItemKind("task"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Việc</span></button></div>}</div>
@@ -306,7 +393,7 @@ export const PersonalCalendar: React.FC = () => {
             <span className="font-semibold text-[#74798C]">Lọc:</span>
             <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as TaskSource | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi nguồn</option><option value="assistant">Trợ lý</option><option value="manual">Thủ công</option><option value="google">Google</option></select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi trạng thái</option><option value="approved">Đã lên lịch</option><option value="done">Hoàn thành</option><option value="rejected">Đã từ chối</option></select>
-            <label className="ml-auto inline-flex items-center gap-2 text-xs font-medium text-[#74798C]"><span>Đồng bộ Google</span><button onClick={() => setGoogleSyncEnabled((value) => !value)} className={`h-5 w-9 rounded-full p-0.5 ${googleSyncEnabled ? "bg-[#2563EB]" : "bg-[#DDE1EA]"}`}><span className={`block h-4 w-4 rounded-full bg-white transition-transform ${googleSyncEnabled ? "translate-x-4" : ""}`} /></button></label>
+            
           </div>
         </header>
 

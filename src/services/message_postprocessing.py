@@ -61,4 +61,9 @@ def schedule_text_dependent_work(
         message_id=message.id,
         conversation_id=message.conversation_id,
         text=text,
+        # Whose `store_memory` consent decides whether this is remembered. Not
+        # optional: without a sender the scheduler falls back to the RAG flag
+        # alone, so an account that granted memory would be embedded never and
+        # nothing would say so (ADR-30).
+        sender_id=message.sender_id,
     )

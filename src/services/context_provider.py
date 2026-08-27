@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.context_provider import DEFAULT_CONTEXT_SIZE
 from src.config import Settings, get_settings
 from src.database.models import Message, MessageEmbedding
+from src.services.message_visibility import public_only
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,10 @@ class DatabaseContextProvider:
                 # Withdrawn: nobody can read it in the app any more, so nothing
                 # of it may reach the model either.
                 Message.deleted_at.is_(None),
+                # Same reasoning, one step further: this context is built once
+                # and shapes a translation delivered to every member, so a
+                # message kept from some of them must not influence it.
+                public_only(),
                 # Attachment-only messages carry no text; an empty line would
                 # cost tokens and tell the model nothing.
                 Message.original_text != "",
@@ -170,6 +175,7 @@ class DatabaseContextProvider:
                     Message.original_text != "",
                     Message.id != self._before_message_id,
                     MessageEmbedding.embedding.is_not(None),
+                    public_only(),
                 )
                 .order_by(MessageEmbedding.embedding.cosine_distance(vector))
                 .limit(self._settings.rag_top_k + len(exclude_ids))

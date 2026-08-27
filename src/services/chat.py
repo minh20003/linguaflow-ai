@@ -30,6 +30,7 @@ from src.database.models import (
 from src.schemas.chat import ConversationType
 from src.services.blocking import DirectMessagingBlockedError, is_blocked_between
 from src.services.llm import LLMConfigError, extract_text, get_llm
+from src.services.message_visibility import visible_to
 from src.services.profiles import profile_for, select_for_reader
 from src.services.transcription import InvalidAudioError, validate_audio_attachment
 
@@ -433,6 +434,7 @@ class ChatService:
         *,
         conversation_ids: Sequence[str],
         reader_language: str,
+        reader_id: str,
         reader_profiles: Mapping[str, str] | None = None,
         reader_tones: Mapping[str, str] | None = None,
     ) -> dict[str, tuple[str, datetime, str | None, str | None]]:
@@ -487,7 +489,14 @@ class ChatService:
             # text, or blank when there was nothing before it, and neither says
             # what happened. The row now reports the withdrawal instead — see
             # the empty-text convention below and docs/CONTRACT.md §3.5.
-            .where(Message.conversation_id.in_(conversation_ids))
+            # Visibility is inside the ranking, not applied to its result: rank
+            # over everything and then discard the winner and this conversation
+            # shows no preview at all, rather than the newest message the reader
+            # is actually allowed to see.
+            .where(
+                Message.conversation_id.in_(conversation_ids),
+                visible_to(reader_id),
+            )
             .subquery()
         )
         newest = (await self._db.execute(select(ranked).where(ranked.c.rank == 1))).all()
@@ -690,7 +699,10 @@ class ChatService:
             (
                 await self._db.scalars(
                     select(Message)
-                    .where(Message.conversation_id == conversation_id)
+                    .where(
+                        Message.conversation_id == conversation_id,
+                        visible_to(user_id),
+                    )
                     .order_by(Message.created_at.desc(), Message.id.desc())
                     .limit(limit)
                 )
@@ -847,6 +859,7 @@ class ChatService:
             .where(
                 Message.conversation_id == conversation_id,
                 Message.deleted_at.is_(None),
+                visible_to(user_id),
                 or_(
                     Message.original_text.ilike(pattern, escape="\\"),
                     (TranslationResult.target_language == reader_language)
@@ -899,6 +912,10 @@ class ChatService:
                 Message.conversation_id.in_(conversation_ids),
                 Message.sender_id != user_id,
                 Message.deleted_at.is_(None),
+                # An unread badge is itself a disclosure: a count that moves for
+                # a message this account cannot open says something happened and
+                # invites them to go looking for it.
+                visible_to(user_id),
                 (ConversationMember.last_read_at.is_(None))
                 | (Message.created_at > ConversationMember.last_read_at),
             )
@@ -988,6 +1005,7 @@ class ChatService:
             reply_to_message_id=await self._resolve_reply_target(
                 conversation_id=conversation_id,
                 reply_to_message_id=reply_to_message_id,
+                sender_id=sender_id,
             ),
             forwarded_from_message_id=await self._resolve_forward_target(
                 sender_id=sender_id,
@@ -1073,6 +1091,10 @@ class ChatService:
         reply_target_id = await self._resolve_reply_target(
             conversation_id=conversation_id,
             reply_to_message_id=reply_to_message_id,
+            # Same rule the text path follows: a voice message may not quote a
+            # message its sender cannot read, because the quote would carry that
+            # text to everyone in the conversation (ADR-31).
+            sender_id=sender_id,
         )
 
         existing_message = await self._find_message_by_client_message_id(
@@ -1176,16 +1198,22 @@ class ChatService:
         self,
         *,
         trigger_message: Message,
-        member_ids: Sequence[str],
     ) -> SendMessageResult:
-        """Persist an in-thread answer to an explicit assistant mention."""
+        """Persist an in-thread answer to an explicit assistant mention.
+
+        The answer is private to whoever tagged the assistant, and the recipient
+        list says so — it is that one account rather than the conversation's
+        members. An answer summarising a group thread can restate what other
+        people committed to; delivered to everyone that is both noisy and a
+        disclosure about members who never asked for it (ADR-31).
+        """
         existing = await self._find_message_by_client_message_id(
             sender_id=trigger_message.sender_id,
             conversation_id=trigger_message.conversation_id,
             client_message_id=f"assistant:{trigger_message.id}",
         )
         if existing is not None:
-            return SendMessageResult(existing, tuple(member_ids), False)
+            return SendMessageResult(existing, (trigger_message.sender_id,), False)
 
         reply = Message(
             client_message_id=f"assistant:{trigger_message.id}",
@@ -1195,12 +1223,14 @@ class ChatService:
             source_language=trigger_message.source_language,
             assistant_generated=True,
             reply_to_message_id=trigger_message.id,
+            visibility="private",
+            visible_to_user_id=trigger_message.sender_id,
         )
         self._db.add(reply)
         await self._db.commit()
         await self._db.refresh(reply)
         await self._db.commit()
-        return SendMessageResult(reply, tuple(member_ids), True)
+        return SendMessageResult(reply, (trigger_message.sender_id,), True)
 
     async def _assistant_reply_text(self, trigger_message: Message) -> str:
         """Answer a mention using recent in-conversation context.
@@ -1225,6 +1255,12 @@ class ChatService:
                         .where(
                             Message.conversation_id == trigger_message.conversation_id,
                             Message.deleted_at.is_(None),
+                            # The requester's own view of the thread: public
+                            # messages plus their own private exchanges with the
+                            # assistant. Feeding it another member's private
+                            # answer would let a summary quote something this
+                            # person was never shown.
+                            visible_to(trigger_message.sender_id),
                         )
                         .order_by(Message.created_at.desc(), Message.id.desc())
                         .limit(8)
@@ -1387,17 +1423,25 @@ class ChatService:
         *,
         conversation_id: str,
         reply_to_message_id: str | None,
+        sender_id: str,
     ) -> str | None:
         """Keep a reply link only when it points inside this conversation.
 
         A quote of a message from somewhere else would render text the reader is
         not entitled to, so an id that does not belong here is dropped rather
         than rejected — the message itself is still worth sending.
+
+        The same reasoning covers a private message: quoting one would carry its
+        text into a public reply that every member can read, which is a longer
+        way round to the disclosure the visibility flag exists to prevent.
         """
         if reply_to_message_id is None:
             return None
         parent_conversation = await self._db.scalar(
-            select(Message.conversation_id).where(Message.id == reply_to_message_id)
+            select(Message.conversation_id).where(
+                Message.id == reply_to_message_id,
+                visible_to(sender_id),
+            )
         )
         return reply_to_message_id if parent_conversation == conversation_id else None
 
@@ -1417,6 +1461,7 @@ class ChatService:
                 Message.id == forwarded_from_message_id,
                 Message.deleted_at.is_(None),
                 ConversationMember.user_id == sender_id,
+                visible_to(sender_id),
             )
         )
         return forwarded_from_message_id if permitted else None
@@ -1512,6 +1557,11 @@ class ChatService:
                 (ConversationMember.conversation_id == Message.conversation_id)
                 & (ConversationMember.user_id == user_id),
             )
+            # A bookmark can only have been made on something readable, so this
+            # is defence in depth rather than a case that arises today. It costs
+            # nothing and it means a future path that creates bookmarks some
+            # other way cannot turn this list into a way around the rule.
+            .where(visible_to(user_id))
             .where(SavedMessage.user_id == user_id, Message.deleted_at.is_(None))
             .order_by(SavedMessage.created_at.desc(), SavedMessage.id.desc())
             .limit(limit + 1)
@@ -1592,6 +1642,13 @@ class ChatService:
         message = await self._db.get(Message, message_id)
         if message is None or message.conversation_id != conversation_id:
             raise MessageNotFoundError(message_id)
+        # Checked here rather than in a WHERE because this is a primary-key
+        # fetch of a single row, and the answer is the same either way: someone
+        # else's private message is reported as not found, so the id tells the
+        # caller nothing it did not already supply. This is the gate for editing,
+        # deleting and reacting, so it has to hold for all of them at once.
+        if message.visibility != "public" and message.visible_to_user_id != user_id:
+            raise MessageNotFoundError(message_id)
         return message
 
     async def get_attachments_by_message(
@@ -1659,7 +1716,7 @@ class ChatService:
         conversation_id = await self._db.scalar(
             select(Message.conversation_id)
             .join(TranslationResult, TranslationResult.message_id == Message.id)
-            .where(TranslationResult.id == translation_id)
+            .where(TranslationResult.id == translation_id, visible_to(user_id))
         )
         if conversation_id is None:
             raise TranslationNotFoundError(translation_id)

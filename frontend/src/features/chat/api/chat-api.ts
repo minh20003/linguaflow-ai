@@ -73,6 +73,7 @@ export interface ApiMessage {
   attachment?: ApiAttachment | null;
   mentions?: ApiMention[];
   assistant_generated?: boolean;
+  visibility?: "public" | "private";
   is_saved?: boolean;
   reactions?: ApiMessageReaction[];
 }
@@ -125,6 +126,27 @@ export interface ApiUserSettings {
   sound_enabled: boolean;
   read_receipts: boolean;
   ai_smart_assistance: boolean;
+}
+
+/** Assistant permissions. Separate from settings above: these are grants the
+ *  user gives, not preferences — see `docs/CONTRACT.md` §3.15. */
+export type AgentConsentScope =
+  | "read_conversations"
+  | "proactive_scan"
+  | "store_memory"
+  | "calendar_read"
+  | "calendar_write";
+
+export interface ApiAgentConsent {
+  scope: AgentConsentScope;
+  is_granted: boolean;
+  granted_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ApiAgentConsents {
+  policy_version: string;
+  consents: ApiAgentConsent[];
 }
 
 export interface ApiAttachment {
@@ -302,6 +324,7 @@ export function toMessage(
     attachments: item.attachment ? [toMessageAttachment(item.attachment)] : undefined,
     mentions: item.mentions?.map((mention) => ({ type: mention.type, userId: mention.user_id ?? undefined })),
     isAssistant,
+    isPrivate: item.visibility === "private",
     isSaved: item.is_saved ?? false,
     reactions: item.reactions?.map((reaction) => ({
       emoji: reaction.emoji,
@@ -492,6 +515,16 @@ export function updateUserSettings(token: string, changes: Partial<ApiUserSettin
     body: JSON.stringify(changes),
   });
 }
+export function getAgentConsents(token: string) {
+  return request<ApiAgentConsents>("/api/v1/auth/me/agent-consents", token);
+}
+export function updateAgentConsents(token: string, consents: Partial<Record<AgentConsentScope, boolean>>) {
+  return request<ApiAgentConsents>("/api/v1/auth/me/agent-consents", token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ consents }),
+  });
+}
 export function updateProfile(token: string, changes: { display_name?: string; bio?: string }) {
   return request<AuthUser>("/api/v1/auth/me", token, {
     method: "PATCH",
@@ -565,4 +598,197 @@ export function rejectCall(token: string, callId: string) {
 
 export function endCall(token: string, callId: string) {
   return request<ApiCall>(`/api/v1/calls/${callId}/end`, token, { method: "POST" });
+}
+
+/** Personal calendar and task inbox — `docs/CONTRACT.md` §3.16. */
+export interface ApiCalendarEvent {
+  id: string;
+  title: string;
+  details: string | null;
+  location: string | null;
+  starts_at: string;
+  ends_at: string | null;
+  all_day: boolean;
+  timezone: string | null;
+  source: "assistant" | "manual" | "google";
+  status: "active" | "cancelled";
+  sync_state: "local_only" | "pending_push" | "synced" | "remote_only";
+  google_event_id: string | null;
+  action_proposal_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiReminder {
+  id: string;
+  calendar_event_id: string;
+  remind_at: string;
+  delivered_at: string | null;
+  dismissed_at: string | null;
+}
+
+export interface ApiActionProposal {
+  id: string;
+  conversation_id: string;
+  source_message_id: string;
+  owner_user_id: string;
+  action_type: "task" | "appointment";
+  status: "needs_clarification" | "pending_confirmation" | "confirmed" | "rejected" | "stale";
+  title: string;
+  details: string | null;
+  location: string | null;
+  scheduled_start_at: string | null;
+  due_at: string | null;
+  clarification_prompt: string | null;
+  clarification_question: string | null;
+  confidence_score: number;
+  source_mode: "on_demand" | "proactive";
+  created_at: string;
+}
+
+export interface ApiCalendarSyncResult {
+  pushed: number;
+  pulled: number;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+}
+
+export function listCalendarEvents(
+  token: string,
+  range?: { startsAfter?: string; startsBefore?: string },
+) {
+  const query = new URLSearchParams();
+  if (range?.startsAfter) query.set("starts_after", range.startsAfter);
+  if (range?.startsBefore) query.set("starts_before", range.startsBefore);
+  const suffix = query.toString() ? `?${query}` : "";
+  return request<ApiCalendarEvent[]>(`/api/v1/me/calendar/events${suffix}`, token);
+}
+
+export function createCalendarEvent(
+  token: string,
+  body: {
+    title: string;
+    starts_at: string;
+    ends_at?: string | null;
+    details?: string | null;
+    location?: string | null;
+    all_day?: boolean;
+    timezone?: string | null;
+    reminder_minutes_before?: number | null;
+  },
+) {
+  return request<ApiCalendarEvent>("/api/v1/me/calendar/events", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateCalendarEvent(
+  token: string,
+  eventId: string,
+  changes: Partial<Pick<ApiCalendarEvent, "title" | "details" | "location" | "starts_at" | "ends_at" | "all_day" | "timezone">>,
+) {
+  return request<ApiCalendarEvent>(`/api/v1/me/calendar/events/${eventId}`, token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  });
+}
+
+/** Cancels rather than deletes; the row survives because a reminder may already
+ *  have fired for it. */
+export function cancelCalendarEvent(token: string, eventId: string) {
+  return request<ApiCalendarEvent>(`/api/v1/me/calendar/events/${eventId}`, token, {
+    method: "DELETE",
+  });
+}
+
+export function listReminders(token: string) {
+  return request<ApiReminder[]>("/api/v1/me/reminders", token);
+}
+
+export function dismissReminder(token: string, reminderId: string) {
+  return request<ApiReminder>(`/api/v1/me/reminders/${reminderId}/dismiss`, token, {
+    method: "POST",
+  });
+}
+
+export function listActionProposals(token: string, status?: string) {
+  const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<ApiActionProposal[]>(`/api/v1/me/action-proposals${suffix}`, token);
+}
+
+export function confirmActionProposal(
+  token: string,
+  proposalId: string,
+  corrections?: Record<string, unknown>,
+) {
+  return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/confirm`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(corrections ?? {}),
+  });
+}
+
+export function rejectActionProposal(token: string, proposalId: string) {
+  return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/reject`, token, {
+    method: "POST",
+  });
+}
+
+export function clarifyActionProposal(
+  token: string,
+  proposalId: string,
+  answer: string,
+  timezone?: string,
+) {
+  return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/clarify`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ answer, timezone }),
+  });
+}
+
+export function startGoogleCalendarLink(token: string) {
+  return request<{ authorization_url: string }>("/api/v1/me/calendar/google/authorize", token);
+}
+
+export function syncGoogleCalendarNow(token: string) {
+  return request<ApiCalendarSyncResult>("/api/v1/me/calendar/sync", token, { method: "POST" });
+}
+
+/** What the interface may offer for Google Calendar — see `CONTRACT.md` §3.17.
+ *
+ *  Three separate facts because the right thing to render differs for each:
+ *  no credentials on the server means the controls should not exist, no consent
+ *  means show the permission, no link means show connect rather than sync.
+ */
+export interface ApiCalendarCapability {
+  configured: boolean;
+  consented: boolean;
+  linked: boolean;
+  sync_enabled: boolean;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+}
+
+export function getGoogleCalendarStatus(token: string) {
+  return request<ApiCalendarCapability>("/api/v1/me/calendar/google/status", token);
+}
+
+export function unlinkGoogleCalendar(token: string) {
+  return request<void>("/api/v1/me/calendar/google/link", token, { method: "DELETE" });
+}
+
+export function completeGoogleCalendarLink(token: string, code: string, state: string) {
+  return request<{ google_calendar_id: string; sync_enabled: boolean }>(
+    "/api/v1/me/calendar/google/callback",
+    token,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, state }),
+    },
+  );
 }
