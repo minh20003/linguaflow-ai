@@ -369,6 +369,7 @@ async def websocket_endpoint(
                         message_id=result.message.id,
                         conversation_id=result.message.conversation_id,
                         requester_id=user_id,
+                        request_text=result.message.original_text,
                         publisher=manager,
                     )
                 # Fire and forget. Guarded by `created` so an idempotent resend
