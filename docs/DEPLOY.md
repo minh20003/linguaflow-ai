@@ -142,6 +142,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | 5 / 10 | Chỉ dùng cho PostgreSQL. Mỗi WebSocket giữ một phiên suốt thời gian mở |
 | `CORS_ORIGINS` | `http://localhost:3000` | Danh sách ngăn cách bằng dấu phẩy. Cũng là danh sách kiểm tra `Origin` của WebSocket |
 | `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |
+| `FRONTEND_URL` | `http://localhost:3000` | URL chuẩn dẫn từ email đặt lại mật khẩu. Bắt buộc dùng HTTPS ở production |
 | `UPLOAD_DIR` | `./data/uploads` | Trỏ vào volume khi chạy trong container |
 | `MAX_UPLOAD_SIZE_BYTES` | 20 MiB | |
 | `SUPABASE_URL` | rỗng | Có giá trị cùng service role key thì bật Supabase Storage |
@@ -155,8 +156,8 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `EMAIL_PROVIDER` | `smtp` | `smtp` \| `console` \| `memory`. Ở `APP_ENV=production` bắt buộc dùng `smtp`, cấm `memory`/`console` |
 | `SMTP_HOST`, `SMTP_PORT` | `smtp.gmail.com` / `587` | Bắt buộc ở production khi dùng SMTP |
 | `SMTP_USER`, `SMTP_PASSWORD` | — | Bắt buộc ở production |
-| `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP |
-| `SMTP_USE_TLS` | `true` | Bật STARTTLS cho cổng 587 |
+| `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` | — / `LinguaFlow` | Địa chỉ email gửi OTP và liên kết đặt lại mật khẩu |
+| `SMTP_TIMEOUT_SECONDS` | 15 | Thời gian tối đa cho một lần gửi, tránh SMTP treo API |
 | `OBSERVABILITY_PROVIDER` | `braintrust` | `braintrust` \| `langfuse` \| `none`. Chọn backend nhận trace (ADR-29) |
 | `BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT` | rỗng / `linguaflow` | Rỗng là tắt tracing. Khoá Braintrust bắt đầu bằng `sk-` |
 | `LANGFUSE_*` | rỗng | Chỉ dùng khi `OBSERVABILITY_PROVIDER=langfuse`. Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
@@ -197,11 +198,8 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 4. Application type: **Web application**
 5. Thêm **Authorized JavaScript origins**:
    - Development: `http://localhost:3000`
-   - Production / Tunnel: `https://agent.dquangminh2003.id.vn` (hoặc domain Vercel/Cloudflare của bạn)
+   - Production: `https://your-domain.com` (hoặc domain Vercel của bạn)
 6. Copy **Client ID** (format: `xxx.apps.googleusercontent.com`)
-
-**Địa chỉ API Backend Production:**
-- Production API: `https://api.dquangminh2003.id.vn`
 
 **Đặt biến môi trường:**
 
@@ -249,21 +247,16 @@ Không phải sửa dòng mã nào, chỉ đổi `DATABASE_URL`. Hai điều d�
 - Chuỗi Supabase cấp bắt đầu bằng `postgresql://`; ứng dụng tự đổi sang
   `postgresql+asyncpg://` nên dán nguyên cũng chạy.
 
-## 7. Quên mật khẩu — cách làm hiện tại
+## 7. Quên mật khẩu
 
-Chưa gắn dịch vụ gửi email. Ở `APP_ENV=production`, `POST /auth/password/forgot`
-**không** trả mã trong phản hồi mà ghi vào log máy chủ ở mức `WARNING`:
+`POST /auth/password/forgot` tạo liên kết đặt lại mật khẩu một lần, gửi qua SMTP
+và dẫn tới `FRONTEND_URL/reset-password?token=...`. Đặt `FRONTEND_URL` thành URL
+HTTPS công khai của frontend khi triển khai; ứng dụng từ chối khởi động production
+nếu giá trị này không dùng HTTPS. Mã/token đặt lại **không được ghi vào log**.
 
-```
-WARNING src.api.routes: Password reset requested for an@example.com. Reset token: ... (valid 30 minutes)
-```
-
-Quản trị viên mở log của Railway, tìm dòng đó, đọc mã cho người dùng; người dùng
-dán vào ô **"Mã đặt lại"** ở màn hình khôi phục rồi đặt mật khẩu mới. Mã dùng một
-lần và hết hạn sau 30 phút.
-
-Đây là giải pháp tạm và không mở rộng được. Bước tiếp theo là cấu hình SMTP (hoặc
-Resend) và gửi liên kết đặt lại — khi đó bỏ hẳn phần ghi log này.
+Endpoint luôn trả phản hồi `200` chung để không dò được địa chỉ nào có tài khoản.
+Vì vậy giao diện phải diễn đạt là "nếu tài khoản tồn tại" thay vì cam kết chắc chắn
+đã gửi mail. Kiểm tra cả Inbox, Spam và log SMTP khi kiểm thử delivery.
 
 ## 8. Sao lưu
 

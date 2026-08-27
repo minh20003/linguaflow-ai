@@ -26,7 +26,7 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "LinguaChat",
+  title: "LinguaFlow",
   description:
     "Nhắn tin bằng tiếng của bạn, người kia đọc bằng tiếng của họ. Dịch tự động 10 ngôn ngữ.",
 };

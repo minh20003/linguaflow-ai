@@ -59,9 +59,31 @@ PRICE_PER_MILLION_TOKENS_USD: dict[str, ModelPrice] = {
     # Google publishes one; do not treat this line as confirmed.
     "gemini-3.7-flash": ModelPrice(0.30, 2.50),  # Google — ESTIMATED, see above
     "gpt-4o-mini": ModelPrice(0.15, 0.60),  # OpenAI
-    "mistral-small-latest": ModelPrice(0.10, 0.30),  # Mistral
+    "gpt-4o": ModelPrice(2.50, 10.00),  # OpenAI
+    "mistral-small-latest": ModelPrice(0.15, 0.60),  # Mistral Small 4
     FALLBACK_MODEL_NAME: ModelPrice(0.0, 0.0),  # deep-translator: not metered
 }
+
+
+def get_model_price(model: str) -> ModelPrice | None:
+    """Return the matching family price, including dated model snapshots."""
+    # Providers do not agree on a stable separator in their reported model
+    # name.  Gemini, for example, can report ``gemini 3.7 flash`` while the
+    # configured model and price catalog use ``gemini-3.7-flash``.  Treat
+    # whitespace and underscores as separators before looking up the family;
+    # otherwise tokens are recorded but their cost is silently unpriced.
+    normalized = "-".join((model or "").strip().lower().replace("_", " ").split())
+    # Providers may append a dated snapshot to the stable family id. Match the
+    # longest family first so `gpt-4o-mini-*` never falls into `gpt-4o`.
+    family = next(
+        (
+            name
+            for name in sorted(PRICE_PER_MILLION_TOKENS_USD, key=len, reverse=True)
+            if normalized == name or normalized.startswith(f"{name}-")
+        ),
+        None,
+    )
+    return PRICE_PER_MILLION_TOKENS_USD.get(family) if family else None
 
 
 def estimate_cost_usd(model: str, *, input_tokens: int, output_tokens: int) -> float | None:
@@ -70,7 +92,7 @@ def estimate_cost_usd(model: str, *, input_tokens: int, output_tokens: int) -> f
     None is a real answer, not a missing one — see the module docstring for
     why an unpriced model must not be reported as free.
     """
-    price = PRICE_PER_MILLION_TOKENS_USD.get(model)
+    price = get_model_price(model)
     if price is None:
         return None
     return (

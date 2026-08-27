@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from sqlalchemy import func, select
@@ -219,6 +219,7 @@ def schedule_translation_retry(
     *,
     message: Message,
     reader_id: str,
+    viewer_ids: Sequence[str] | None = None,
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession] | None = None,
     graph_factory: Callable[[AsyncSession, str], Any] | None = None,
@@ -243,6 +244,7 @@ def schedule_translation_retry(
         _retry_translation_for_reader(
             snapshot=snapshot,
             reader_id=reader_id,
+            viewer_ids=tuple(viewer_ids) if viewer_ids is not None else (reader_id,),
             publisher=publisher,
             session_factory=session_factory or get_async_session_maker(),
             graph_factory=graph_factory or _default_graph_factory,
@@ -330,6 +332,7 @@ async def _retry_translation_for_reader(
     *,
     snapshot: Mapping[str, Any],
     reader_id: str,
+    viewer_ids: Sequence[str],
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
     graph_factory: Callable[[AsyncSession, str], Any],
@@ -370,7 +373,7 @@ async def _retry_translation_for_reader(
         honorific_profile=profile or DEFAULT_HONORIFIC_PROFILE,
         sender_honorific_profile=sender_profile or "",
         translation_tone=translation_tone,
-        user_ids=[reader_id],
+        user_ids=list(dict.fromkeys(viewer_ids)),
         publisher=publisher,
         session_factory=session_factory,
         graph_factory=graph_factory,
@@ -614,12 +617,13 @@ async def _translate_into(
 
         detected_source = result.get("source_language") or snapshot["source_language"]
 
-        # The agent's passthrough branch already skips the LLM when the message
-        # is in the language this member reads. Nothing to persist or send —
-        # they have the original (docs/CONTRACT.md section 4.3).
-        if detected_source == target_language:
+        # The agent's passthrough branch already skips the translation LLM when
+        # the message is in the language this member reads. This is not a
+        # translation request, so retain only the message's detected language:
+        # do not create a TranslationResult or TranslationAttempt and do not
+        # surface it in the admin request history.
+        if str(detected_source).lower() == str(target_language).lower():
             await _store_detected_source(session, snapshot["message_id"], detected_source)
-            await record("passthrough", result=result)
             return
 
         translated_text = (result.get("translated_text") or "").strip()

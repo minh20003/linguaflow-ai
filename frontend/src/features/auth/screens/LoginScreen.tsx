@@ -12,5 +12,12 @@ export function LoginScreen() {
     if (screen === "forgot-password") router.push("/forgot-password");
   };
 
-  return <SignInForm onNavigate={navigate} onSuccess={() => router.push("/chat")} />;
+  return (
+    <SignInForm
+      onNavigate={navigate}
+      onSuccess={(user) => {
+        router.replace(user.role?.toLowerCase() === "admin" ? "/admin" : "/chat");
+      }}
+    />
+  );
 }

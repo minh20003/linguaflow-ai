@@ -157,8 +157,8 @@ export const ForgotPasswordForm: React.FC<ForgotPasswordFormProps> = ({ onNaviga
               Check your email
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed max-w-sm mx-auto mb-6">
-              We have sent password reset instructions to{' '}
-              <span className="font-semibold text-slate-900">{email}</span>. Click the link inside the email to reset your password.
+              If an account exists for{' '}
+              <span className="font-semibold text-slate-900">{email}</span>, a password reset link will arrive shortly. Open the link in that email to set a new password.
             </p>
 
             <div className="space-y-3">

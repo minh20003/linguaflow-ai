@@ -489,6 +489,12 @@ class Message(Base):
         nullable=False,
     )
     original_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Structured @mentions are stored alongside the original text so history
+    # and realtime deliveries agree without reparsing display names.
+    mentions_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]", server_default="[]")
+    # Assistant replies are ordinary durable messages, but the UI renders them
+    # as the in-thread assistant rather than as the member who invoked it.
+    assistant_generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     # Provisional on insert — it is the sender's preferred_language, which says
     # what they usually write in, not what this message is in. The agent's
     # detect_language node overwrites it (docs/CONTRACT.md section 4.3).
@@ -741,9 +747,10 @@ class TranslationEdit(Base):
     in effect. The history behind it is what a later admin feature would read
     to compare human wording against the machine's (docs/CONTRACT.md §3.10).
 
-    Private to its author. Nobody else in the conversation reads these rows,
-    which is why `editor_id` cascades: deleting an account deletes notes only
-    that account could ever see.
+    Private to its author among conversation members. The anonymous admin
+    quality-review queue may compare this wording with the source and machine
+    translation, but never exposes its editor or conversation. `editor_id`
+    still cascades so deleting an account removes the associated edit.
     """
 
     __tablename__ = "translation_edits"

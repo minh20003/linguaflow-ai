@@ -165,6 +165,18 @@ export function requestPasswordReset(email: string): Promise<{ message: string; 
   );
 }
 
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/v1/auth/password/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  const body = await parseJson<ApiErrorBody>(response);
+  if (!response.ok) {
+    throw new Error(getApiErrorMessage(body, "Unable to reset your password. Please request a new link."));
+  }
+}
+
 export function signInWithGoogle(credential: string, remember = true): Promise<AuthSession> {
   return requestAuthSession(
     "/api/v1/auth/google/login",

@@ -17,7 +17,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.database.models import CorrectionLog, Feedback, Message, TranslationResult
+from src.database.models import (
+    CorrectionLog,
+    Feedback,
+    Message,
+    TranslationEdit,
+    TranslationResult,
+)
 
 
 def response_text(body: dict) -> str:
@@ -176,6 +182,67 @@ async def test_shared_corrections_are_newest_first(
         "newer",
         "older",
     ]
+
+
+@pytest.mark.asyncio
+async def test_review_queue_shows_anonymous_votes_and_edits_with_translation_context(
+    client, test_db, test_admin_headers, test_user, test_user_two, conversation_factory
+):
+    """The quality table joins the two feedback stores without leaking identity.
+
+    The feedback form writes a vote and optional short correction to
+    ``feedbacks``. The pencil editor writes a separate append-only row to
+    ``translation_edits``. Both need the original and machine translation when
+    an administrator reviews why the reader disagreed with the model.
+    """
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    translation_id = await _translation(test_db, conversation.id, test_user_two.id)
+    test_db.add_all(
+        [
+            Feedback(
+                translation_id=translation_id,
+                user_id=test_user.id,
+                rating=1,
+                correction="Use a less formal question.",
+            ),
+            TranslationEdit(
+                translation_id=translation_id,
+                editor_id=test_user.id,
+                edited_text="Is the deployment finished yet?",
+                created_at=datetime.now(UTC),
+            ),
+        ]
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/admin/feedback", headers=test_admin_headers)
+
+    assert response.status_code == 200
+    entries = response.json()["review_entries"]
+    vote = next(entry for entry in entries if entry["entry_type"] == "vote")
+    edit = next(entry for entry in entries if entry["entry_type"] == "edit")
+
+    assert vote == {
+        "entry_type": "vote",
+        "original_text": "Deploy xong chưa anh?",
+        "translated_text": "Is the deploy done?",
+        "source_language": "vi",
+        "target_language": "en",
+        "model": "mistral-small-latest",
+        "vote": "down",
+        "rating": 1,
+        "user_correction": "Use a less formal question.",
+        "created_at": vote["created_at"],
+    }
+    assert edit["entry_type"] == "edit"
+    assert edit["vote"] is None
+    assert edit["user_correction"] == "Is the deployment finished yet?"
+    assert edit["original_text"] == vote["original_text"]
+    assert edit["translated_text"] == vote["translated_text"]
+    assert "user_id" not in vote
+    assert "editor_id" not in edit
+    assert test_user.id not in response_text(response.json())
+    assert conversation.id not in response_text(response.json())
 
 
 @pytest.mark.asyncio

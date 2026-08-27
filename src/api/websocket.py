@@ -18,6 +18,7 @@ from src.schemas.chat import (
     AuthEvent,
     AuthOkEvent,
     ErrorEvent,
+    MentionNotificationEvent,
     MessageCreatedEvent,
     MessageReceivedEvent,
     RealtimeMessage,
@@ -25,12 +26,14 @@ from src.schemas.chat import (
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.assistant_mentions import schedule_assistant_mention
 from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
     ChatService,
     ClientMessageIdConflictError,
     ConversationMembershipError,
     ConversationNotFoundError,
+    message_mentions,
 )
 from src.services.commitment_detection import schedule_commitment_detection
 from src.services.connection_manager import ConnectionManager
@@ -274,6 +277,7 @@ async def websocket_endpoint(
                     attachment_id=event.attachment_id,
                     reply_to_message_id=event.reply_to_message_id,
                     forwarded_from_message_id=event.forwarded_from_message_id,
+                    mentions=[mention.model_dump() for mention in event.mentions],
                 )
             except ConversationNotFoundError:
                 await db.rollback()
@@ -305,6 +309,8 @@ async def websocket_endpoint(
                 continue
 
             realtime_message = RealtimeMessage.model_validate(result.message)
+            realtime_message.mentions = message_mentions(result.message)
+            realtime_message.assistant_generated = result.message.assistant_generated
             # Attached separately: the ORM object has no `attachment` field, and
             # recipients need the file metadata without refetching history.
             attachments = await service.get_attachments_by_message(
@@ -326,6 +332,39 @@ async def websocket_endpoint(
                     result.recipient_ids,
                     MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
                 )
+                mentioned_user_ids = tuple(
+                    mention["user_id"]
+                    for mention in realtime_message.mentions
+                    if mention.get("type") == "user" and mention.get("user_id")
+                )
+                if mentioned_user_ids:
+                    await manager.send_to_users(
+                        mentioned_user_ids,
+                        MentionNotificationEvent(
+                            message_id=result.message.id,
+                            conversation_id=result.message.conversation_id,
+                            sender_id=user_id,
+                        ).model_dump(mode="json"),
+                    )
+                if any(mention.get("type") == "assistant" for mention in realtime_message.mentions):
+                    member_ids = (user_id, *result.recipient_ids)
+                    assistant_result = await service.create_assistant_reply(
+                        trigger_message=result.message,
+                        member_ids=member_ids,
+                    )
+                    assistant_message = RealtimeMessage.model_validate(assistant_result.message)
+                    assistant_message.mentions = message_mentions(assistant_result.message)
+                    assistant_message.assistant_generated = True
+                    await manager.send_to_users(
+                        assistant_result.recipient_ids,
+                        MessageReceivedEvent(message=assistant_message).model_dump(mode="json"),
+                    )
+                    schedule_assistant_mention(
+                        message_id=result.message.id,
+                        conversation_id=result.message.conversation_id,
+                        requester_id=user_id,
+                        publisher=manager,
+                    )
                 # Fire and forget. Guarded by `created` so an idempotent resend
                 # does not translate the same message twice.
                 schedule_translations(message=result.message, publisher=manager)

@@ -11,7 +11,9 @@ harness can run without a `.env` file.
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +24,7 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
     {"your-secret-key-here", "change-me", "changeme", "secret", "dev-secret"}
 )
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 
@@ -30,7 +33,10 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Resolve from this module rather than the caller's working directory.
+        # Commands such as pytest may run from `frontend/`, but must still load
+        # the repository's shared local configuration.
+        env_file=_PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -43,15 +49,12 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
-    # Public frontend routed through this project's Cloudflare Tunnel. Keeping
-    # it separate from CORS_ORIGINS lets a local development .env retain its
-    # localhost values without breaking the deployed browser client.
-    public_frontend_origin: str = "https://agent.dquangminh2003.id.vn"
-    # Matched against the Origin header when the exact list above does not.
-    # Vercel gives every pull request its own hostname, so a preview build can
-    # only reach the API through a pattern — for example
-    # `https://linguaflow-[a-z0-9-]+\.vercel\.app`. Empty disables it.
+    public_frontend_origin: str = ""
     cors_origin_regex: str = ""
+    # Public browser address used in transactional-email links. This is kept
+    # separate from CORS because an API may accept several trusted origins,
+    # while a password-reset email must lead to exactly one canonical site.
+    frontend_url: str = "http://localhost:3000"
 
     # LLM
     llm_provider: Literal["groq", "deepseek", "gemini", "openai", "mistral"] = "groq"
@@ -203,6 +206,15 @@ class Settings(BaseSettings):
     # to be sized against concurrent sockets rather than requests per second.
     database_pool_size: int = Field(default=5, ge=1, le=50)
     database_max_overflow: int = Field(default=10, ge=0, le=50)
+    # Managed PostgreSQL poolers can leave an idle TCP connection stale. Recycle
+    # it before the provider-side idle timeout and fail a saturated pool rather
+    # than making an API request wait indefinitely.
+    database_pool_recycle_seconds: int = Field(default=900, ge=60, le=86_400)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # The first managed-PostgreSQL connection can take longer than a pooled
+    # request during a cold start. Keep readiness strict, but avoid reporting a
+    # healthy database as unavailable before its TLS/pooler handshake finishes.
+    database_readiness_timeout_seconds: int = Field(default=30, ge=5, le=120)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
@@ -227,6 +239,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_from_name: str = "LinguaFlow"
     smtp_use_tls: bool = True
+    smtp_timeout_seconds: int = Field(default=15, ge=3, le=60)
     email_provider: Literal["smtp", "console", "memory"] = "memory"
 
     # Google Sign-In (Batch G)
@@ -269,7 +282,14 @@ class Settings(BaseSettings):
         # The browser-facing local development app is part of the documented
         # contract. Keep these origins available even when a machine-level
         # CORS_ORIGINS variable overrides the repository's .env value.
-        for local_origin in ("http://localhost:3000", "http://localhost:3001", "http://localhost:3002"):
+        for local_origin in (
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "http://localhost:3002",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:3001",
+            "http://127.0.0.1:3002",
+        ):
             if local_origin not in origins:
                 origins.append(local_origin)
         if self.public_frontend_origin and self.public_frontend_origin not in origins:
@@ -304,6 +324,15 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("frontend_url")
+    @classmethod
+    def validate_frontend_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("FRONTEND_URL must be an absolute http(s) URL")
+        return normalized
+
     @model_validator(mode="after")
     def _warn_unmeasured_embedding_model(self) -> "Settings":
         """Say so when semantic matching is on for a model nobody has measured.
@@ -336,6 +365,8 @@ class Settings(BaseSettings):
     def validate_production_and_email_config(self) -> "Settings":
         """Enforce production email safety and validate required SMTP fields."""
         if self.app_env == "production":
+            if urlparse(self.frontend_url).scheme != "https":
+                raise ValueError("FRONTEND_URL must use https in production")
             if self.email_provider in ("memory", "console"):
                 raise ValueError(
                     f"EMAIL_PROVIDER='{self.email_provider}' is not allowed in production. "

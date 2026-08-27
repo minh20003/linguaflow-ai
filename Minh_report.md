@@ -307,3 +307,160 @@ Errors:   401 "Invalid or expired token"
 ### Remaining issues / risks
 
 - None
+
+---
+
+## [CI] — Run CI for develop_v2 on BTC self-hosted runner
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Changed push and pull-request CI triggers to target `develop_v2`.
+- Changed runner selection to `self-hosted` so the job can use the shared BTC runner.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — updated branch filters and runner label.
+- `Minh_report.md` — recorded the verified CI configuration change.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- The BTC shared runner is available to this repository with the standard `self-hosted` label.
+- CI is intentionally scoped to `develop_v2`; pushes and pull requests targeting `main` or `develop` no longer trigger this workflow.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; workflow diff contains no whitespace errors and the configured branch/runner values were re-read successfully.
+
+### Remaining issues / risks
+
+- The shared runner may remain queued while busy or if BTC has not granted this repository access.
+
+---
+
+## [CI] — Avoid PostgreSQL port collision on shared runner
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Replaced the fixed PostgreSQL host mapping `5432:5432` with an automatically assigned free host port.
+- Updated `DATABASE_URL` to read the assigned port from `job.services.postgres.ports[5432]`.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — use a dynamic host port for the PostgreSQL service.
+- `Minh_report.md` — record the CI infrastructure fix.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- PostgreSQL continues listening on port `5432` inside its service container; only the shared runner's host port is dynamic.
+- Application and test database access continues through the existing `DATABASE_URL` contract.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; workflow configuration was re-read after editing.
+
+### Remaining issues / risks
+
+- Full validation requires the GitHub-hosted workflow to be picked up by the BTC runner.
+
+---
+
+## [CI] — Increase lint-and-test timeout
+
+**Status:** Completed
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Increased the `lint-and-test` job timeout from 15 to 45 minutes.
+- Prevents GitHub from canceling the workflow while the 709-test suite is still running after dependency installation.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — increased the job timeout.
+- `Minh_report.md` — recorded the timeout adjustment.
+
+### API / Contract added or changed
+
+- None.
+
+### Technical decisions / assumptions
+
+- The previous run reached 34% with no failed assertion before the 15-minute job limit canceled it.
+- A 45-minute limit provides headroom for dependency installation and the complete test suite on the shared runner.
+
+### Validation
+
+- Tests run:
+  - `git diff --check`
+- Result:
+  - Passed; the timeout value was re-read successfully.
+
+### Remaining issues / risks
+
+- Full validation requires a new GitHub Actions run; rerunning the old workflow snapshot would retain its 15-minute timeout.
+
+---
+
+## [CI] — Fix authentication test failures and extend timeout
+
+**Status:** Partial
+**Completed at:** 2026-08-26
+
+### What was implemented
+
+- Password-reset responses now expose the opaque reset token in `development` and `test`, while continuing to suppress it in `production`.
+- Production email configuration tests now provide a valid HTTPS frontend URL so they exercise the intended email-provider and SMTP validations.
+- Increased the CI job timeout from 45 to 120 minutes as requested.
+
+### Files changed
+
+- `.github/workflows/ci.yml` — set `timeout-minutes` to 120.
+- `src/api/routes.py` — align reset-token visibility with the explicit test environment.
+- `tests/test_api/test_auth_otp.py` — isolate production email validation tests from unrelated frontend URL validation.
+- `Minh_report.md` — record the CI and authentication test fixes.
+
+### API / Contract added or changed
+
+- `POST /api/v1/auth/password/forgot` returns `reset_token` in non-production environments (`development` and `test`); production continues returning `null`.
+
+### Technical decisions / assumptions
+
+- Test-only token exposure is acceptable because `APP_ENV=test` is non-production and is required by the password-reset integration test.
+- Production configuration tests must make unrelated prerequisites valid before asserting a specific email validation error.
+
+### Validation
+
+- Tests run:
+  - `python -m pytest tests/test_api/test_auth_otp.py::test_production_rejects_memory_and_console tests/test_api/test_auth_otp.py::test_production_smtp_missing_required_config_fails_validation -q`
+  - `python -m pytest tests/test_api/test_auth.py::test_password_reset_changes_password_and_revokes_sessions -q`
+  - `python -m ruff check src/api/routes.py tests/test_api/test_auth_otp.py`
+  - `python -m compileall -q src/api/routes.py`
+  - `git diff --check`
+- Result:
+  - Production configuration tests: **2 passed**.
+  - Ruff and Python compilation: passed.
+  - Password-reset integration test was blocked during fixture setup because the local PostgreSQL installation lacks the `vector` extension; no application assertion ran.
+
+### Remaining issues / risks
+
+- Docker Desktop is unavailable locally, so the required `pgvector/pgvector:pg16` test service could not be started. The next GitHub Actions run must provide final verification of the DB-backed password-reset test.

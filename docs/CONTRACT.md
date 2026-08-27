@@ -429,9 +429,9 @@ Tệp được tải lên **trước**, sau đó mới gửi tin nhắn kèm `at
 
 ### 3.9. Đặt lại mật khẩu
 
-`POST /auth/password/forgot` **luôn** trả `200` kèm cùng một câu trả lời chung, dù địa chỉ có tồn tại hay không — trả `404` cho địa chỉ lạ sẽ biến endpoint này thành công cụ dò tài khoản không cần đăng nhập.
+`POST /auth/password/forgot` **luôn** trả `200` kèm cùng một câu trả lời chung, dù địa chỉ có tồn tại hay không — trả `404` cho địa chỉ lạ sẽ biến endpoint này thành công cụ dò tài khoản không cần đăng nhập. Với tài khoản tồn tại, server tạo một token dùng một lần, vô hiệu hoá các token reset còn mở trước đó, rồi gửi liên kết `FRONTEND_URL/reset-password?token=...` bằng SMTP. Liên kết dùng ngôn ngữ giao diện đã lưu của tài khoản.
 
-Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=development`, để lập trình viên chạy trọn luồng trên một màn hình. **Ở mọi môi trường khác, trường này là `null` và mã đặt lại chỉ được ghi vào log của server** (mức `WARNING`), do dự án chưa gắn dịch vụ gửi email — xem `docs/DEPLOY.md`. Client vì thế phải cho người dùng **nhập tay mã đặt lại** khi phản hồi không kèm token, chứ không được coi đó là lỗi.
+Trường `reset_token` trong phản hồi chỉ có giá trị khi `APP_ENV=development`, để lập trình viên chạy trọn luồng mà không cần SMTP. **Ở mọi môi trường khác, trường này là `null`; token không bao giờ được ghi vào log server.** Nếu SMTP gặp sự cố, server chỉ ghi lỗi vận hành an toàn và vẫn trả phản hồi chung để không biến lỗi gửi mail thành kênh dò tài khoản.
 
 `POST /auth/password/reset` tiêu thụ mã đó, đổi mật khẩu và **thu hồi toàn bộ phiên** của tài khoản. Mã dùng một lần và hết hạn sau `PASSWORD_RESET_EXPIRE_MINUTES` phút.
 
@@ -645,8 +645,8 @@ Quản lý danh sách tin nhắn được người dùng đánh dấu/lưu trữ
 
 ### 3.14. Tổng quan góp ý của người đọc (chỉ quản trị viên, 24/08)
 
-`GET /admin/feedback?limit=` trả về **một** phản hồi cho cả tab góp ý, thay vì ba endpoint:
-ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn hình có ba vòng quay chờ.
+`GET /admin/feedback?limit=` trả về **một** phản hồi cho cả tab góp ý, thay vì nhiều endpoint:
+thống kê và các hàng kiểm tra đều được đọc cùng lúc, nên màn hình không có nhiều vòng quay chờ.
 
 ```json
 {
@@ -657,6 +657,20 @@ ba phần đều được đọc cùng lúc, đều rẻ, và tách ra thì màn
     "up_rate": 0.75,
     "ratings": {"5": 12, "3": 1, "1": 3}
   },
+  "review_entries": [
+    {
+      "entry_type": "edit",
+      "original_text": "Deploy xong chưa anh?",
+      "translated_text": "Is the deploy done?",
+      "source_language": "vi",
+      "target_language": "en",
+      "model": "gemini-3.7-flash",
+      "vote": null,
+      "rating": null,
+      "user_correction": "Is the deployment finished yet?",
+      "created_at": "2026-08-24T09:04:00Z"
+    }
+  ],
   "shared_corrections": [
     {
       "source_phrase": "staging environment",
@@ -689,22 +703,18 @@ màn hình này: trước khi có nó, đầu ra nhìn thấy được của c�
 — thứ chỉ xuất hiện khi đã có vài người độc lập sửa giống nhau — nên mọi thứ dưới ngưỡng ấy
 đều vô hình, kể cả trường hợp không có gì đang chảy về.
 
-**Ranh giới đọc giống hệt §3.12:** không người gửi, không `conversation_id`, không
-`message_id`, và **không** câu chữ của một tin nhắn mà người viết không đồng ý chia sẻ.
-`anonymized_snippet` và `original_snippet` là hai văn bản phái sinh từ tin nhắn xuất hiện ở
-đây — đã bỏ tên riêng và các con số ngay lúc ghi — và cần có cả hai vì một cặp thuật ngữ
-không kèm ngữ cảnh dùng thì không phán xét được.
+**`review_entries` là bảng kiểm tra chất lượng nội bộ, mới nhất trước và cắt theo `limit`.**
+Mỗi hàng là một `feedbacks` (vote, với `entry_type = "vote"`) hoặc một
+`translation_edits` (bản người dùng sửa, với `entry_type = "edit"`). Cả hai được nối với
+bản gốc, bản dịch máy, cặp ngôn ngữ và model để người duyệt thấy chính xác điều cần đối chiếu.
+`vote` là `up` cho rating 5, `down` cho rating 1 và `other` cho các giá trị còn lại; bản sửa
+nằm ở `user_correction`.
 
-**`original_snippet` là bổ sung 24/08, mở rộng ranh giới trên một bậc so với khi §3.14 mới
-viết.** `anonymized_snippet` trích từ *bản dịch của máy* (`target_language`) quanh cụm từ bị
-sửa; `original_snippet` là vài từ đầu của *câu người gửi thực sự viết* (`source_language`),
-cùng cách ẩn danh nhưng không có cụm nào để căn giữa — máy dịch xong mới sinh ra thuật ngữ bị
-sửa, và thuật ngữ đó thuộc ngôn ngữ đích nên không tìm thấy trong câu nguồn. Không có trường
-này thì màn hình chỉ cho quản trị viên thấy một nửa cuộc trao đổi: cụm máy dịch sai và cụm
-người đọc sửa lại, nhưng chưa từng thấy người gửi ban đầu viết gì. Đây là phần mở rộng của
-ADR-28 (`ARCHITECTURE.md`) chứ không phải một thay đổi âm thầm nằm ngoài nó — ADR-28 mô tả
-"vài từ xung quanh" mà không nói rõ trích từ phía nào của bản dịch; bổ sung này ghi rõ có hai
-phía, không phải một.
+**Ranh giới của bảng kiểm tra:** không người gửi/người sửa, không `user_id`, `editor_id`,
+`conversation_id`, `message_id`, `translation_id`, email hoặc liên kết mở lại hội thoại. Đây
+là quyền chỉ của `role == "admin"`, dùng để kiểm soát chất lượng trong hệ thống; không phải
+API công khai hay dữ liệu xuất cho người dùng. `shared_corrections` vẫn là luồng opt-in đã
+ẩn danh dành cho khai thác glossary và không bị thay thế bởi bảng kiểm tra này.
 
 **`withheld_total` là số dòng `correction_log` mà người viết không đồng ý chia sẻ** — một con
 số, không kèm gì khác. Nó tồn tại để việc "đang bị bỏ ra ngoài" nhìn thấy được, thay vì trông

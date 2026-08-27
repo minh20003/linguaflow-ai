@@ -1,18 +1,15 @@
-"""Wire shapes for the administrator's view of reader feedback (F-05).
+"""Wire shapes for the administrator's translation-feedback review (F-05).
 
-What an administrator may see of feedback is bounded the same way the glossary
-queue is: counts, and the anonymised fragment the correction recorder prepared
-at edit time. No author, no conversation, no message id, and never the reader's
-own wording of a message they did not consent to share — an administrator is
-barred from reading conversation content (docs/CONTRACT.md §3.12).
-
-The vote tallies are the one place this differs from the glossary queue: a
-rating carries no text at all, so it can be counted in the open.
+The review queue is deliberately anonymous: it exposes no sender, reader,
+conversation or message identifier. An administrator can compare the source,
+machine rendering, vote and reader correction needed to investigate translation
+quality, but cannot connect the row to a person or chat thread.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,6 +61,26 @@ class SharedCorrection(BaseModel):
     observed_at: datetime
 
 
+class FeedbackReviewEntry(BaseModel):
+    """One anonymous vote or wording edit shown in the admin review table.
+
+    Feedback and edits are persisted separately: a vote replaces a reader's
+    prior vote while an edit is append-only. The UI receives one chronological
+    list so it can show both without pretending an edit is a down-vote.
+    """
+
+    entry_type: Literal["vote", "edit"]
+    original_text: str
+    translated_text: str
+    source_language: str
+    target_language: str
+    model: str
+    vote: Literal["up", "down", "other"] | None = None
+    rating: int | None = None
+    user_correction: str | None = None
+    created_at: datetime
+
+
 class FeedbackOverviewResponse(BaseModel):
     """Everything the feedback tab shows in one request.
 
@@ -72,6 +89,10 @@ class FeedbackOverviewResponse(BaseModel):
     """
 
     votes: FeedbackVoteSummary
+    # Latest anonymous individual signals, newest first. This is the
+    # operational quality-review table; it intentionally contains no account,
+    # conversation or message identifiers.
+    review_entries: list[FeedbackReviewEntry] = Field(default_factory=list)
     # Consented corrections, newest first, capped by the request's `limit`.
     shared_corrections: list[SharedCorrection] = Field(default_factory=list)
     # How many consented corrections exist in total, which is not the length of

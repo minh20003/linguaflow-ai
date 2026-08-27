@@ -651,6 +651,7 @@ def test_production_rejects_memory_and_console():
     with pytest.raises(pydantic.ValidationError) as exc_memory:
         Settings(
             app_env="production",
+            frontend_url="https://example.com",
             email_provider="memory",
             jwt_secret="a" * 32,
         )
@@ -659,6 +660,7 @@ def test_production_rejects_memory_and_console():
     with pytest.raises(pydantic.ValidationError) as exc_console:
         Settings(
             app_env="production",
+            frontend_url="https://example.com",
             email_provider="console",
             jwt_secret="a" * 32,
         )
@@ -674,6 +676,7 @@ def test_production_smtp_missing_required_config_fails_validation():
     with pytest.raises(pydantic.ValidationError) as exc_missing_all:
         Settings(
             app_env="production",
+            frontend_url="https://example.com",
             email_provider="smtp",
             jwt_secret="a" * 32,
             smtp_host="",
@@ -683,6 +686,7 @@ def test_production_smtp_missing_required_config_fails_validation():
     with pytest.raises(pydantic.ValidationError) as exc_missing_creds:
         Settings(
             app_env="production",
+            frontend_url="https://example.com",
             email_provider="smtp",
             jwt_secret="a" * 32,
             smtp_host="smtp.gmail.com",
@@ -698,6 +702,7 @@ def test_production_smtp_missing_required_config_fails_validation():
     with pytest.raises(pydantic.ValidationError) as exc_no_from:
         Settings(
             app_env="production",
+            frontend_url="https://example.com",
             email_provider="smtp",
             jwt_secret="a" * 32,
             smtp_host="smtp.gmail.com",

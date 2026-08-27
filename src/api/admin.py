@@ -8,23 +8,30 @@ Every endpoint here is gated on `get_admin_user`. The gate is the whole
 authorization model — `users.role` compared to the string `"admin"` — so it has
 to be on each one rather than assumed from the path prefix.
 
-What an administrator can see is bounded by design, not by omission. A proposal
-carries a term pair, two counts, and a few anonymised fragments; it does not
-carry who wrote them, which conversation they came from, or anything around
-them. The rule it serves is that administrators do not read user content
-(docs/NewFeature.md, diagram 2), and the queries below are the place that rule
-is either kept or quietly lost.
+What an administrator can see is bounded by design, not by omission. Glossary
+records contain anonymised snippets only. The feedback review queue is an
+explicit quality-control exception: it carries an original, machine translation
+and reader correction, but never the sender, reader, conversation or message
+identifier that could join it back to a chat.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.agents.customization import Customization
+from src.agents.graph import build_translation_graph
+from src.agents.observability import build_runnable_config
+from src.config import get_settings
 from src.core.deps import get_admin_user
 from src.database import get_db
 from src.database.models import (
@@ -34,10 +41,18 @@ from src.database.models import (
     GlossaryEntry,
     GlossaryProposal,
     GlossaryProposalCitation,
+    Message,
+    TranslationEdit,
+    TranslationResult,
     User,
+)
+from src.schemas.admin_translation import (
+    AdminTranslationRequest,
+    AdminTranslationResponse,
 )
 from src.schemas.feedback import (
     FeedbackOverviewResponse,
+    FeedbackReviewEntry,
     FeedbackVoteSummary,
     SharedCorrection,
 )
@@ -47,12 +62,13 @@ from src.schemas.glossary import (
     GlossaryEntryRequest,
     GlossaryEntryResponse,
     GlossaryEntryUpdateRequest,
+    GlossaryProposalCreateRequest,
     GlossaryProposalResponse,
     GlossaryRejectionRequest,
     GlossarySimilarEntry,
 )
 from src.services.embeddings import embed_with_model
-from src.services.glossary import normalize_term
+from src.services.glossary import lookup_terms, normalize_term
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +77,119 @@ router = APIRouter()
 # One page of a review queue. A reviewer works through a handful at a time; a
 # larger page just means more of them go unread.
 MAX_PAGE = 100
+
+
+class _AdminTranslationCustomizationProvider:
+    """Apply an explicitly selected admin scope without inventing a conversation."""
+
+    def __init__(self, db: AsyncSession, *, domain: str, audience: str) -> None:
+        self._db = db
+        self._domain = domain
+        self._audience = audience
+
+    async def get_customization(
+        self,
+        _conversation_id: str,
+        *,
+        original_text: str,
+        source_language: str,
+        target_language: str,
+    ) -> Customization:
+        terms = await lookup_terms(
+            self._db,
+            text=original_text,
+            source_language=source_language,
+            target_language=target_language,
+            domain=self._domain,
+            audience=self._audience,
+        )
+        return Customization(
+            domain=self._domain,
+            audience=self._audience,
+            glossary_terms=terms,
+        )
+
+
+@router.post(
+    "/admin/translate",
+    response_model=AdminTranslationResponse,
+)
+async def run_admin_translation(
+    payload: AdminTranslationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> AdminTranslationResponse:
+    """Run the real production translation graph synchronously for an admin.
+
+    This endpoint deliberately does not create a chat message or translation
+    row: the admin test bench must not leak synthetic conversations into user
+    history. Provider telemetry is returned directly to the test UI instead.
+    """
+    request_id = str(uuid.uuid4())
+    graph = build_translation_graph(
+        customization_provider=_AdminTranslationCustomizationProvider(
+            db,
+            domain=payload.domain,
+            audience=payload.audience,
+        )
+    )
+    state = {
+        "conversation_id": f"admin-test:{current_user.id}",
+        "message_id": request_id,
+        "sender_id": current_user.id,
+        "original_text": payload.original_text,
+        "source_language": payload.source_language,
+        "target_language": payload.target_language,
+        "honorific_profile": "peer",
+        "sender_honorific_profile": "peer",
+        "translation_tone": payload.translation_tone,
+    }
+    started = time.perf_counter()
+    try:
+        result = await asyncio.wait_for(
+            graph.ainvoke(
+                state,
+                config=build_runnable_config(
+                    conversation_id=state["conversation_id"],
+                    message_id=request_id,
+                    target_language=payload.target_language,
+                    attempt_id=request_id,
+                ),
+            ),
+            timeout=get_settings().translation_timeout_seconds,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Translation agent timed out",
+        ) from exc
+    except Exception as exc:
+        logger.exception("Admin translation agent failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Translation agent could not complete the request",
+        ) from exc
+
+    telemetry = result.get("telemetry") or {}
+    matched_terms = [
+        term.source_term for term in (result.get("glossary_terms") or [])
+    ]
+    return AdminTranslationResponse(
+        original_text=payload.original_text,
+        translated_text=str(result.get("translated_text") or payload.original_text),
+        source_language=str(result.get("source_language") or payload.source_language),
+        target_language=payload.target_language,
+        model=str(result.get("model") or telemetry.get("model_served") or "passthrough"),
+        latency_ms=max(
+            int(result.get("latency_ms") or 0),
+            int((time.perf_counter() - started) * 1000),
+        ),
+        input_tokens=int(telemetry.get("input_tokens") or 0),
+        output_tokens=int(telemetry.get("output_tokens") or 0),
+        is_fallback=bool(result.get("is_fallback")),
+        fallback_reason=str(telemetry.get("fallback_reason") or ""),
+        matched_glossary_terms=matched_terms,
+    )
 
 
 async def _citations(db: AsyncSession, proposal_id: str) -> list[GlossaryCitationSummary]:
@@ -196,6 +325,44 @@ async def list_glossary_proposals(
     ).all()
 
     return [await _proposal_response(db, proposal) for proposal in proposals]
+
+
+@router.post(
+    "/admin/glossary/proposals",
+    response_model=GlossaryProposalResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_glossary_proposal(
+    payload: GlossaryProposalCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    _current_user: User = Depends(get_admin_user),
+) -> GlossaryProposalResponse:
+    """Persist an administrator's direct proposal for the review queue.
+
+    The review queue must never be a frontend-only list: the returned proposal
+    is a committed row, with its embedding generated before it can be shown.
+    """
+    vector, vector_model = await embed_with_model(payload.source_term)
+    proposal = GlossaryProposal(
+        source_term=payload.source_term,
+        source_term_normalized=normalize_term(payload.source_term),
+        target_term=payload.target_term,
+        source_language=payload.source_language,
+        target_language=payload.target_language,
+        domain=payload.domain,
+        audience=payload.audience,
+        keep_verbatim=payload.keep_verbatim,
+        status="pending",
+        occurrence_count=1,
+        distinct_user_count=1,
+        rationale=payload.rationale,
+        embedding=vector,
+        embedding_model=vector_model,
+    )
+    db.add(proposal)
+    await db.commit()
+    await db.refresh(proposal)
+    return await _proposal_response(db, proposal)
 
 
 @router.post(
@@ -521,7 +688,7 @@ async def read_feedback_overview(
     db: AsyncSession = Depends(get_db),
     _current_user: User = Depends(get_admin_user),
 ) -> FeedbackOverviewResponse:
-    """What readers said about the translations, in the two forms it arrives in.
+    """What readers said about translations, including an anonymous review queue.
 
     Votes are a histogram over `feedbacks.rating`; the interface sends 5 for a
     thumb up and 1 for a thumb down, so those two buckets are named. Anything
@@ -529,14 +696,14 @@ async def read_feedback_overview(
     own: there is no third answer to offer, and a "neither" count that is
     always zero reads as an opinion nobody holds.
 
-    Corrections come from `correction_log`, consented rows only, and carry the
-    two anonymised snippets the recorder prepared at edit time — one from the
-    machine's rendering, one from the sender's original wording — never the
-    reader's own wording of a message, and never who wrote it. Without this screen the
-    only visible output of the whole correction pipeline was a proposal, which
-    appears once several people have independently agreed; everything below
-    that threshold was invisible, including the case where nothing is arriving
-    at all.
+    `review_entries` combines the raw feedback row and append-only wording
+    edits. It intentionally omits every identity and conversation field while
+    retaining the three texts an administrator needs to judge a translation:
+    source, machine rendering and the reader's replacement wording.
+
+    The existing `shared_corrections` remains the opt-in, anonymised feed used
+    by glossary mining. It is not replaced by the review queue: the two serve
+    different purposes and have different retention/privacy constraints.
     """
     counts = (
         await db.execute(
@@ -581,8 +748,63 @@ async def read_feedback_overview(
         )
     ).all()
 
+    feedback_rows = (
+        await db.execute(
+            select(Feedback, TranslationResult, Message)
+            .join(TranslationResult, Feedback.translation_id == TranslationResult.id)
+            .join(Message, TranslationResult.message_id == Message.id)
+            .order_by(Feedback.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    edit_rows = (
+        await db.execute(
+            select(TranslationEdit, TranslationResult, Message)
+            .join(TranslationResult, TranslationEdit.translation_id == TranslationResult.id)
+            .join(Message, TranslationResult.message_id == Message.id)
+            .order_by(TranslationEdit.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    review_entries = [
+        FeedbackReviewEntry(
+            entry_type="vote",
+            original_text=message.original_text,
+            translated_text=translation.translated_text,
+            source_language=message.source_language,
+            target_language=translation.target_language,
+            model=translation.model,
+            vote="up" if feedback.rating == 5 else "down" if feedback.rating == 1 else "other",
+            rating=feedback.rating,
+            user_correction=feedback.correction,
+            created_at=feedback.created_at,
+        )
+        for feedback, translation, message in feedback_rows
+    ]
+    review_entries.extend(
+        FeedbackReviewEntry(
+            entry_type="edit",
+            original_text=message.original_text,
+            translated_text=translation.translated_text,
+            source_language=message.source_language,
+            target_language=translation.target_language,
+            model=translation.model,
+            user_correction=edit.edited_text,
+            created_at=edit.created_at,
+        )
+        for edit, translation, message in edit_rows
+    )
+
+    def review_entry_time(entry: FeedbackReviewEntry) -> datetime:
+        """Normalise SQLite's naive server defaults before chronological sorting."""
+        return entry.created_at.replace(tzinfo=UTC) if entry.created_at.tzinfo is None else entry.created_at
+
+    review_entries.sort(key=review_entry_time, reverse=True)
+
     return FeedbackOverviewResponse(
         votes=votes,
+        review_entries=review_entries[:limit],
         shared_corrections=[SharedCorrection.model_validate(row) for row in rows],
         shared_total=shared_total,
         withheld_total=withheld_total,

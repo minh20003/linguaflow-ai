@@ -96,7 +96,9 @@ async def test_stats_counts_outcomes_that_produced_no_translation(
     assert body["total_attempts"] == 4
     assert body["outcomes"]["llm"] == 2
     assert body["fallback_rate"] == 0.25
-    assert body["language_pairs"]["vi->en"]["count"] == 4
+    # Timeout is retained as an operational outcome, but is neutral for the
+    # completed-translation language-pair table.
+    assert body["language_pairs"]["vi->en"]["count"] == 3
 
 
 @pytest.mark.asyncio

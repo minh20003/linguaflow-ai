@@ -50,6 +50,11 @@ export interface MessageAttachment {
   createdAt?: string;
 }
 
+export interface MessageMention {
+  type: 'user' | 'assistant';
+  userId?: string;
+}
+
 export interface Message {
   id: string;
   senderId: string;
@@ -59,12 +64,15 @@ export interface Message {
   content: string;
   translation?: TranslationData;
   timestamp: string;
+  createdAt?: string;
   status: 'sending' | 'sent' | 'delivered' | 'read';
   replyTo?: MessageReply;
   forwardedFromMessageId?: string;
   reactions?: MessageReaction[];
   isSaved?: boolean;
   attachments?: MessageAttachment[];
+  mentions?: MessageMention[];
+  isAssistant?: boolean;
   dateDivider?: string;
 }
 
@@ -112,4 +120,4 @@ export interface ToastItem {
   timestamp?: number;
 }
 
-export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'settings';
+export type SidebarTab = 'chats' | 'contacts' | 'groups' | 'calendar' | 'settings';

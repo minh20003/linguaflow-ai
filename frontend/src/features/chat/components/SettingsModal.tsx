@@ -191,34 +191,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                {/* Show Original Toggle */}
-                <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#F7F8FC] dark:bg-[#232630]/60 border border-[#E8EAF0] dark:border-[#2A2E3D]">
-                  <div>
-                    <h5 className="font-semibold text-xs text-[#1E2230] dark:text-[#F5F6FA]">
-                      {copy(language, 'Show Original by Default')}
-                    </h5>
-                    <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">
-                      {copy(language, 'Always show the untranslated text alongside translations')}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() =>
-                      onUpdateSettings({
-                        showOriginalByDefault: !settings.showOriginalByDefault,
-                      })
-                    }
-                    className={`relative w-11 h-6 rounded-full transition-colors ${
-                      settings.showOriginalByDefault ? 'bg-[#2563EB]' : 'bg-[#CED2DE] dark:bg-[#3A3F50]'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                        settings.showOriginalByDefault ? 'translate-x-5' : ''
-                      }`}
-                    />
-                  </button>
-                </div>
-
                 {/* Translation Tone */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">

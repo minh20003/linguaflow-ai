@@ -11,7 +11,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from src.database.models import Message, TranslationAttempt
-from src.services.metrics import group_scores, percentile, summarize_attempts
+from src.services.metrics import (
+    estimate_model_cost_usd,
+    group_scores,
+    percentile,
+    summarize_attempts,
+)
 
 BASE_TIME = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
@@ -69,6 +74,26 @@ def test_percentile_of_one_value_is_that_value():
 def test_percentile_interpolates_between_neighbours():
     """p50 of an even-length series falls between the two middle values."""
     assert percentile([10, 20, 30, 40], 50) == 25.0
+
+
+def test_estimated_cost_supports_dated_model_snapshots():
+    """A served snapshot uses the price of its model family."""
+    cost = estimate_model_cost_usd("gpt-4o-mini-2024-07-18", 1_000_000, 1_000_000)
+
+    assert cost == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize("served_name", ["gemini 3.7 flash", "gemini_3.7_flash"])
+def test_estimated_cost_normalizes_provider_model_name_separators(served_name):
+    """Provider display names must use the Gemini catalog price, not read as free."""
+    cost = estimate_model_cost_usd(served_name, 1_000_000, 1_000_000)
+
+    assert cost == pytest.approx(2.80)
+
+
+def test_estimated_cost_ignores_unknown_models():
+    """Unknown providers must not silently inherit an OpenAI price."""
+    assert estimate_model_cost_usd("(none)", 1_000, 100) is None
 
 
 def test_group_scores_reports_count_mean_and_passes():
@@ -197,7 +222,7 @@ async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
         minute=0,
         outcome="timeout",
         target_language="vi",
-        source_language_declared="vi",
+        source_language_declared="vi-VN",
         source_language_detected=None,
         detect_method="",
         model_served="",
@@ -212,15 +237,14 @@ async def test_a_same_language_timeout_is_excluded_like_a_passthrough_would_be(
 
 
 @pytest.mark.asyncio
-async def test_a_different_language_failure_with_no_model_stays_in_pairs_but_not_models(
+async def test_a_different_language_timeout_is_not_a_completed_pair_or_model(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """A timeout on a genuine `en->vi` attempt spent real time trying, so it
-    still belongs in `language_pairs` — unlike the same-language case above,
-    nothing here says the attempt was pointless. `models_served` is narrower
-    still: nothing captured which model was mid-flight when it timed out, so
-    there is no model to credit or blame, and no `"(none)"` bucket to stand in
-    for one."""
+    """A timeout is operational data, not a completed translation pair.
+
+    It remains visible in totals/outcomes for reliability monitoring, but is
+    neutral for pair success/failure and completed-translation latency.
+    """
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await add_message(
         test_db, conversation_id=conversation.id, sender_id=test_user.id
@@ -242,9 +266,10 @@ async def test_a_different_language_failure_with_no_model_stays_in_pairs_but_not
     summary = await summarize_attempts(test_db)
 
     assert summary.total == 1
-    assert list(summary.language_pairs) == ["en->vi"]
-    assert summary.language_pairs["en->vi"].count == 1
+    assert summary.outcomes == {"timeout": 1}
+    assert summary.language_pairs == {}
     assert summary.models_served == {}
+    assert summary.total_ms_p50 == 0
 
 
 @pytest.mark.asyncio
