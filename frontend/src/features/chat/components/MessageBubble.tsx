@@ -31,6 +31,8 @@ interface MessageBubbleProps {
   onCopy: (text: string) => void;
   onToggleOriginal: (messageId: string) => void;
   onRetryTranslation: (messageId: string) => void;
+  onRetryTranscription: (messageId: string) => void;
+  isRetryingTranscription: boolean;
   onRateTranslation: (messageId: string, translationId: string, rating: 1 | 5) => void;
   onEditTranslation: (messageId: string, translationId: string, editedText: string) => void;
   onForward: (message: Message) => void;
@@ -55,6 +57,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onCopy,
   onToggleOriginal,
   onRetryTranslation,
+  onRetryTranscription,
+  isRetryingTranscription,
   onRateTranslation,
   onEditTranslation,
   onForward,
@@ -72,13 +76,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const [editedTranslation, setEditedTranslation] = useState("");
 
   const isOutgoing = message.senderId === currentUser.id && !message.isAssistant;
+  const isVoice = message.messageType === 'voice';
+  const isDeleted = Boolean(message.deletedAt);
   const hasAttachments = Boolean(message.attachments?.length);
-  const isAttachmentCaption = hasAttachments && /^Shared\s+/i.test(message.content.trim());
+  const isAttachmentCaption = !isVoice && hasAttachments && /^Shared\s+/i.test(message.content.trim());
   const hasTranslation = !!message.translation;
   // Direct-message senders can review the exact wording delivered to the
   // other participant. Group senders stay on the original-only path because
   // several recipient languages make one bubble ambiguous.
-  const canShowTranslation = !message.isAssistant && !isAttachmentCaption && (!isOutgoing || !isGroup);
+  const canShowTranslation = !message.isAssistant
+    && !isDeleted
+    && !isAttachmentCaption
+    && (!isVoice || message.transcriptionStatus === 'completed')
+    && (!isOutgoing || !isGroup);
   const isTranslated = canShowTranslation && hasTranslation && message.translation?.status === 'success';
   const isTranslating = canShowTranslation && hasTranslation && message.translation?.status === 'pending';
   const isTranslationFailed = canShowTranslation && hasTranslation && message.translation?.status === 'failed';
@@ -87,6 +97,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const canReviewTranslation = Boolean(
     canShowTranslation && message.translation?.translationId && message.translation.status === 'success',
   );
+  const shouldRenderText = isDeleted || !isVoice || message.transcriptionStatus === 'completed';
   const hasUserMention = message.mentions?.some((mention) => mention.type === 'user');
   const hasAssistantMention = message.mentions?.some((mention) => mention.type === 'assistant');
   const renderMessageContent = (value: string) => value.split(/(@[A-Za-z0-9_.-]+)/g).map((part, index) => {
@@ -228,7 +239,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         <div
           onMouseEnter={() => setShowActions(true)}
           onClick={(event) => {
-            if (event.target instanceof HTMLElement && event.target.closest('button, textarea, input, a')) return;
+            if (event.target instanceof HTMLElement && event.target.closest('button, textarea, input, a, audio')) return;
             setShowActions((visible) => !visible);
             setShowEmojiPicker(false);
             setShowMoreMenu(false);
@@ -243,7 +254,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         >
           {/* Main message text */}
           <div className="space-y-1">
-            {message.attachments?.map((attachment) => (
+            {!isDeleted && message.attachments?.map((attachment) => (
               <MessageAttachmentCard
                 key={attachment.id}
                 attachment={attachment}
@@ -252,7 +263,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 onLoadPreview={onLoadAttachmentPreview}
               />
             ))}
-            {!isAttachmentCaption && (
+            {!isAttachmentCaption && shouldRenderText && (
               isEditingTranslation ? (
                 <div className="space-y-1.5">
                   <textarea
@@ -280,6 +291,36 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               ) : (
                 <p className="whitespace-pre-wrap break-words font-normal">{renderMessageContent(message.content)}</p>
               )
+            )}
+
+            {!isDeleted && isVoice && message.transcriptionStatus === 'pending' && (
+              <div className="flex items-center gap-2 py-1 text-xs text-[#74798C] dark:text-[#9DA3B4]" aria-live="polite">
+                <div className="flex gap-1" aria-hidden="true">
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2563EB]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2563EB] [animation-delay:0.2s]" />
+                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#2563EB] [animation-delay:0.4s]" />
+                </div>
+                <span className="italic">{interactionText(language, 'Transcribing…')}</span>
+              </div>
+            )}
+
+            {!isDeleted && isVoice && message.transcriptionStatus === 'failed' && (
+              <div className="flex flex-wrap items-center gap-2 py-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span>{interactionText(language, 'Transcription unavailable')}</span>
+                <button
+                  type="button"
+                  onClick={() => onRetryTranscription(message.id)}
+                  disabled={isRetryingTranscription}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:cursor-not-allowed disabled:opacity-50 dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"
+                >
+                  <RotateCw className={`h-3 w-3 ${isRetryingTranscription ? 'animate-spin' : ''}`} />
+                  {interactionText(
+                    language,
+                    isRetryingTranscription ? 'Retrying transcription…' : 'Retry transcription',
+                  )}
+                </button>
+              </div>
             )}
 
             {/* Translating Pending State */}

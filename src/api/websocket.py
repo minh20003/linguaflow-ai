@@ -23,6 +23,7 @@ from src.schemas.chat import (
     MessageReceivedEvent,
     RealtimeMessage,
     SendMessageEvent,
+    SendVoiceMessageEvent,
     TypingEvent,
     TypingNotificationEvent,
 )
@@ -33,13 +34,21 @@ from src.services.chat import (
     ClientMessageIdConflictError,
     ConversationMembershipError,
     ConversationNotFoundError,
+    VoiceAttachmentClaimedError,
+    VoiceAttachmentConversationError,
+    VoiceAttachmentNotAudioError,
+    VoiceAttachmentNotFoundError,
+    VoiceAttachmentOwnershipError,
+    VoiceMessageIdConflictError,
     message_mentions,
 )
 from src.services.commitment_detection import schedule_commitment_detection
 from src.services.connection_manager import ConnectionManager
 from src.services.message_memory import schedule_message_embedding
+from src.services.message_postprocessing import schedule_text_dependent_work
 from src.services.profile_inference import schedule_profile_inference
 from src.services.translation import schedule_translations
+from src.services.voice_transcription import schedule_voice_transcription
 
 AUTH_TIMEOUT_SECONDS = 10
 
@@ -146,6 +155,138 @@ async def _relay_typing(
     )
 
 
+async def _handle_voice_message(
+    *,
+    websocket: WebSocket,
+    db: AsyncSession,
+    manager: ConnectionManager,
+    user_id: str,
+    raw_event: dict,
+) -> None:
+    """Persist/fan out pending voice, then start only detached STT work."""
+    try:
+        event = SendVoiceMessageEvent.model_validate(raw_event)
+    except ValidationError:
+        await _send_error(
+            websocket,
+            "invalid_event",
+            "The send_voice_message event is invalid",
+        )
+        return
+
+    service = ChatService(db)
+    try:
+        result = await service.send_voice_message(
+            sender_id=user_id,
+            conversation_id=event.conversation_id,
+            client_message_id=event.client_message_id,
+            attachment_id=event.attachment_id,
+            reply_to_message_id=event.reply_to_message_id,
+        )
+    except ConversationNotFoundError:
+        await db.rollback()
+        await _send_error(websocket, "conversation_not_found", "Conversation was not found")
+        return
+    except ConversationMembershipError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "not_conversation_member",
+            "You are not a member of this conversation",
+        )
+        return
+    except DirectMessagingBlockedError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "direct_messaging_blocked",
+            "Direct messaging is unavailable",
+        )
+        return
+    except VoiceMessageIdConflictError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "client_message_id_conflict",
+            "client_message_id was already used for a different voice request",
+        )
+        return
+    except VoiceAttachmentNotFoundError:
+        await db.rollback()
+        await _send_error(websocket, "voice_attachment_not_found", "Voice attachment was not found")
+        return
+    except VoiceAttachmentConversationError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_wrong_conversation",
+            "Voice attachment belongs to a different conversation",
+        )
+        return
+    except VoiceAttachmentOwnershipError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_not_owned",
+            "Voice attachment belongs to a different uploader",
+        )
+        return
+    except VoiceAttachmentClaimedError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_already_claimed",
+            "Voice attachment is already claimed",
+        )
+        return
+    except VoiceAttachmentNotAudioError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_not_audio",
+            "Voice attachment is not supported audio",
+        )
+        return
+    except SQLAlchemyError:
+        await db.rollback()
+        await _send_error(websocket, "internal_error", "Voice message could not be persisted")
+        return
+
+    realtime_message = RealtimeMessage.model_validate(result.message)
+    attachments = await service.get_attachments_by_message(
+        message_ids=[result.message.id]
+    )
+    attachment = attachments.get(result.message.id)
+    if attachment is None:
+        # The atomic service contract says this cannot happen. Fail closed if a
+        # future persistence change violates it: never fan out an unplayable
+        # voice message.
+        await db.rollback()
+        await _send_error(websocket, "internal_error", "Voice message could not be delivered")
+        return
+    realtime_message.attachment = AttachmentResponse.model_validate(attachment)
+
+    await manager.send_to_user(
+        user_id,
+        MessageCreatedEvent(
+            client_message_id=event.client_message_id,
+            message=realtime_message,
+        ).model_dump(mode="json"),
+    )
+    if not result.created:
+        return
+
+    await manager.send_to_users(
+        result.recipient_ids,
+        MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
+    )
+    schedule_voice_transcription(
+        message_id=result.message.id,
+        conversation_id=result.message.conversation_id,
+        publisher=manager,
+    )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -249,6 +390,16 @@ async def websocket_endpoint(
 
             if raw_event.get("type") == "typing":
                 await _relay_typing(
+                    websocket=websocket,
+                    db=db,
+                    manager=manager,
+                    user_id=user_id,
+                    raw_event=raw_event,
+                )
+                continue
+
+            if raw_event.get("type") == "send_voice_message":
+                await _handle_voice_message(
                     websocket=websocket,
                     db=db,
                     manager=manager,
@@ -365,32 +516,18 @@ async def websocket_endpoint(
                         requester_id=user_id,
                         publisher=manager,
                     )
-                # Fire and forget. Guarded by `created` so an idempotent resend
-                # does not translate the same message twice.
-                schedule_translations(message=result.message, publisher=manager)
-                # Commitment detection deliberately receives primitive IDs and
-                # opens its own session; it never delays message delivery.
-                schedule_commitment_detection(
-                    message_id=result.message.id,
-                    conversation_id=result.message.conversation_id,
-                    sender_id=result.message.sender_id,
+                # Guarded by `created`, preserving the existing exactly-once
+                # text-send seam while sharing the same post-text work with a
+                # durably completed voice transcript.
+                schedule_text_dependent_work(
+                    message=result.message,
                     publisher=manager,
-                )
-                # Also fire and forget, and separate on purpose: this asks a
-                # question about the whole conversation rather than about this
-                # message, and it answers at most once every twenty of them
-                # (ADR-24). Scheduled per message only because that is when the
-                # count changes; the cadence check lives inside.
-                schedule_profile_inference(
-                    conversation_id=result.message.conversation_id
-                )
-                # Third and last of the detached tasks. Off unless
-                # RAG_CONTEXT_ENABLED, and the guard lives inside so this call
-                # site stays a plain statement of what happens to a message.
-                schedule_message_embedding(
-                    message_id=result.message.id,
-                    conversation_id=result.message.conversation_id,
-                    text=result.message.original_text,
+                    # Pass the module aliases so existing socket tests and
+                    # integrations that replace these seams keep working.
+                    translation_scheduler=schedule_translations,
+                    commitment_scheduler=schedule_commitment_detection,
+                    profile_scheduler=schedule_profile_inference,
+                    embedding_scheduler=schedule_message_embedding,
                 )
     except WebSocketDisconnect:
         return

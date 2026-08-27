@@ -11,7 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 
-import httpx
 from fastapi import (
     APIRouter,
     Body,
@@ -115,6 +114,7 @@ from src.schemas.chat import (
     TranslationEditSummary,
     TranslationRetryResponse,
     TranslationSummary,
+    VoiceTranscriptionRetryResponse,
 )
 from src.schemas.intelligence import (
     ActionProposalResponse,
@@ -129,6 +129,11 @@ from src.services.action_proposals import (
     ActionProposalOwnershipError,
     ActionProposalService,
     ActionProposalStatusError,
+)
+from src.services.attachment_storage import (
+    AttachmentStorage,
+    AttachmentStorageError,
+    AttachmentStorageNotFoundError,
 )
 from src.services.blocking import (
     DirectMessagingBlockedError,
@@ -147,6 +152,8 @@ from src.services.chat import (
     MessageOwnershipError,
     ReferencedUsersNotFoundError,
     TranslationNotFoundError,
+    VoiceTranscriptionRetryAttachmentError,
+    VoiceTranscriptionRetryStateError,
     message_mentions,
 )
 from src.services.connection_manager import ConnectionManager
@@ -175,6 +182,7 @@ from src.services.rtc import (
 )
 from src.services.translation import schedule_translation_retry, schedule_translations
 from src.services.user_settings import get_or_create_user_settings, update_user_settings
+from src.services.voice_transcription import schedule_voice_transcription
 
 logger = logging.getLogger(__name__)
 
@@ -189,54 +197,6 @@ def _safe_filename(filename: str | None) -> str:
     name = Path(filename or "attachment").name
     name = _SAFE_FILENAME.sub("_", name).strip(" ._")
     return (name or "attachment")[:_MAX_FILENAME_LENGTH]
-
-
-def _attachment_path(conversation_id: str, attachment_id: str) -> Path:
-    """Resolve a server generated attachment id to its storage path."""
-    root = Path(get_settings().upload_dir).resolve()
-    candidate = (root / conversation_id / attachment_id).resolve()
-    if root not in candidate.parents:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
-    return candidate
-
-
-def _supabase_storage_path(conversation_id: str, attachment_id: str) -> str:
-    return f"{conversation_id}/{attachment_id}"
-
-
-def _supabase_storage_configured() -> bool:
-    settings = get_settings()
-    return bool(settings.supabase_url and settings.supabase_service_role_key)
-
-
-def _supabase_storage_headers(content_type: str | None = None) -> dict[str, str]:
-    settings = get_settings()
-    headers = {
-        "Authorization": f"Bearer {settings.supabase_service_role_key}",
-        "apikey": settings.supabase_service_role_key,
-    }
-    if content_type:
-        headers["Content-Type"] = content_type
-    return headers
-
-
-def _supabase_object_url(object_path: str) -> str:
-    settings = get_settings()
-    return (f"{settings.supabase_url.rstrip('/')}/storage/v1/object/"
-            f"{settings.supabase_storage_bucket}/{object_path}")
-
-
-def _supabase_object_missing(response: httpx.Response) -> bool:
-    """Supabase may encode NoSuchKey as HTTP 400 with an inner 404 status."""
-    if response.status_code == status.HTTP_404_NOT_FOUND:
-        return True
-    if response.status_code != status.HTTP_400_BAD_REQUEST:
-        return False
-    try:
-        payload = response.json()
-    except ValueError:
-        return False
-    return payload.get("code") == "NoSuchKey" or payload.get("error") == "not_found"
 
 
 # ========================
@@ -1338,7 +1298,7 @@ async def get_blocked_contacts(
 async def _conversation_response(
     service: ChatService,
     conversation: Conversation,
-    last_message: tuple[str, datetime] | None = None,
+    last_message: tuple[str, datetime, str | None, str | None] | None = None,
     manager: ConnectionManager | None = None,
     unread_count: int = 0,
     members: Sequence[User] | None = None,
@@ -1398,6 +1358,8 @@ async def _conversation_response(
         ],
         last_message=last_message[0] if last_message else None,
         last_message_at=last_message[1] if last_message else None,
+        last_message_type=last_message[2] if last_message else None,
+        last_message_transcription_status=last_message[3] if last_message else None,
         online_member_ids=list(
             manager.online_user_ids(member.id for member in members)
         ) if manager else [],
@@ -1727,6 +1689,8 @@ def _message_response(
         conversation_id=message.conversation_id,
         sender_id=message.sender_id,
         original_text="" if message.deleted_at else message.original_text,
+        message_type=message.message_type,
+        transcription_status=message.transcription_status,
         source_language=message.source_language,
         mentions=message_mentions(message),
         assistant_generated=message.assistant_generated,
@@ -2105,6 +2069,39 @@ async def retry_message_translation(
 
 
 @router.post(
+    "/messages/{message_id}/transcription/retry",
+    response_model=VoiceTranscriptionRetryResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_voice_transcription(
+    message_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    manager: ConnectionManager = Depends(get_connection_manager),
+) -> VoiceTranscriptionRetryResponse:
+    """Atomically retry STT for the same failed voice message and audio."""
+    try:
+        result = await ChatService(db).retry_voice_transcription(
+            user_id=current_user.id,
+            message_id=message_id,
+        )
+    except ChatServiceError as exc:
+        raise _message_error(exc) from exc
+
+    # The service commit is authoritative. Only its guarded transition winner
+    # reaches this call, so concurrent requests cannot launch another STT task.
+    schedule_voice_transcription(
+        message_id=result.message_id,
+        conversation_id=result.conversation_id,
+        publisher=manager,
+    )
+    return VoiceTranscriptionRetryResponse(
+        message_id=result.message_id,
+        conversation_id=result.conversation_id,
+    )
+
+
+@router.post(
     "/conversations/{conversation_id}/summary",
     response_model=ConversationSummaryResponse,
 )
@@ -2418,7 +2415,14 @@ def _message_error(exc: ChatServiceError) -> HTTPException:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, MessageOwnershipError | ConversationMembershipError):
         return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
-    if isinstance(exc, MessageAlreadyDeletedError):
+    if isinstance(
+        exc,
+        (
+            MessageAlreadyDeletedError,
+            VoiceTranscriptionRetryAttachmentError,
+            VoiceTranscriptionRetryStateError,
+        ),
+    ):
         return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -2671,6 +2675,8 @@ async def edit_message(
         conversation_id=message.conversation_id,
         sender_id=message.sender_id,
         original_text=message.original_text,
+        message_type=message.message_type,
+        transcription_status=message.transcription_status,
         source_language=message.source_language,
         mentions=message_mentions(message),
         assistant_generated=message.assistant_generated,
@@ -3029,23 +3035,19 @@ async def upload_conversation_attachment(
 
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
     payload = b"".join(chunks)
-    object_path = _supabase_storage_path(conversation_id, attachment_id)
-    if _supabase_storage_configured():
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    _supabase_object_url(object_path),
-                    content=payload,
-                    headers=_supabase_storage_headers(content_type),
-                )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.exception("Supabase Storage upload failed for %s", attachment_id)
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to store attachment") from exc
-    else:
-        destination = _attachment_path(conversation_id, attachment_id)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(payload)
+    try:
+        await AttachmentStorage(settings).write(
+            conversation_id=conversation_id,
+            attachment_id=attachment_id,
+            data=payload,
+            content_type=content_type,
+        )
+    except AttachmentStorageError:
+        logger.warning("Attachment storage upload failed for %s", attachment_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to store attachment",
+        ) from None
 
     # Persisted so a message can claim it later; until then the row is an
     # unattached upload, which is a normal state (docs/CONTRACT.md §3.7).
@@ -3133,29 +3135,29 @@ async def download_conversation_attachment(
     if attachment is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
 
-    if _supabase_storage_configured():
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.get(
-                    _supabase_object_url(_supabase_storage_path(conversation_id, attachment_id)),
-                    headers=_supabase_storage_headers(),
-                )
-            if _supabase_object_missing(response):
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
-            response.raise_for_status()
-            return Response(
-                content=response.content,
-                media_type=attachment.content_type,
-                headers={"Content-Disposition": f'attachment; filename="{attachment.filename}"'},
-            )
-        except HTTPException:
-            raise
-        except httpx.HTTPError as exc:
-            logger.exception("Supabase Storage download failed for %s", attachment_id)
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to retrieve attachment") from exc
+    try:
+        stored = await AttachmentStorage().download(attachment)
+    except AttachmentStorageNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment was not found",
+        ) from None
+    except AttachmentStorageError:
+        logger.warning("Attachment storage download failed for %s", attachment_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to retrieve attachment",
+        ) from None
 
-    path = _attachment_path(conversation_id, attachment_id)
-    if not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment was not found")
-    return FileResponse(path, filename=attachment.filename, media_type=attachment.content_type)
+    if stored.local_path is not None:
+        return FileResponse(
+            stored.local_path,
+            filename=stored.filename,
+            media_type=stored.content_type,
+        )
+    return Response(
+        content=stored.data or b"",
+        media_type=stored.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{stored.filename}"'},
+    )
 
