@@ -808,6 +808,35 @@ lần chuyển trạng thái. Đề xuất **không có thời gian** thì khôn
 tài liệu" mà không nói khi nào là một việc có thật, và nó thuộc về hộp nhiệm vụ chứ không
 phải một ô giờ do hệ thống bịa ra.
 
+### 3.17. Liên kết Google Calendar (27/08)
+
+```
+GET    /api/v1/me/calendar/google/authorize
+POST   /api/v1/me/calendar/google/callback
+DELETE /api/v1/me/calendar/google/link
+POST   /api/v1/me/calendar/sync
+```
+
+Cả bốn đều yêu cầu quyền **`calendar_read`** (§3.15). Đưa người dùng qua màn hình đồng ý
+của Google để xin một quyền mà họ chưa cấp ở đây là thu về quyền truy cập mà chính ứng
+dụng đã được bảo là đừng dùng.
+
+`authorize` trả về URL đồng ý kèm tham số `state` là **token đã ký, hạn 10 phút**. Google
+trả lại `state` nguyên văn, và `callback` **đối chiếu nó với người gọi đã xác thực** chứ
+không chỉ kiểm tính hợp lệ: một token ký cho tài khoản khác chứng tỏ callback bị phát lại.
+
+`DELETE` **idempotent** — gỡ một liên kết vốn không có là đúng trạng thái người gọi muốn,
+không phải lỗi. Nó xoá token nhưng **giữ nguyên các sự kiện đã đẩy lên Google**: đó là
+lịch hẹn thật của người dùng, không phải tài sản của tích hợp này.
+
+`POST /me/calendar/sync` chạy một chu kỳ ngay lập tức cho nút "Đồng bộ ngay". Cơ chế mang
+thay đổi từ Google về vẫn là **polling định kỳ** (ADR-36); endpoint này chỉ để bỏ qua thời
+gian chờ. Trả về `pushed`, `pulled` và **`last_sync_error`** — lỗi được đưa lên chứ không
+nuốt đi, vì một lịch đồng bộ hỏng nhìn giống hệt một lịch không có gì để đồng bộ.
+
+Nếu deployment chưa cấu hình đủ (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+`GOOGLE_OAUTH_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY`) thì `authorize` trả **503**.
+
 ## 4. WebSocket Protocol
 
 **Endpoint:** `ws(s)://<host>/api/v1/ws` — một kênh duy nhất cho mọi hội thoại, không phải một kênh cho mỗi hội thoại.
@@ -851,6 +880,23 @@ Hai sự kiện `message_updated` và `message_deleted` đặt tên `snake_case`
 2. Trường `source_language` trong `translation.completed` là giá trị đã xác nhận sau bước detect, có thể khác giá trị tạm đã phát trong `message.received`. Frontend cập nhật lại theo giá trị này.
 3. Với `is_fallback = true`, Frontend hiển thị chỉ báo phân biệt (ví dụ biểu tượng cảnh báo) nhưng không hiển thị dưới dạng lỗi, do tin nhắn gốc vẫn được truyền tới người nhận.
 4. Frontend sử dụng `translated_text` trong `translation.completed` làm kết quả cuối cùng. Các sự kiện `translation.chunk` chỉ phục vụ hiệu ứng hiển thị theo thời gian thực và có thể bị mất gói.
+
+### 4.2.1. Sự kiện của trợ lý và lịch (27/08)
+
+| Sự kiện | Khi nào | Gửi cho |
+|---|---|---|
+| `action_proposal_created` | Trợ lý tìm ra một việc cần duyệt | **chỉ chủ sở hữu** |
+| `reminder_due` | Tới mốc nhắc việc | chủ sở hữu |
+| `action_proposal_confirmed` | Người dùng duyệt một đề xuất | chủ sở hữu |
+| `calendar_event_updated` | Mục lịch đổi ở nơi khác (thường là từ Google) | chủ sở hữu |
+
+Bốn sự kiện này **không bao giờ phát cho cả hội thoại**, kể cả khi đề xuất sinh ra từ một
+tin nhắn nhóm: nội dung của chúng là việc riêng của một người, và người khác trong nhóm
+chưa hề yêu cầu điều đó (ADR-31).
+
+`action_proposal_created` hiện là sự kiện **duy nhất** trong hệ thống được phát dưới dạng
+dict trần thay vì `Literal` trên một model Pydantic. Đó là nợ kỹ thuật đã biết, không phải
+tiền lệ — sự kiện mới phải theo quy ước ở §4.
 
 ### 4.3. Quy tắc xác định `source_language`
 
@@ -912,6 +958,7 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `agent_consents` | `id`, `user_id`, `scope`, `is_granted`, `granted_at`, `revoked_at`, `policy_version`, `created_at`, `updated_at` |
 | `calendar_events` | `id`, `user_id`, `action_proposal_id`, `source`, `title`, `details`, `location`, `starts_at`, `ends_at`, `all_day`, `timezone`, `status`, `google_event_id`, `google_calendar_id`, `google_etag`, `sync_state`, `created_at`, `updated_at` |
 | `reminders` | `id`, `user_id`, `calendar_event_id`, `remind_at`, `delivered_at`, `dismissed_at`, `created_at` |
+| `calendar_links` | `user_id`, `google_calendar_id`, `refresh_token_encrypted`, `access_token_encrypted`, `token_expires_at`, `sync_token`, `sync_enabled`, `last_synced_at`, `last_sync_error`, `created_at`, `updated_at` |
 
 **Ghi chú:**
 
@@ -940,6 +987,8 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 21. `calendar_events` là **thứ mà một đề xuất đã duyệt trở thành**, và là lý do `action_proposals.status = 'confirmed'` thôi làm ngõ cụt — trước đó duyệt xong không có gì xảy ra tiếp. Hai bảng tách nhau vì chúng **rẽ nhánh về sau**: người dùng dời sự kiện, Google dời sự kiện, sự kiện bị huỷ — không việc nào trong đó thay đổi sự thật rằng cam kết đã được nêu ra và đã được duyệt. `action_proposal_id` dùng `ON DELETE SET NULL` chứ không `CASCADE`: nguồn gốc của một mục lịch phải sống lâu hơn hàng đề xuất, cùng lựa chọn mà ghi chú 9 đã giải thích cho `translation_id`. `source` nhận `assistant|manual|google` và `sync_state` nhận `local_only|pending_push|synced|remote_only`, đều có `CheckConstraint`; mục `remote_only` là **chỉ đọc trong ứng dụng** — sửa ở đây là đánh nhau với thứ đã tạo ra nó bên kia, và bên thua là bên đồng bộ sau. Huỷ thì đặt `status = 'cancelled'` **chứ không xoá hàng**: có thể đã có nhắc việc bắn đi rồi, và một việc duyệt tuần trước giải thích cho cái lịch người dùng đang nhìn. `timezone` giữ **múi giờ người dùng đã nói**, nằm cạnh mốc thời gian tuyệt đối chứ không thay nó: "9h sáng mai" và khoảnh khắc UTC mà nó quy ra là hai sự thật khác nhau, và chỉ cái thứ nhất còn đúng khi người đó bay sang múi giờ khác.
 
 22. `reminders` là **một hàng cho mỗi lần nhắc**, không phải một cột trên `calendar_events`, vì một sự kiện có thể nợ nhiều lần nhắc (trước một ngày, rồi trước mười phút) và `delivered_at` thuộc về từng lần nhắc chứ không thuộc về sự kiện. Bảng này đồng thời **là hàng đợi của scheduler**: `scan_due_reminders` giành hàng bằng một `UPDATE ... WHERE remind_at <= now() AND delivered_at IS NULL RETURNING ...` duy nhất, nên hai lượt quét chồng nhau **không thể** cùng giành một hàng — mệnh đề `WHERE` của lượt sau không còn khớp. Đó là điều làm việc gửi trùng trở thành **không thể** thay vì *khó xảy ra*, và là điều cho phép một tiến trình vừa khởi động lại bắt kịp mọi thứ nó đã ngủ qua mà không nhắc lại từ đầu. Chỉ mục `ix_reminders_due` đúng là hai cột đó theo đúng thứ tự đó. APScheduler chỉ làm **đồng hồ**, **không dùng job store của nó**: một scheduler giữ job thì phải được báo mỗi khi có nhắc việc mới, phải được báo lại khi bị huỷ, và không biết gì về những cái đến hạn lúc tiến trình đang tắt — một bảng thì không cần thứ nào trong đó (ADR-33).
+
+23. `calendar_links` khoá theo `user_id` như `user_settings`: một người có một liên kết Google hoặc không có, và một id thay thế sẽ cho phép hàng thứ hai mà hệ quả duy nhất là sự kiện bị đẩy lên hai lần. **Token được mã hoá khi lưu** (Fernet, `src/core/crypto.py`) và **thiếu khoá mã hoá thì tính năng tắt hẳn**, không bao giờ lưu dạng rõ: một refresh token không phải dữ liệu của ứng dụng mà là quyền truy cập thường trực vào lịch thật của một người, còn hiệu lực tới khi họ tự thu hồi (ADR-35). Cột `sync_token` là con trỏ incremental của Google — giữ nó là thứ biến mỗi lần kéo thành "có gì đổi từ lần trước" thay vì tải lại toàn bộ; Google cho nó hết hạn, và `410 Gone` nghĩa là bỏ con trỏ rồi chạy một lượt đầy đủ. `last_sync_error` được giữ lại để giao diện nói được **vì sao** lịch không nhúc nhích: im lặng sau một lần đồng bộ hỏng trông y hệt một cái lịch không có gì để đồng bộ.
 
 ### 5.1. Hoàn thiện các điều khiển hội thoại và cài đặt
 
