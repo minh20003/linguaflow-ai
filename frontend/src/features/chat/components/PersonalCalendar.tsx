@@ -2,11 +2,11 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiCalendarEvent } from "../api/chat-api";
+import { GoogleCalendarControls } from "./GoogleCalendarControls";
 import {
   cancelCalendarEvent,
   createCalendarEvent,
   listCalendarEvents,
-  syncGoogleCalendarNow,
   updateCalendarEvent,
 } from "../api/chat-api";
 import {
@@ -197,8 +197,6 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
   const [sourceFilter, setSourceFilter] = useState<TaskSource | "all">("all");
   const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
-  const [googleSyncEnabled, setGoogleSyncEnabled] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const createMenuRef = useRef<HTMLDivElement | null>(null);
@@ -324,33 +322,6 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       await reload();
     }
   };
-  const triggerSync = async () => {
-    if (!googleSyncEnabled || isSyncing) return;
-    setIsSyncing(true);
-    try {
-      const result = await syncGoogleCalendarNow(token);
-      await reload();
-      if (result.last_sync_error) {
-        // Surfaced rather than swallowed: a calendar that failed to sync looks
-        // identical to one with nothing to sync.
-        onNotify?.("Đồng bộ chưa xong", result.last_sync_error, "warning");
-      } else {
-        onNotify?.(
-          "Đã đồng bộ Google Calendar",
-          `Đẩy lên ${result.pushed}, nhận về ${result.pulled}`,
-          "success",
-        );
-      }
-    } catch (error) {
-      onNotify?.(
-        "Không đồng bộ được",
-        error instanceof Error ? error.message : undefined,
-        "warning",
-      );
-    } finally {
-      setIsSyncing(false);
-    }
-  };
 
   const navigate = useCallback((direction: -1 | 1) => setCursor((date) => {
     const next = new Date(date);
@@ -396,7 +367,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={triggerSync} disabled={!googleSyncEnabled || isSyncing} title={googleSyncEnabled ? "Đồng bộ Google Calendar" : "Đồng bộ Google đang tắt"} className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-300"><RefreshCw className={`h-4 w-4 ${isSyncing ? "animate-spin" : ""}`} />{isSyncing ? "Đang đồng bộ" : "Google"}</button>
+              <GoogleCalendarControls token={token} onSynced={() => void reload()} onNotify={onNotify} />
               <button onClick={() => setShowAssistant(true)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-300">Lập lịch bằng Trợ lý</button>
               <button onClick={() => setShowSidebar(true)} aria-label="Mở danh sách việc" className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8EAF0] bg-white px-3 py-2 text-xs font-semibold text-[#4E5568] hover:bg-[#F7F8FC] dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6] dark:hover:bg-[#2E3342] xl:hidden"><ListTodo className="h-4 w-4" />Việc</button>
               <div className="relative" ref={createMenuRef}><button onClick={() => setShowCreateMenu((value) => !value)} className="inline-flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1D4ED8]"><Plus className="h-4 w-4" />Thêm</button>{showCreateMenu && <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1.5 shadow-xl dark:border-[#2E3342] dark:bg-[#232630]"><button onClick={() => { setNewItemKind("event"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#60A5FA]"><CalendarDays className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Sự kiện</span></button><button onClick={() => { setNewItemKind("task"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Việc</span></button></div>}</div>
@@ -422,7 +393,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
             <span className="font-semibold text-[#74798C]">Lọc:</span>
             <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as TaskSource | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi nguồn</option><option value="assistant">Trợ lý</option><option value="manual">Thủ công</option><option value="google">Google</option></select>
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi trạng thái</option><option value="approved">Đã lên lịch</option><option value="done">Hoàn thành</option><option value="rejected">Đã từ chối</option></select>
-            <label className="ml-auto inline-flex items-center gap-2 text-xs font-medium text-[#74798C]"><span>Đồng bộ Google</span><button onClick={() => setGoogleSyncEnabled((value) => !value)} className={`h-5 w-9 rounded-full p-0.5 ${googleSyncEnabled ? "bg-[#2563EB]" : "bg-[#DDE1EA]"}`}><span className={`block h-4 w-4 rounded-full bg-white transition-transform ${googleSyncEnabled ? "translate-x-4" : ""}`} /></button></label>
+            
           </div>
         </header>
 

@@ -684,3 +684,38 @@ export function startGoogleCalendarLink(token: string) {
 export function syncGoogleCalendarNow(token: string) {
   return request<ApiCalendarSyncResult>("/api/v1/me/calendar/sync", token, { method: "POST" });
 }
+
+/** What the interface may offer for Google Calendar — see `CONTRACT.md` §3.17.
+ *
+ *  Three separate facts because the right thing to render differs for each:
+ *  no credentials on the server means the controls should not exist, no consent
+ *  means show the permission, no link means show connect rather than sync.
+ */
+export interface ApiCalendarCapability {
+  configured: boolean;
+  consented: boolean;
+  linked: boolean;
+  sync_enabled: boolean;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+}
+
+export function getGoogleCalendarStatus(token: string) {
+  return request<ApiCalendarCapability>("/api/v1/me/calendar/google/status", token);
+}
+
+export function unlinkGoogleCalendar(token: string) {
+  return request<void>("/api/v1/me/calendar/google/link", token, { method: "DELETE" });
+}
+
+export function completeGoogleCalendarLink(token: string, code: string, state: string) {
+  return request<{ google_calendar_id: string; sync_enabled: boolean }>(
+    "/api/v1/me/calendar/google/callback",
+    token,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, state }),
+    },
+  );
+}
