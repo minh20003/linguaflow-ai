@@ -774,6 +774,40 @@ lại. Không có trường này thì việc thêm quyền thứ sáu sẽ tự 
 phải quyền. Tắt nó thì trợ lý biến mất khỏi giao diện; nó không thu hồi quyền nào và bật
 lại không hỏi lại điều gì. Quyền nằm ở đây.
 
+### 3.16. Lịch cá nhân và nhắc việc (27/08)
+
+```
+GET    /api/v1/me/calendar/events?starts_after=&starts_before=&include_cancelled=
+POST   /api/v1/me/calendar/events
+PATCH  /api/v1/me/calendar/events/{event_id}
+DELETE /api/v1/me/calendar/events/{event_id}
+GET    /api/v1/me/reminders?include_delivered=
+POST   /api/v1/me/reminders/{reminder_id}/dismiss
+```
+
+Tất cả đều **giới hạn theo chủ sở hữu ở cả chiều đọc lẫn chiều ghi**. Lịch là bề mặt
+riêng tư nhất của sản phẩm, và một truy vấn thiếu bộ lọc `user_id` ở đây là một vụ lộ dữ
+liệu **im lặng** chứ không phải một lỗi.
+
+Chạm tới mục của người khác bằng id trả **404 chứ không phải 403**: người gọi tự cung
+cấp id, nên phân biệt "không phải của bạn" với "không có id này" chỉ làm lộ đúng một dữ
+kiện mới — rằng id đó có tồn tại.
+
+`DELETE` là **huỷ chứ không xoá** — trả về mục với `status = 'cancelled'` (xem §5 ghi chú
+21) và tắt các nhắc việc chưa gửi của nó.
+
+Mục có `sync_state = 'remote_only'` (đến từ Google) trả **409** cho `PATCH` và `DELETE`.
+
+`POST` nhận `reminder_minutes_before`, mặc định 15. `null` nghĩa là **không nhắc** — đó
+là một lựa chọn thật, khác với "dùng mặc định". Nếu mốc nhắc rơi vào quá khứ thì **không
+tạo nhắc việc nào** thay vì bắn ngay: một thông báo về việc đang diễn ra là nhiễu, và với
+một việc nhập sau khi đã xong thì nó sẽ nổ ngay lúc bấm lưu.
+
+Duyệt một đề xuất **có thời gian** sẽ tự tạo một mục lịch, **trong cùng giao dịch** với
+lần chuyển trạng thái. Đề xuất **không có thời gian** thì không lên lịch: "tôi sẽ xem lại
+tài liệu" mà không nói khi nào là một việc có thật, và nó thuộc về hộp nhiệm vụ chứ không
+phải một ô giờ do hệ thống bịa ra.
+
 ## 4. WebSocket Protocol
 
 **Endpoint:** `ws(s)://<host>/api/v1/ws` — một kênh duy nhất cho mọi hội thoại, không phải một kênh cho mỗi hội thoại.
@@ -876,6 +910,8 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 | `correction_log` | `id`, `source_phrase`, `corrected_target`, `source_language`, `target_language`, `domain`, `audience`, `user_id`, `translation_id`, `consent_to_share`, `original_snippet`, `anonymized_snippet`, `embedding`, `embedding_model`, `observed_at` |
 | `message_embeddings` | `id`, `message_id`, `conversation_id`, `embedding`, `embedding_model`, `created_at` |
 | `agent_consents` | `id`, `user_id`, `scope`, `is_granted`, `granted_at`, `revoked_at`, `policy_version`, `created_at`, `updated_at` |
+| `calendar_events` | `id`, `user_id`, `action_proposal_id`, `source`, `title`, `details`, `location`, `starts_at`, `ends_at`, `all_day`, `timezone`, `status`, `google_event_id`, `google_calendar_id`, `google_etag`, `sync_state`, `created_at`, `updated_at` |
+| `reminders` | `id`, `user_id`, `calendar_event_id`, `remind_at`, `delivered_at`, `dismissed_at`, `created_at` |
 
 **Ghi chú:**
 
@@ -900,6 +936,10 @@ Quy ước đặt tên theo mã nguồn hiện có (`src/database/models.py`): t
 19. `agent_consents` là **quyền**, không phải tuỳ chọn giao diện, nên nó là bảng riêng chứ không phải năm cột nữa trên `user_settings` (§3.15). Ba lý do đều mang tính cơ chế. Thứ nhất, quyền cần biết **thời điểm** cấp và thu (`granted_at`, `revoked_at`) — một cột boolean không kể lại được điều đó, mà "người này đã đồng ý từ lúc nào" đúng là câu hỏi phải trả lời được khi có tranh chấp. Thứ hai, `policy_version` gắn với **từng quyền**: thêm quyền thứ sáu chỉ được phép hỏi lại về quyền đó, không làm mất hiệu lực năm quyền đã cấp. Thứ ba, danh sách quyền sẽ còn dài ra, và mỗi lần dài ra mà phải chạy `ALTER TABLE` trên `user_settings` là mỗi lần đụng vào bảng mọi người đang đọc. **Không có hàng nghĩa là chưa cấp** — mặc định fail closed, giống hệt cách `consent_to_share` mặc định `false` ở ghi chú 17. Ràng buộc duy nhất `(user_id, scope)`; `scope` có `CheckConstraint` sinh từ `AGENT_CONSENT_SCOPES` trong `src/database/models.py`. Thu hồi **không xoá hàng**, chỉ đặt `is_granted = false` và đóng dấu `revoked_at`, vì xoá đi thì "chưa bao giờ được hỏi" và "đã hỏi rồi và bị từ chối" trở nên không phân biệt được — mà đó lại chính là thứ quyết định có nên hỏi lại hay không.
 
 20. `messages.visibility` nhận `public` hoặc `private`, có `CheckConstraint`, `server_default` là `public` — một tin nhắn có trước cột này vốn ai trong hội thoại cũng đọc được, và đó đúng là nghĩa của `public`, nên không cần backfill. `private` nghĩa là **chỉ đúng tài khoản ghi ở `visible_to_user_id`**, và một `CheckConstraint` thứ hai cấm tồn tại tin riêng tư mà không nêu tên ai. Cột này tồn tại vì trợ lý trả lời `@assistant` ngay trong nhóm, mà câu trả lời có thể tóm tắt lại cam kết của người khác — đẩy cho cả nhóm vừa gây phiền vừa là tiết lộ về những thành viên không hề yêu cầu điều đó (ADR-31). **Lọc bắt buộc nằm trong mệnh đề `WHERE` của mọi lần đọc**, không phải bỏ hàng sau khi đã nạp: lọc ở tầng serialize thì văn bản vẫn được `SELECT` ra và vẫn đi qua mạng, còn lọc ở frontend thì mở DevTools là thấy — `docs/NewFeature.md` §3.3 gọi đó là lỗi bảo mật kinh điển. Điều kiện dùng chung nằm ở `src/services/message_visibility.py`: `visible_to(user_id)` cho mọi truy vấn trả lời **một người**, và `public_only()` cho hai chỗ mà người tiêu thụ là **tiến trình phục vụ nhiều người** — ngữ cảnh của agent dịch (dựng một lần rồi giao cho mọi thành viên) và suy luận hồ sơ hội thoại (kết luận áp cho cả hội thoại). Đặc biệt lưu ý ở bản xem trước tin nhắn cuối: bộ lọc phải nằm **bên trong** phép xếp hạng, vì xếp hạng trên toàn bộ rồi mới loại thì hội thoại sẽ mất hẳn dòng xem trước thay vì lùi về tin mới nhất mà người đọc được phép thấy.
+
+21. `calendar_events` là **thứ mà một đề xuất đã duyệt trở thành**, và là lý do `action_proposals.status = 'confirmed'` thôi làm ngõ cụt — trước đó duyệt xong không có gì xảy ra tiếp. Hai bảng tách nhau vì chúng **rẽ nhánh về sau**: người dùng dời sự kiện, Google dời sự kiện, sự kiện bị huỷ — không việc nào trong đó thay đổi sự thật rằng cam kết đã được nêu ra và đã được duyệt. `action_proposal_id` dùng `ON DELETE SET NULL` chứ không `CASCADE`: nguồn gốc của một mục lịch phải sống lâu hơn hàng đề xuất, cùng lựa chọn mà ghi chú 9 đã giải thích cho `translation_id`. `source` nhận `assistant|manual|google` và `sync_state` nhận `local_only|pending_push|synced|remote_only`, đều có `CheckConstraint`; mục `remote_only` là **chỉ đọc trong ứng dụng** — sửa ở đây là đánh nhau với thứ đã tạo ra nó bên kia, và bên thua là bên đồng bộ sau. Huỷ thì đặt `status = 'cancelled'` **chứ không xoá hàng**: có thể đã có nhắc việc bắn đi rồi, và một việc duyệt tuần trước giải thích cho cái lịch người dùng đang nhìn. `timezone` giữ **múi giờ người dùng đã nói**, nằm cạnh mốc thời gian tuyệt đối chứ không thay nó: "9h sáng mai" và khoảnh khắc UTC mà nó quy ra là hai sự thật khác nhau, và chỉ cái thứ nhất còn đúng khi người đó bay sang múi giờ khác.
+
+22. `reminders` là **một hàng cho mỗi lần nhắc**, không phải một cột trên `calendar_events`, vì một sự kiện có thể nợ nhiều lần nhắc (trước một ngày, rồi trước mười phút) và `delivered_at` thuộc về từng lần nhắc chứ không thuộc về sự kiện. Bảng này đồng thời **là hàng đợi của scheduler**: `scan_due_reminders` giành hàng bằng một `UPDATE ... WHERE remind_at <= now() AND delivered_at IS NULL RETURNING ...` duy nhất, nên hai lượt quét chồng nhau **không thể** cùng giành một hàng — mệnh đề `WHERE` của lượt sau không còn khớp. Đó là điều làm việc gửi trùng trở thành **không thể** thay vì *khó xảy ra*, và là điều cho phép một tiến trình vừa khởi động lại bắt kịp mọi thứ nó đã ngủ qua mà không nhắc lại từ đầu. Chỉ mục `ix_reminders_due` đúng là hai cột đó theo đúng thứ tự đó. APScheduler chỉ làm **đồng hồ**, **không dùng job store của nó**: một scheduler giữ job thì phải được báo mỗi khi có nhắc việc mới, phải được báo lại khi bị huỷ, và không biết gì về những cái đến hạn lúc tiến trình đang tắt — một bảng thì không cần thứ nào trong đó (ADR-33).
 
 ### 5.1. Hoàn thiện các điều khiển hội thoại và cài đặt
 
