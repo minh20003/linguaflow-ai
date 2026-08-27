@@ -247,6 +247,11 @@ class MessageResponse(BaseModel):
     source_language: str
     mentions: list[MentionSummary] = []
     assistant_generated: bool = False
+    # Only ever `private` on a row the caller is entitled to, because the query
+    # that produced it already filtered by visibility. It is here so the client
+    # can label the message as visible to nobody else, not so the client can
+    # decide whether to show it — that decision was made in SQL (ADR-31).
+    visibility: str = "public"
     # Carrying translations here is what makes a socket that dropped mid
     # translation a non-event: the client recovers them on reconnect rather
     # than waiting for a `translation_completed` that was already sent.
@@ -454,6 +459,7 @@ class RealtimeMessage(BaseModel):
     created_at: UtcDatetime
     mentions: list[MentionSummary] = []
     assistant_generated: bool = False
+    visibility: str = "public"
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None

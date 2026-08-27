@@ -355,10 +355,8 @@ async def websocket_endpoint(
                     # extraction path does. Without it the tag is simply an
                     # ordinary message: no reply, no proposals, and nothing
                     # about the conversation leaves the database.
-                    member_ids = (user_id, *result.recipient_ids)
                     assistant_result = await service.create_assistant_reply(
                         trigger_message=result.message,
-                        member_ids=member_ids,
                     )
                     assistant_message = RealtimeMessage.model_validate(assistant_result.message)
                     assistant_message.mentions = message_mentions(assistant_result.message)

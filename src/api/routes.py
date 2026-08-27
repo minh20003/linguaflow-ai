@@ -1660,6 +1660,7 @@ async def list_conversations(
     last_messages = await service.get_last_messages(
         conversation_ids=conversation_ids,
         reader_language=current_user.preferred_language,
+        reader_id=current_user.id,
         # The caller's own standing per conversation, so the sidebar preview
         # picks the same translation the conversation itself will show.
         reader_profiles={
