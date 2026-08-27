@@ -51,6 +51,10 @@ def main() -> int:
 
     gate = jobs["gate"]
     require(gate.get("permissions") == {"contents": "read", "actions": "read"}, "gate permissions must stay read-only")
+    gate_prereq = step(gate, "Verify shared runner Gate prerequisites")["run"]
+    for required in ("command -v \"$binary\"", "bash git gh jq", "git --version", "gh --version", "jq --version"):
+        require(required in gate_prereq, f"Gate runner prerequisite is missing {required}")
+    require("sudo" not in gate_prereq, "workflow must not install or mutate host tools with sudo")
     release_gate = step(gate, "Validate immutable SHA and develop_v2 ancestry")["run"]
     for required in (
         "^[0-9A-Fa-f]{40}$",

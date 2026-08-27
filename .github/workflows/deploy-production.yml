@@ -25,6 +25,17 @@ jobs:
       release_sha: ${{ steps.release.outputs.release_sha }}
       ci_run_id: ${{ steps.ci.outputs.ci_run_id }}
     steps:
+      - name: Verify shared runner Gate prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          for binary in bash git gh jq; do
+            command -v "$binary" >/dev/null
+          done
+          git --version >/dev/null
+          gh --version >/dev/null
+          jq --version >/dev/null
+
       - name: Checkout workflow repository context
         uses: actions/checkout@v4
         with:
