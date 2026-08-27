@@ -85,6 +85,29 @@ GLOSSARY_ENTRY_STATUSES = ("active", "retired")
 # term is not asked again about a differently worded version of it.
 GLOSSARY_PROPOSAL_STATUSES = ("pending", "approved", "rejected")
 
+# What a user has to agree to before the assistant may act on their data
+# (`docs/CONTRACT.md` §3.15). Conversation membership answers "who may read
+# this"; it does not answer "does this person agree to a machine reading it".
+# Those are separate questions, so they get separate mechanisms.
+#
+# `proactive_scan` deliberately does not imply `read_conversations` — scanning
+# needs both. "Read it when I ask" and "read everything as it arrives" are
+# different levels of exposure, and a user must be able to say yes to the first
+# without being forced into the second.
+AGENT_CONSENT_SCOPES = (
+    "read_conversations",
+    "proactive_scan",
+    "store_memory",
+    "calendar_read",
+    "calendar_write",
+)
+
+# Stamped onto every grant. When this list changes, existing grants must not
+# silently extend to a scope the user was never shown: the interface compares a
+# row's version against this constant and asks again. Without it, adding a sixth
+# scope would count as pre-approved by everyone who ever agreed to the first five.
+AGENT_CONSENT_POLICY_VERSION = "1"
+
 
 def _in_clause(column: str, values: tuple[str, ...]) -> str:
     """Render a CheckConstraint body from a tuple of allowed values.
@@ -389,6 +412,57 @@ class UserSettings(Base):
     ai_smart_assistance: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+
+
+class AgentConsent(Base):
+    """One permission a user has granted, or refused, to the assistant.
+
+    A table rather than five more columns on `UserSettings`, for three reasons
+    that are all mechanical rather than stylistic. A permission has to record
+    *when* it was given and taken back, which a boolean column cannot do. Its
+    `policy_version` is per-scope, so adding a sixth permission may only re-ask
+    about that one instead of invalidating the five already granted. And the
+    list will keep growing, which on `UserSettings` would mean repeatedly
+    altering a table every request reads.
+
+    Absence of a row means **not granted** — the default fails closed, the same
+    way `CorrectionLog.consent_to_share` defaults to false.
+    """
+
+    __tablename__ = "agent_consents"
+    __table_args__ = (
+        CheckConstraint(
+            _in_clause("scope", AGENT_CONSENT_SCOPES),
+            name="ck_agent_consents_scope",
+        ),
+        UniqueConstraint("user_id", "scope", name="uq_agent_consents_user_scope"),
+        Index("ix_agent_consents_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_granted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # Revoking keeps the row and only clears the flag. Deleting it would make
+    # "never asked" and "asked and refused" indistinguishable, and that
+    # distinction is exactly what decides whether to prompt again.
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    policy_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
     )
 
 
