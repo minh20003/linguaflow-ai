@@ -79,7 +79,14 @@ case "$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT" in
   *[!0123456789:]*) fail 'GitHub run identity is invalid' ;;
 esac
 
-repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+if [ -n "${RELEASE_BUNDLE_ROOT-}" ]; then
+  repo_root=$(CDPATH='' cd -- "$RELEASE_BUNDLE_ROOT" && pwd) \
+    || fail 'cannot resolve RELEASE_BUNDLE_ROOT'
+else
+  repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+fi
+git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+  || fail 'release bundle root is not a Git checkout'
 tmp_root=$(mktemp -d "${TMPDIR:-/tmp}/linguaflow-release.XXXXXX") \
   || fail 'cannot allocate temporary release directory'
 bundle=$tmp_root/bundle
@@ -117,21 +124,27 @@ for source in \
   scripts/backup_postgres.sh \
   scripts/verify_production.sh \
   scripts/finalize_release.sh; do
-  [ -f "$repo_root/$source" ] || fail "release input is missing: $source"
+  git -C "$repo_root" cat-file -e "HEAD:$source" 2>/dev/null \
+    || fail "release input is missing from the checked-out Git revision: $source"
   destination=$bundle/$source
   mkdir -p "$(dirname "$destination")"
-  cp "$repo_root/$source" "$destination"
+  git -C "$repo_root" show "HEAD:$source" >"$destination" \
+    || fail "cannot export release input from the checked-out Git revision: $source"
 done
 
 (
   cd "$bundle"
-  sha256sum \
+  : >SHA256SUMS
+  for relative in \
     Caddyfile \
     docker-compose.production.yml \
     scripts/backup_postgres.sh \
     scripts/deploy_release.sh \
     scripts/finalize_release.sh \
-    scripts/verify_production.sh >SHA256SUMS
+    scripts/verify_production.sh; do
+    checksum=$(sha256sum "$relative" | awk '{print $1}')
+    printf '%s  %s\n' "$checksum" "$relative" >>SHA256SUMS
+  done
 )
 
 ssh -i "$key_file" -p "$PROD_SSH_PORT" \

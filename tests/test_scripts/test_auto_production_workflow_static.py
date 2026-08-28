@@ -102,6 +102,19 @@ def test_ssh_transport_pins_host_and_keeps_token_out_of_arguments() -> None:
     assert "GHCR_TOKEN" not in sudo_line
 
 
+def test_transport_writes_a_platform_independent_checksum_manifest() -> None:
+    assert 'checksum=$(sha256sum "$relative" | awk \'{print $1}\')' in TRANSPORT
+    assert "printf '%s  %s\\n' \"$checksum\" \"$relative\" >>SHA256SUMS" in TRANSPORT
+
+
+def test_transport_exports_bundle_from_the_checked_out_git_object() -> None:
+    assert 'if [ -n "${RELEASE_BUNDLE_ROOT-}" ]' in TRANSPORT
+    assert 'cd -- "$RELEASE_BUNDLE_ROOT"' in TRANSPORT
+    assert 'git -C "$repo_root" cat-file -e "HEAD:$source"' in TRANSPORT
+    assert 'git -C "$repo_root" show "HEAD:$source" >"$destination"' in TRANSPORT
+    assert 'cp "$repo_root/$source" "$destination"' not in TRANSPORT
+
+
 def test_root_wrapper_verifies_before_mutating_and_preserves_durable_state() -> None:
     digest_check = WRAPPER.index('verify_image "$BACKEND_REPOSITORY"')
     deploy_call = WRAPPER.index('sh scripts/deploy_release.sh "$release_sha"')
