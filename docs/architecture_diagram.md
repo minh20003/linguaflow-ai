@@ -104,22 +104,24 @@ giao ngay.
 graph TD
     START([Kích hoạt: @assistant hoặc chat riêng]) --> Perm{Đã cấp quyền<br/>read_conversations?}
     Perm -->|Chưa| Ask[Trả lời bằng lời:<br/>cần bật quyền nào] --> END1([Kết thúc])
-    Perm -->|Rồi| Mem[load_memory<br/>cửa sổ thời gian + truy hồi ngữ nghĩa]
-    Mem --> Plan[plan — model lớn<br/>xuất danh sách thao tác có cấu trúc]
+    Perm -->|Rồi| Mem[load_memory<br/>cửa sổ thời gian + truy hồi assistant_chunks]
+    Mem --> Plan[plan — model riêng của trợ lý<br/>xuất danh sách lời gọi công cụ]
     Plan --> Route{route}
 
-    Route -->|summarize| Sum[Tóm tắt B-03] --> Resp
-    Route -->|extract_actions| Ext[Trích việc B-04]
-    Route -->|không thao tác nào| Resp
+    Route -->|cần hỏi lại| Clar[clarify<br/>đặt câu hỏi ngược] --> END3([Kết thúc])
+    Route -->|không việc gì| Resp
+    Route -->|có công cụ| Tools[run_tools<br/>chạy theo registry đóng]
 
-    Ext --> Any{Có đề xuất nào?}
-    Any -->|Không| Resp
-    Any -->|Có| HC[[human_confirm<br/>interrupt&#40;&#41; — treo lượt chạy]]
+    Tools --> After{sau khi chạy}
+    After -->|sinh đề xuất| HC[[human_confirm<br/>interrupt&#40;&#41; — treo lượt chạy]]
+    After -->|còn lượt replan| Plan
+    After -->|đủ rồi| Resp
 
-    HC -->|Command&#40;resume&#41;| Exec[execute<br/>confirm_proposal từng mục được duyệt]
+    HC -->|Command&#40;resume&#41;<br/>duyệt + chú thích| Exec[execute<br/>confirm_proposal kèm sửa và nhắc trước N phút]
     Exec --> Resp[respond] --> END2([Kết thúc])
 
     style HC fill:#fde68a,stroke:#b45309
+    style Tools fill:#dbeafe,stroke:#1d4ed8
 ```
 
 **`human_confirm` là ràng buộc bắt buộc, không có đường vòng** — không việc nào tới lịch
@@ -131,10 +133,22 @@ sống sót qua restart là các hàng `action_proposals` mà node đã ghi **tr
 chỗ treo thì các hàng vẫn còn, và endpoint duyệt thực thi thẳng từ chúng — một hàm tác
 dụng, hai chỗ kích hoạt (ADR-32).
 
-`plan` không được tự do chọn công cụ: nó xuất danh sách thao tác có cấu trúc và `route`
-mới dispatch, nên tập việc có thể xảy ra **cố định trong mã**. Tên thao tác lạ bị loại bỏ,
-vì `route` so khớp bằng phép bằng và một tên bịa sẽ không tới executor nào — lượt chạy kết
-thúc trông như thành công mà không làm gì.
+`plan` không được tự do chọn công cụ theo kiểu function-calling: nó xuất lời gọi có cấu
+trúc và `run_tools` dispatch qua một **registry là dict trong mã nguồn**, nên tập việc có
+thể xảy ra cố định. Tên công cụ lạ bị loại bỏ, vì tra cứu bằng phép bằng và một tên bịa sẽ
+không tới đâu — lượt chạy kết thúc trông như thành công mà không làm gì (ADR-40).
+
+**Không công cụ nào ghi thẳng vào lịch.** Thứ muốn đổi lịch thì ghi một hàng
+`action_proposals`, đi qua đúng cổng mà một cam kết phát hiện tự động đã đi qua. Đó cũng
+là cái cho phép người duyệt **chú thích**: sửa giờ bộ trích xuất đọc nhầm, và chọn nhắc
+trước bao nhiêu phút — thứ tin nhắn gốc không bao giờ chứa. Một lần ghi thẳng thì không có
+gì để chú thích: tới lúc người ta nhìn thấy, nó đã xảy ra rồi.
+
+Mũi tên `run_tools → plan` là **chu trình duy nhất** trong đồ thị. Nó bị chặn ở
+`MAX_REPLANS = 3` trong mã chứ không giao cho model tự đếm lượt: mỗi vòng là một lời gọi
+model mà người dùng đang ngồi chờ, và một planner luôn có thể xin thêm một công cụ nữa thì
+sẽ xin mãi.
+
 
 ## 3. Data Flow
 
