@@ -29,12 +29,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for binary in bash git gh jq; do
+          for binary in bash git; do
             command -v "$binary" >/dev/null
           done
           git --version >/dev/null
-          gh --version >/dev/null
-          jq --version >/dev/null
 
       - name: Checkout workflow repository context
         uses: actions/checkout@v4
@@ -65,26 +63,35 @@ jobs:
 
       - name: Require successful push CI for this exact SHA
         id: ci
-        shell: bash
+        uses: actions/github-script@v7
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          runs_json="$(gh api \
-            "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=push&status=completed&head_sha=${RELEASE_SHA}&per_page=100")"
-          ci_run_id="$(jq -r --arg sha "$RELEASE_SHA" '
-            [.workflow_runs[]
-              | select(.event == "push" and .head_sha == $sha and .conclusion == "success")
-              | .id]
-            | first // empty
-          ' <<< "$runs_json")"
-          if [[ -z "$ci_run_id" ]]; then
-            echo 'No successful push CI run exists for this exact release SHA.' >&2
-            exit 1
-          fi
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const releaseSha = process.env.RELEASE_SHA;
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: "ci.yml",
+              event: "push",
+              status: "completed",
+              head_sha: releaseSha,
+              per_page: 100,
+            });
 
-          echo "ci_run_id=$ci_run_id" >> "$GITHUB_OUTPUT"
+            const ciRun = data.workflow_runs.find((run) =>
+              run.event === "push" &&
+              run.head_sha === releaseSha &&
+              run.status === "completed" &&
+              run.conclusion === "success"
+            );
+            if (!ciRun) {
+              throw new Error("No successful push CI run exists for this exact release SHA.");
+            }
+
+            core.setOutput("ci_run_id", String(ciRun.id));
 
   build-or-reuse:
     name: Build or reuse immutable production images
