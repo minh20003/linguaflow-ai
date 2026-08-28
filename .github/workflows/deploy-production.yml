@@ -7,6 +7,11 @@ on:
         description: Full 40-character SHA from approved develop_v2 history
         required: true
         type: string
+      rehearse_production_channel:
+        description: Verify the SSH/VPS production channel without changing containers, volumes, database, or LKG
+        required: true
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -279,3 +284,43 @@ jobs:
             || { echo 'Frontend build did not return an immutable digest.' >&2; exit 1; }
           echo "backend_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
           echo "frontend_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+
+  rehearse-production-channel:
+    name: Rehearse exact-SHA production channel without mutation
+    needs: [gate, build-or-reuse]
+    if: ${{ inputs.rehearse_production_channel }}
+    runs-on: self-hosted
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout the reviewed control plane
+        uses: actions/checkout@v4
+        with:
+          path: control-plane
+          fetch-depth: 1
+
+      - name: Checkout the gated release bundle
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+          path: release
+          fetch-depth: 1
+
+      - name: Rehearse the dedicated production channel
+        shell: bash
+        env:
+          RELEASE_BUNDLE_ROOT: ${{ github.workspace }}/release
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ vars.PROD_SSH_USER }}
+          PROD_SSH_KNOWN_HOSTS: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sh control-plane/scripts/run_remote_release.sh rehearse \
+            '${{ needs.gate.outputs.release_sha }}' \
+            '${{ needs.build-or-reuse.outputs.backend_digest }}' \
+            '${{ needs.build-or-reuse.outputs.frontend_digest }}'

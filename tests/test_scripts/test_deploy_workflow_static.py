@@ -13,6 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-production.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+TRANSPORT = ROOT / "scripts" / "run_remote_release.sh"
 
 
 def require(condition: bool, message: str) -> None:
@@ -37,11 +38,18 @@ def main() -> int:
     release_input = dispatch.get("inputs", {}).get("release_sha", {})
     require(release_input.get("required") == "true", "release_sha must be required")
     require(release_input.get("type") == "string", "release_sha must be a string")
+    rehearsal_input = dispatch.get("inputs", {}).get("rehearse_production_channel", {})
+    require(rehearsal_input.get("required") == "true", "rehearsal choice must be explicit")
+    require(rehearsal_input.get("default") == "false", "rehearsal must default off")
+    require(rehearsal_input.get("type") == "boolean", "rehearsal choice must be boolean")
 
     require("ubuntu-latest" not in raw, "artifact workflow must not target ubuntu-latest")
     require("runs-on: [" not in raw, "BTC did not authorize speculative runner labels")
     jobs = document.get("jobs", {})
-    require(set(jobs) == {"gate", "build-or-reuse"}, "workflow job graph must stay gate -> build-or-reuse")
+    require(
+        set(jobs) == {"gate", "build-or-reuse", "rehearse-production-channel"},
+        "workflow job graph must stay gate -> build-or-reuse -> optional rehearsal",
+    )
     for job_name, job in jobs.items():
         require(job.get("runs-on") == "self-hosted", f"{job_name} must use exactly self-hosted")
 
@@ -152,11 +160,39 @@ def main() -> int:
     require("NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}" in frontend_args, "frontend API URL build arg is missing")
     require("NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}" in frontend_args, "frontend OAuth build arg is missing")
 
+    rehearsal = jobs["rehearse-production-channel"]
+    require(
+        rehearsal.get("needs") == ["gate", "build-or-reuse"],
+        "rehearsal must depend on the exact-SHA gate and immutable images",
+    )
+    require(
+        rehearsal.get("if") == "${{ inputs.rehearse_production_channel }}",
+        "rehearsal must be explicitly opted into at dispatch time",
+    )
+    require(
+        rehearsal.get("permissions") == {"contents": "read", "packages": "read"},
+        "rehearsal permissions must remain read-only",
+    )
+    release_checkout = step(rehearsal, "Checkout the gated release bundle")
+    require(
+        release_checkout.get("with", {}).get("ref") == "${{ needs.gate.outputs.release_sha }}",
+        "rehearsal bundle must use the gated release SHA",
+    )
+    channel = step(rehearsal, "Rehearse the dedicated production channel")
+    require(
+        channel.get("env", {}).get("RELEASE_BUNDLE_ROOT") == "${{ github.workspace }}/release",
+        "transport must export the gated release checkout",
+    )
+    channel_run = channel.get("run", "")
+    require("run_remote_release.sh rehearse" in channel_run, "manual workflow must use non-mutating rehearsal mode")
+    require("run_remote_release.sh deploy" not in channel_run, "manual workflow must not deploy")
+
     secret_names = set(re.findall(r"secrets\.([A-Z0-9_]+)", raw))
-    require(secret_names == {"GITHUB_TOKEN"}, "workflow must not reference runtime application secrets")
+    require(
+        secret_names == {"GITHUB_TOKEN", "PROD_SSH_PRIVATE_KEY"},
+        "workflow may reference only the job token and deployment-channel SSH key",
+    )
     for forbidden in (
-        "ssh",
-        "scp",
         "deploy_release.sh",
         "production.env",
         "/opt/linguaflow",
@@ -173,6 +209,18 @@ def main() -> int:
     require(expected_outputs <= set(build.get("outputs", {})), "missing safe build outputs")
     require("steps.build_backend.outputs.digest" in raw, "new-build backend digest is not recorded")
     require("steps.build_frontend.outputs.digest" in raw, "new-build frontend digest is not recorded")
+
+    transport = TRANSPORT.read_text(encoding="utf-8")
+    for required in (
+        'printf \'%s\\n\' "$GHCR_TOKEN" | ssh',
+        'StrictHostKeyChecking=yes',
+        'IdentitiesOnly=yes',
+        'if [ -n "${RELEASE_BUNDLE_ROOT-}" ]',
+        'git -C "$repo_root" show "HEAD:$source" >"$destination"',
+        "run_remote_release.sh deploy|rehearse",
+    ):
+        require(required in transport, f"release transport is missing {required}")
+    require("--password" not in transport, "GHCR token must never be passed as a command argument")
 
     ci_after = hashlib.sha256(CI_WORKFLOW.read_bytes()).hexdigest()
     require(ci_before == ci_after, "ci.yml changed during static validation")
