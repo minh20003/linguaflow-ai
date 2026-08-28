@@ -23,7 +23,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import and_, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -3494,14 +3494,20 @@ async def download_conversation_attachment(
 
     attachment = await db.scalar(
         select(Attachment)
-        .join(Message, Message.id == Attachment.message_id)
+        .outerjoin(Message, Message.id == Attachment.message_id)
         .where(
             Attachment.id == attachment_id,
             Attachment.conversation_id == conversation_id,
-            Message.deleted_at.is_(None),
             or_(
-                Message.visible_to_user_id.is_(None),
-                Message.visible_to_user_id == current_user.id,
+                Attachment.message_id.is_(None),
+                and_(
+                    Message.conversation_id == conversation_id,
+                    Message.deleted_at.is_(None),
+                    or_(
+                        Message.visible_to_user_id.is_(None),
+                        Message.visible_to_user_id == current_user.id,
+                    ),
+                ),
             ),
         )
     )
