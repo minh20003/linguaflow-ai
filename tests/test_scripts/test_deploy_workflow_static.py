@@ -52,8 +52,9 @@ def main() -> int:
     gate = jobs["gate"]
     require(gate.get("permissions") == {"contents": "read", "actions": "read"}, "gate permissions must stay read-only")
     gate_prereq = step(gate, "Verify shared runner Gate prerequisites")["run"]
-    for required in ("command -v \"$binary\"", "bash git gh jq", "git --version", "gh --version", "jq --version"):
+    for required in ("command -v \"$binary\"", "bash git", "git --version"):
         require(required in gate_prereq, f"Gate runner prerequisite is missing {required}")
+    require(" gh" not in gate_prereq and " jq" not in gate_prereq, "Gate must not require gh or jq on the shared runner")
     require("sudo" not in gate_prereq, "workflow must not install or mutate host tools with sudo")
     release_gate = step(gate, "Validate immutable SHA and develop_v2 ancestry")["run"]
     for required in (
@@ -64,12 +65,23 @@ def main() -> int:
         "origin/develop_v2",
     ):
         require(required in release_gate, f"release gate is missing {required}")
-    ci_gate = step(gate, "Require successful push CI for this exact SHA")["run"]
+    ci_gate_step = step(gate, "Require successful push CI for this exact SHA")
+    require(ci_gate_step.get("uses") == "actions/github-script@v7", "CI gate must use the portable GitHub Script action")
+    require(
+        ci_gate_step.get("with", {}).get("github-token") == "${{ github.token }}",
+        "CI gate must use the job-scoped GitHub token",
+    )
+    ci_gate = ci_gate_step.get("with", {}).get("script", "")
     for required in (
-        "actions/workflows/ci.yml/runs?event=push",
-        '.event == "push"',
-        ".head_sha == $sha",
-        '.conclusion == "success"',
+        'workflow_id: "ci.yml"',
+        'event: "push"',
+        'status: "completed"',
+        "head_sha: releaseSha",
+        'run.event === "push"',
+        "run.head_sha === releaseSha",
+        'run.status === "completed"',
+        'run.conclusion === "success"',
+        'core.setOutput("ci_run_id"',
     ):
         require(required in ci_gate, f"CI gate is missing {required}")
 
