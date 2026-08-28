@@ -2698,7 +2698,18 @@ async def confirm_action_proposal(
     """Explicitly confirm an action proposal by its assigned owner (B-05)."""
     service = ActionProposalService(db)
     try:
-        confirmed = await service.confirm_proposal(proposal_id=proposal_id, user_id=current_user.id, corrections=payload.model_dump(exclude_none=True))
+        # The lead time is not a correction to the proposal — it shapes the
+        # calendar entry that confirming creates — so it travels as its own
+        # argument. Left in `corrections` it would be filtered out silently by
+        # the allowlist there and the person's choice would vanish.
+        corrections = payload.model_dump(exclude_none=True)
+        corrections.pop("reminder_minutes_before", None)
+        confirmed = await service.confirm_proposal(
+            proposal_id=proposal_id,
+            user_id=current_user.id,
+            corrections=corrections,
+            reminder_minutes_before=payload.reminder_minutes_before,
+        )
         # Approving a proposal is the product's main way of putting something on
         # a calendar, so it gets the same immediate push a manual entry does.
         # The entry only exists when the proposal carried a time; one without is

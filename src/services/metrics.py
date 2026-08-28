@@ -14,6 +14,7 @@ database prints zeroes rather than failing.
 
 from __future__ import annotations
 
+import json
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import TranslationAttempt
+from src.database.models import AssistantAttempt, TranslationAttempt
 from src.services.llm_pricing import estimate_cost_usd
 
 # Outcomes where the reader did not get the configured LLM's translation. Both
@@ -418,4 +419,97 @@ async def summarize_attempts(
         total_ms_mean=statistics.mean(all_durations) if all_durations else 0.0,
         total_ms_p50=percentile(all_durations, 50),
         total_ms_p95=percentile(all_durations, 95),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Assistant Agent (ADR-40)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class AssistantSummary:
+    """What the assistant did, read back out of `assistant_attempts`.
+
+    Separate from `AttemptSummary` rather than folded into it. The two agents
+    are measured on different things — a fallback rate and a language pair mean
+    nothing here, a confirmation rate and a replan distribution mean nothing
+    there — and one object carrying both halves would be mostly zeroes whichever
+    report read it.
+    """
+
+    total: int = 0
+    outcomes: dict[str, int] = field(default_factory=dict)
+    # Runs that reached the gate, and how many of those were carried out inside
+    # the same run. The denominator is every run, not every run that reached the
+    # gate — which is the whole reason `refused`, `clarified` and `empty` rows
+    # are written at all.
+    proposals_created: int = 0
+    proposals_executed: int = 0
+    tool_calls: int = 0
+    tools_failed: int = 0
+    tool_counts: dict[str, int] = field(default_factory=dict)
+    replans: dict[int, int] = field(default_factory=dict)
+    # Share of recalled lines that came from `assistant_chunks` rather than the
+    # recent window. Zero everywhere means the index is empty, which nothing
+    # else in the system would report.
+    memory_lines: int = 0
+    memory_recalled: int = 0
+    avg_ms: float = 0.0
+    p95_ms: float = 0.0
+    errors: dict[str, int] = field(default_factory=dict)
+
+
+async def summarize_assistant_attempts(
+    session: AsyncSession,
+    *,
+    since: datetime | None = None,
+) -> AssistantSummary:
+    """Aggregate the assistant's attempt log.
+
+    Reads only. Returns an empty summary rather than raising when the window
+    holds nothing, so a report over a fresh database prints zeroes instead of a
+    traceback.
+    """
+    statement = select(AssistantAttempt)
+    if since is not None:
+        statement = statement.where(AssistantAttempt.created_at >= since)
+    rows = list((await session.scalars(statement)).all())
+    if not rows:
+        return AssistantSummary()
+
+    outcomes: dict[str, int] = {}
+    tool_counts: dict[str, int] = {}
+    replans: dict[int, int] = {}
+    errors: dict[str, int] = {}
+    for row in rows:
+        outcomes[row.outcome] = outcomes.get(row.outcome, 0) + 1
+        replans[row.replans] = replans.get(row.replans, 0) + 1
+        if row.error_code:
+            errors[row.error_code] = errors.get(row.error_code, 0) + 1
+        try:
+            for name in json.loads(row.tools_used or "[]"):
+                if isinstance(name, str) and name:
+                    tool_counts[name] = tool_counts.get(name, 0) + 1
+        except (TypeError, ValueError):
+            # A malformed row costs one row's tool breakdown, never the report.
+            continue
+
+    durations = sorted(row.total_ms for row in rows)
+    index = max(int(len(durations) * 0.95) - 1, 0)
+
+    return AssistantSummary(
+        total=len(rows),
+        outcomes=outcomes,
+        proposals_created=sum(row.proposals_created for row in rows),
+        proposals_executed=sum(row.proposals_executed for row in rows),
+        tool_calls=sum(row.tool_calls for row in rows),
+        tools_failed=sum(row.tools_failed for row in rows),
+        tool_counts=tool_counts,
+        replans=replans,
+        memory_lines=sum(row.memory_lines for row in rows),
+        memory_recalled=sum(row.memory_recalled for row in rows),
+        avg_ms=sum(durations) / len(durations),
+        p95_ms=float(durations[index]),
+        errors=errors,
     )

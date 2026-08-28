@@ -36,6 +36,13 @@ from src.services.transcription import InvalidAudioError, validate_audio_attachm
 
 logger = logging.getLogger(__name__)
 
+# Ceiling on one `get_message_history` call. Raised from 100 when the assistant
+# gained map-reduce summarisation: it reads a whole conversation and batches it
+# itself, so a bound sized for a scrolling list was capping how much of a thread
+# could ever be summarised. Still a hard ceiling — this is what stops an
+# unbounded query, and the REST history endpoint keeps its own stricter limit.
+MAX_MESSAGE_HISTORY = 2000
+
 
 class ChatServiceError(Exception):
     """Base exception for controlled chat business-rule failures."""
@@ -686,9 +693,19 @@ class ChatService:
         conversation_id: str,
         limit: int = 50,
     ) -> list[Message]:
-        """Return a member's recent messages in deterministic chronology."""
-        if not 1 <= limit <= 100:
-            raise ConversationValidationError("limit must be between 1 and 100")
+        """Return a member's recent messages in deterministic chronology.
+
+        The ceiling is a guard against an unbounded query, not a page size. The
+        REST endpoint that reads history declares its own `Query(le=100)` and is
+        unaffected by the number here; what needed the room is the assistant's
+        summariser, which reads a whole conversation and splits it into batches
+        itself (ADR-38), and would otherwise be capped at a hundred messages by a
+        bound meant for a scrolling list.
+        """
+        if not 1 <= limit <= MAX_MESSAGE_HISTORY:
+            raise ConversationValidationError(
+                f"limit must be between 1 and {MAX_MESSAGE_HISTORY}"
+            )
 
         await self._require_membership(
             conversation_id=conversation_id,
