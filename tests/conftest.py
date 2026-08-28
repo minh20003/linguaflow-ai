@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from collections.abc import AsyncGenerator
@@ -17,6 +18,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -62,6 +64,7 @@ from src.api.websocket import router as websocket_router
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import assistant_indexing as assistant_indexing_module
 from src.services import correction_log as correction_log_module
 from src.services import message_memory as message_memory_module
 from src.services import profile_inference as profile_inference_module
@@ -127,6 +130,10 @@ async def _ensure_test_database() -> None:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            # Trigram search backs the lexical half of the assistant's hybrid
+            # retrieval. Created here as well as in the migration because a test
+            # database is built from the models, not by running migrations.
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     finally:
         await engine.dispose()
 
@@ -134,13 +141,35 @@ async def _ensure_test_database() -> None:
 
 
 async def _run_on_test_database(statement: str) -> None:
-    """Execute one DDL statement against the test database, outside a schema."""
+    """Execute one DDL statement against the test database, outside a schema.
+
+    A `lock_timeout` is set first, and it is the difference between a slow suite
+    and one that never finishes. `_settle_background_translations` cancels the
+    tasks it can reach, but a task scheduled from a WebSocket handler runs on
+    another event loop and cannot be awaited from here — so it may still be
+    inside a read when the schema is dropped, holding a lock this statement then
+    waits on. Postgres waits forever by default, and the symptom is a pytest
+    process alive with no CPU and no output: twice in one session that cost
+    around forty minutes each before anyone looked at `pg_stat_activity`.
+
+    Failing the drop instead leaks one schema into the test database, which is
+    cosmetic and clears with `make reset-db`. The suite's job is to report pass
+    or fail, not to be a database janitor.
+    """
     engine = create_async_engine(
         TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT"
     )
     try:
         async with engine.connect() as conn:
-            await conn.execute(text(statement))
+            await conn.execute(text("SET lock_timeout = '15s'"))
+            try:
+                await conn.execute(text(statement))
+            except OperationalError:
+                logging.getLogger(__name__).warning(
+                    "Timed out on: %s — a background task is still holding a lock. "
+                    "The schema is left behind; `make reset-db` clears it.",
+                    statement,
+                )
     finally:
         await engine.dispose()
 
@@ -242,6 +271,9 @@ async def _settle_background_translations() -> None:
         # which outlives the request the same way and has the same problem.
         *profile_inference_module._BACKGROUND_TASKS,
         *message_memory_module._BACKGROUND_TASKS,
+        # Sending a message also schedules chunk indexing for the assistant's
+        # retrieval, which outlives the request the same way (ADR-37).
+        *assistant_indexing_module._BACKGROUND_TASKS,
         *correction_log_module._BACKGROUND_TASKS,
         *voice_transcription_module._BACKGROUND_TASKS,
     )

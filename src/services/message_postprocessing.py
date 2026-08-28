@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from src.database.models import Message
+from src.services.assistant_indexing import schedule_chunk_index
 from src.services.commitment_detection import schedule_commitment_detection
 from src.services.message_memory import schedule_message_embedding
 from src.services.profile_inference import schedule_profile_inference
@@ -25,6 +26,7 @@ def schedule_text_dependent_work(
     commitment_scheduler: Callable[..., None] | None = None,
     profile_scheduler: Callable[..., None] | None = None,
     embedding_scheduler: Callable[..., None] | None = None,
+    chunk_scheduler: Callable[..., None] | None = None,
 ) -> None:
     """Hand a text-ready message to the same detached services exactly once.
 
@@ -65,5 +67,18 @@ def schedule_text_dependent_work(
         # optional: without a sender the scheduler falls back to the RAG flag
         # alone, so an account that granted memory would be embedded never and
         # nothing would say so (ADR-30).
+        sender_id=message.sender_id,
+    )
+    # The Assistant Agent reads `assistant_chunks`, which is a different index
+    # from `message_embeddings` above and not derivable from it: a chunk may
+    # gather six messages or split one (ADR-37). Without this the assistant's
+    # semantic recall is empty for every conversation nobody has backfilled —
+    # which looks exactly like a conversation in which nothing was said.
+    #
+    # Self-gating on cadence: the scheduler indexes the first message and then
+    # every REINDEX_EVERY, so this call is cheap on all but one message in
+    # twenty.
+    (chunk_scheduler or schedule_chunk_index)(
+        conversation_id=message.conversation_id,
         sender_id=message.sender_id,
     )

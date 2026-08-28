@@ -23,6 +23,7 @@ rule that Alembic is the only thing that defines schema.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,12 +33,29 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.assistant import build_assistant_graph
+from src.services.assistant_telemetry import record_attempt
 
 logger = logging.getLogger(__name__)
 
 # One saver for the process. Threads are keyed by a uuid handed back to the
 # caller, so two users' runs never collide even though they share the store.
 _CHECKPOINTER = InMemorySaver()
+
+def _run_config(thread_id: str, **metadata: Any) -> dict[str, Any]:
+    """The config one graph invocation runs under: checkpoint thread and tracing.
+
+    LangGraph takes a single config, so the two have to be merged here rather
+    than passed separately. `build_runnable_config` returns the tracing half —
+    an empty dict when no backend is configured or its key is missing — and the
+    thread id is added on top, so a deployment with tracing switched off behaves
+    exactly as it did before.
+    """
+    from src.agents.observability import build_runnable_config
+
+    config = dict(build_runnable_config(**metadata) or {})
+    config.setdefault("configurable", {})["thread_id"] = thread_id
+    return config
+
 
 # Which account owns which suspended run. Without this a caller could resume
 # somebody else's thread by guessing its id, and `execute` would then confirm
@@ -98,6 +116,7 @@ class AssistantAgentService:
         """
         thread_id = str(uuid.uuid4())
         graph = build_assistant_graph(db=self._db, checkpointer=_CHECKPOINTER)
+        started = time.perf_counter()
         state = await graph.ainvoke(
             {
                 "conversation_id": conversation_id,
@@ -105,7 +124,25 @@ class AssistantAgentService:
                 "request_text": request_text,
                 "telemetry": {"source_message_id": source_message_id},
             },
-            {"configurable": {"thread_id": thread_id}},
+            # The thread id and the trace callback travel in the same config.
+            # Passing only the first is what left the whole assistant graph
+            # untraced while its two executors, which build their own config,
+            # appeared in the backend — so the spans that existed described the
+            # work and never the run that ordered it.
+            _run_config(
+                thread_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                stage="run",
+            ),
+        )
+
+        await record_attempt(
+            self._db,
+            state=state,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            total_ms=int((time.perf_counter() - started) * 1000),
         )
 
         if "__interrupt__" in state:
@@ -128,8 +165,16 @@ class AssistantAgentService:
         thread_id: str,
         user_id: str,
         approved_proposal_ids: list[str],
+        annotations: dict[str, dict[str, Any]] | None = None,
     ) -> AssistantRunResult:
         """Continue a run parked at `human_confirm` with the person's answer.
+
+        Args:
+            annotations: Per-proposal corrections the person made at the gate —
+                a fixed time, a different title, how far ahead to be reminded —
+                keyed by proposal id. This is what a direct calendar write could
+                never offer: by the time somebody saw it, it would already have
+                happened.
 
         Raises:
             AssistantThreadNotFoundError: Nothing is suspended under that id.
@@ -144,10 +189,28 @@ class AssistantAgentService:
             raise AssistantThreadOwnershipError(thread_id)
 
         graph = build_assistant_graph(db=self._db, checkpointer=_CHECKPOINTER)
+        started = time.perf_counter()
         state = await graph.ainvoke(
-            Command(resume={"approved_proposal_ids": approved_proposal_ids}),
-            {"configurable": {"thread_id": thread_id}},
+            Command(
+                resume={
+                    "approved_proposal_ids": approved_proposal_ids,
+                    "annotations": annotations or {},
+                }
+            ),
+            _run_config(thread_id, user_id=user_id, stage="resume"),
         )
+        # A second row for the same request, not an update of the first. The
+        # suspended half and the resumed half are two separate stretches of
+        # waiting — one on a model, one on a person — and averaging them
+        # together would report a latency nobody experienced.
+        await record_attempt(
+            self._db,
+            state=state,
+            conversation_id=state.get("conversation_id"),
+            user_id=user_id,
+            total_ms=int((time.perf_counter() - started) * 1000),
+        )
+
         # The gate is answered once. Leaving the entry behind would let a second
         # resume run `execute` again on the same approvals.
         _THREAD_OWNERS.pop(thread_id, None)
