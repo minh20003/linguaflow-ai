@@ -224,6 +224,16 @@ def compute_proposal_idempotency_key(
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _reminder_lead(minutes: int | None) -> timedelta | None:
+    """Turn the approver's answer into what `create_event` expects.
+
+    ``None`` means no reminder, matching `CalendarEventCreateRequest` exactly:
+    the default lives in the schema, so by the time a value reaches here the
+    only remaining question is whether the person asked not to be nudged.
+    """
+    return None if minutes is None else timedelta(minutes=minutes)
+
+
 def _load_missing(value: str | None) -> list[str]:
     try:
         parsed = json.loads(value or "[]")
@@ -357,7 +367,22 @@ class ActionProposalService:
         proposal_id: str,
         user_id: str,
         corrections: dict[str, Any] | None = None,
+        reminder_minutes_before: int | None = 15,
     ) -> ActionProposal:
+        """Approve one proposal, optionally correcting it on the way through.
+
+        Args:
+            corrections: Fields the approver changed. Only the ones in
+                ``allowed`` below are honoured — the rest of the row is
+                provenance and must not be editable from a confirmation.
+            reminder_minutes_before: How far ahead to nudge, chosen at approval
+                because the message the proposal came from never says it.
+                ``None`` means no reminder — a real choice, not a missing value.
+                A separate argument rather than another correction: it shapes
+                the *calendar entry*, not the proposal, and putting it in
+                ``allowed`` would try to write it to a column that does not
+                exist.
+        """
         proposal = await self._get_owned(proposal_id, user_id)
         if proposal.status not in _ACTIVE_STATUSES:
             raise ActionProposalStatusError("Proposal is not confirmable")
@@ -444,7 +469,11 @@ class ActionProposalService:
         confirmed = await self.db.get(ActionProposal, proposal_id)
         if confirmed is not None:
             await self.db.refresh(confirmed)
-            await CalendarService(self.db).schedule_from_proposal(confirmed, commit=False)
+            await CalendarService(self.db).schedule_from_proposal(
+                confirmed,
+                commit=False,
+                reminder_lead=_reminder_lead(reminder_minutes_before),
+            )
 
         await self.db.commit()
         return await self.get_proposal(proposal_id)

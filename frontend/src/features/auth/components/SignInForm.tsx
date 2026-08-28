@@ -81,7 +81,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={false}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.25 }}
@@ -128,7 +128,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       </div>
 
       {/* Form Fields */}
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form action="/api/auth/login" method="post" onSubmit={handleSubmit} className="space-y-4">
         {/* Email Field */}
         <div>
           <label htmlFor="signin-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
@@ -140,6 +140,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
             </div>
             <input
               id="signin-email"
+              name="email"
               type="email"
               autoComplete="email"
               value={email}
@@ -166,6 +167,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
             </div>
             <input
               id="signin-password"
+              name="password"
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               value={password}
@@ -193,6 +195,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               id="remember-me-checkbox"
+              name="remember"
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}

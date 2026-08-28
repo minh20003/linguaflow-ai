@@ -75,5 +75,12 @@ CLAUDE.md
 .pnpm-store/
 
 # Local planning docs
-
+ai20k-mentor-qa-report/
+mascot/
+gsap-skills/
 MD/
+
+# Operator state for one backfill run, not application data. Ignored rather
+# than committed because it names conversation ids from whichever database the
+# script was pointed at.
+scripts/.assistant_backfill_progress.json

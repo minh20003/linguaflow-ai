@@ -671,7 +671,6 @@ export const AppShell: React.FC = () => {
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
         if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
-        if (eventType === "action_proposal_created") addToast("Đề xuất từ Trợ lý", "Trợ lý đã tạo đề xuất chờ bạn xác nhận trong Lịch cá nhân.", "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
           setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? {
@@ -1046,10 +1045,14 @@ export const AppShell: React.FC = () => {
   const saveProfile = async (value: Partial<User>) => {
     if (!token.current) return;
     try {
-      const profile = await updateProfile(token.current, {
+      const changes: { display_name?: string; bio?: string; avatar_url?: string } = {
         display_name: value.name,
         bio: value.bio,
-      });
+      };
+      // Generated fallback avatars are display-only URLs. Only persist a
+      // client-generated data URL when the user actually selected a new photo.
+      if (value.avatar?.startsWith("data:image/")) changes.avatar_url = value.avatar;
+      const profile = await updateProfile(token.current, changes);
       setCurrentUser((previous) => ({ ...previous, ...toChatUser(profile) }));
       addToast("Profile saved", undefined, "success");
     } catch (error) {
@@ -1195,7 +1198,7 @@ export const AppShell: React.FC = () => {
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
     <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} pendingTaskCount={pendingTaskCount} /></div>
-    {activeTab !== "calendar" && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
+    {(activeTab === "chats" || activeTab === "contacts" || activeTab === "groups") && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
       {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} assistantSelected={isAssistantChatOpen} onOpenAssistant={() => {
         if (!token.current) return;
         void getAssistantConversation(token.current).then(async (item) => {

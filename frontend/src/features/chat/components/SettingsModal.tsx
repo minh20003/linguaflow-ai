@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppSettings, User, LanguageCode } from '../types';
 import type { AgentConsentScope } from '../api/chat-api';
 import { AssistantConsentDialog } from './AssistantConsentDialog';
@@ -15,7 +15,8 @@ import {
   Check,
   Globe2,
   Volume2,
-  Eye
+  Eye,
+  Camera,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -90,6 +91,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
   const [isConsentDialogOpen, setIsConsentDialogOpen] = useState(false);
+  const [avatar, setAvatar] = useState(currentUser.avatar);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setName(currentUser.name);
+    setBio(currentUser.bio || '');
+    setAvatar(currentUser.avatar);
+  }, [currentUser]);
 
   if (!isOpen) return null;
 
@@ -103,7 +112,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   ];
 
   const handleSaveProfile = () => {
-    onUpdateUser({ name, bio });
+    onUpdateUser({ name, bio, avatar });
+  };
+
+  const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const size = 256;
+      const scale = Math.max(size / image.naturalWidth, size / image.naturalHeight);
+      const width = image.naturalWidth * scale;
+      const height = image.naturalHeight * scale;
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext('2d');
+      context?.drawImage(image, (size - width) / 2, (size - height) / 2, width, height);
+      setAvatar(canvas.toDataURL('image/webp', 0.82));
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onerror = () => URL.revokeObjectURL(objectUrl);
+    image.src = objectUrl;
   };
 
   return (
@@ -266,17 +298,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeSection === 'profile' && (
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
-                  <img
-                    src={currentUser.avatar}
-                    alt={currentUser.name}
-                    className="w-16 h-16 rounded-full object-cover ring-2 ring-[#2563EB]"
-                    referrerPolicy="no-referrer"
-                  />
+                  <div className="relative">
+                    <img
+                      src={avatar}
+                      alt={currentUser.name}
+                      className="w-16 h-16 rounded-full object-cover ring-2 ring-[#2563EB]"
+                      referrerPolicy="no-referrer"
+                    />
+                    <button type="button" onClick={() => avatarInputRef.current?.click()} aria-label="Change avatar" className="absolute -right-1 -bottom-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-[#2563EB] text-white shadow-sm hover:bg-[#1D4ED8] dark:border-[#1C1F27]">
+                      <Camera className="h-3.5 w-3.5" />
+                    </button>
+                    <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleAvatarChange} />
+                  </div>
                   <div>
                     <h5 className="font-bold text-sm text-[#1E2230] dark:text-[#F5F6FA]">
                       {currentUser.name}
                     </h5>
                     <p className="text-xs text-[#74798C]">{currentUser.email}</p>
+                    <button type="button" onClick={() => avatarInputRef.current?.click()} className="mt-1 text-xs font-semibold text-[#2563EB] hover:underline">{language === 'vi' ? 'Thay ảnh đại diện' : 'Change profile photo'}</button>
                   </div>
                 </div>
 

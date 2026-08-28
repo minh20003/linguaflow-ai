@@ -4,14 +4,13 @@ import {
   Smile,
   SendHorizontal,
   X,
-  Image as ImageIcon,
   Paperclip,
   Reply,
-  Bot,
   Mic,
 } from 'lucide-react';
 import { LanguageCode, MessageMention, MessageReply, User } from '../types';
 import { interactionText } from '../i18n';
+import { ASSISTANT_AVATAR_URL } from '../api/chat-api';
 import {
   createVoiceRecordingFile,
   formatRecordingDuration,
@@ -122,6 +121,15 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       stopMicrophoneTracks();
     };
   }, [clearRecordingTimer, stopMicrophoneTracks]);
+
+  useEffect(() => {
+    if (!recorderError) return;
+    const timeout = window.setTimeout(() => {
+      setRecorderError(null);
+      setRecorderStage('idle');
+    }, 3500);
+    return () => window.clearTimeout(timeout);
+  }, [recorderError]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -410,11 +418,14 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           {showAttachMenu && (
             <div className="absolute bottom-full left-0 mb-2 w-44 bg-white dark:bg-[#232630] border border-[#E8EAF0] dark:border-[#2A2E3D] rounded-xl shadow-xl p-1 z-30 animate-in fade-in zoom-in-95 duration-100">
               <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#1E2230] dark:text-[#E2E5F0] rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left"
+                type="button"
+                onClick={() => void startRecording()}
+                disabled={!onSendVoice}
+                aria-label={interactionText(language, 'Record voice message')}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#1E2230] dark:text-[#E2E5F0] rounded-lg hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D] text-left disabled:cursor-not-allowed disabled:opacity-45"
               >
-                <ImageIcon className="w-4 h-4 text-emerald-500" />
-                <span>Photo or Video</span>
+                <Mic className="w-4 h-4 text-rose-500" />
+                <span>{interactionText(language, 'Voice message')}</span>
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -457,7 +468,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             <div className="absolute bottom-full left-0 mb-3 w-72 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-xl dark:border-[#2A2E3D] dark:bg-[#232630] z-40">
               <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">Gợi ý tag</p>
               {mentionOptions.map((option, index) => option.type === 'assistant' ? (
-                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><span className="flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-violet-600 dark:bg-violet-500/20 dark:text-violet-300"><Bot className="h-4 w-4" /></span><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">Trợ lý thông minh</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">Phản hồi ngay trong luồng</span></span></button>
+                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={ASSISTANT_AVATAR_URL} alt="Trợ lý thông minh" className="h-7 w-7 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">Trợ lý thông minh</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">Phản hồi ngay trong luồng</span></span></button>
               ) : (
                 <button key={option.user.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={option.user.avatar} alt="" className="h-7 w-7 rounded-full" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{option.user.name}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">@{option.user.username}</span></span></button>
               ))}
@@ -527,7 +538,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
         </>}
       </div>
       {recorderError && (
-        <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-200" role="alert">
+        <div className="fixed bottom-5 right-5 z-[70] flex max-w-sm items-center justify-between gap-3 rounded-xl border border-rose-200 bg-white px-3.5 py-3 text-xs font-medium text-rose-700 shadow-xl shadow-slate-900/10 dark:border-rose-500/25 dark:bg-[#232630] dark:text-rose-200" role="alert">
           <span>{interactionText(language, VOICE_ERROR_COPY[recorderError])}</span>
           <button
             type="button"

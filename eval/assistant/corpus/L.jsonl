@@ -1,0 +1,801 @@
+{"type": "header", "tier": "L", "seed": 217, "built_at": "2026-08-28T08:13:57.246424+00:00", "message_count": 800, "queries": [{"key": "deadline-moved", "kind": "single_hop", "question": "Deadline cuối cùng của milestone thanh toán là ngày nào?", "relevant_indexes": [80], "answer_points": ["13"], "expected_actions": []}, {"key": "db-choice", "kind": "single_hop", "question": "Which database did we pick for the reporting service?", "relevant_indexes": [129], "answer_points": ["clickhouse"], "expected_actions": []}, {"key": "release-owner", "kind": "multi_hop", "question": "Ai chịu trách nhiệm bản phát hành tháng 10 và vì sao đổi người?", "relevant_indexes": [178, 358, 538], "answer_points": ["hà", "nghỉ phép"], "expected_actions": []}, {"key": "invoice-split", "kind": "multi_hop", "question": "How much is the client actually invoiced this quarter, and why did it change?", "relevant_indexes": [227, 367, 507], "answer_points": ["35,000", "training"], "expected_actions": []}, {"key": "incident-cause", "kind": "multi_hop", "question": "根本原因は何でしたか、そして再発防止策は?", "relevant_indexes": [276, 396, 516], "answer_points": ["ttl"], "expected_actions": []}, {"key": "migration-plan", "kind": "long_message", "question": "Trong kế hoạch migration, bước nào phải làm trước khi tắt hệ thống cũ?", "relevant_indexes": [325], "answer_points": ["đối soát", "một trăm phần trăm"], "expected_actions": []}, {"key": "onboarding-doc", "kind": "long_message", "question": "In the onboarding write-up, what must a new engineer do before their first deploy?", "relevant_indexes": [374], "answer_points": ["rollback", "pair"], "expected_actions": []}, {"key": "last-week-decision", "kind": "temporal", "question": "Tuần trước chúng ta chốt gì về ngôn ngữ mặc định của giao diện?", "relevant_indexes": [423], "answer_points": ["tiếng việt"], "expected_actions": []}, {"key": "qa-signoff", "kind": "temporal", "question": "When did QA sign off on the payment flow, and with what caveat?", "relevant_indexes": [472], "answer_points": ["refund"], "expected_actions": []}, {"key": "standup-commitment", "kind": "single_hop", "question": "Mình đã hứa gửi tài liệu gì, và hạn khi nào?", "relevant_indexes": [521], "answer_points": ["báo cáo hiệu năng", "thứ sáu"], "expected_actions": [{"action_type": "task", "title": "gửi bản nháp báo cáo hiệu năng", "when": "friday 17:00"}]}, {"key": "design-review-meeting", "kind": "single_hop", "question": "Buổi review thiết kế diễn ra khi nào?", "relevant_indexes": [570], "answer_points": ["10h", "thứ tư"], "expected_actions": [{"action_type": "appointment", "title": "review thiết kế", "when": "wednesday 10:00"}]}, {"key": "absent-budget", "kind": "negative", "question": "Ngân sách marketing quý tới được duyệt bao nhiêu?", "relevant_indexes": [], "answer_points": [], "expected_actions": []}, {"key": "absent-vendor", "kind": "negative", "question": "Which vendor did we choose for the security audit?", "relevant_indexes": [], "answer_points": [], "expected_actions": []}, {"key": "absent-headcount", "kind": "negative", "question": "来年の採用計画は何人ですか?", "relevant_indexes": [], "answer_points": [], "expected_actions": []}, {"key": "ambiguous-reschedule", "kind": "ambiguous", "question": "Dời cuộc họp sang hôm khác giúp mình.", "relevant_indexes": [619], "answer_points": ["nào"], "expected_actions": []}, {"key": "ambiguous-remind", "kind": "ambiguous", "question": "Remind me about the report later.", "relevant_indexes": [668], "answer_points": ["which"], "expected_actions": []}]}
+{"type": "message", "index": 0, "speaker": "U01", "language": "vi", "text": "Có hai ticket mới về đăng nhập. Test flaky ở phần upload lại xuất hiện. Có hai ticket mới về đăng nhập. Test flaky ở phần upload lại xuất hiện. Cache chưa được xoá sau lần deploy trước. Mình đã trả lời ticket hôm qua rồi. Việc export để sang phase sau. Đã cập nhật spacing theo hệ thống token. Cache chưa được xoá sau lần deploy trước. Tài liệu API còn thiếu ví dụ lỗi. Phần hướng dẫn chạy local đã cũ. Cache chưa được xoá sau lần deploy trước. Mình nghĩ nên giữ nguyên bố cục hiện tại. Đã cập nhật spacing theo hệ thống token. Đã pin lại version của action checkout. Đã thêm ghi chú về biến môi trường. Khách hàng hỏi lại về thời gian phản hồi. Mình cần thêm một ngày cho phần này. Màu nhấn hơi chìm trên nền sáng. Mình vừa thêm bước cache cho dependency. Khách hàng hỏi lại về thời gian phản hồi. Tài liệu API còn thiếu ví dụ lỗi. Mình nghĩ nên giữ nguyên bố cục hiện tại. Mình cần thêm một ngày cho phần này. Staging vừa được deploy lại. Cache chưa được xoá sau lần deploy trước. Lịch sprint tuần sau mình sẽ gửi sau. Mình vừa thêm bước cache cho dependency. Mình đã cập nhật phần cài đặt trong README. Có hai ticket mới về đăng nhập. Đã pin lại version của action checkout. Mình nghĩ nên giữ nguyên bố cục hiện tại. Đã pin lại version của action checkout. Đã pin lại version của action checkout.", "offset_seconds": 0, "fact_key": ""}
+{"type": "message", "index": 1, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 60, "fact_key": ""}
+{"type": "message", "index": 2, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 120, "fact_key": ""}
+{"type": "message", "index": 3, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước mọi người xem giúp", "offset_seconds": 180, "fact_key": ""}
+{"type": "message", "index": 4, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 240, "fact_key": ""}
+{"type": "message", "index": 5, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 300, "fact_key": ""}
+{"type": "message", "index": 6, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nhé", "offset_seconds": 360, "fact_key": ""}
+{"type": "message", "index": 7, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 420, "fact_key": ""}
+{"type": "message", "index": 8, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました よろしくお願いします", "offset_seconds": 480, "fact_key": ""}
+{"type": "message", "index": 9, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 540, "fact_key": ""}
+{"type": "message", "index": 10, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 600, "fact_key": ""}
+{"type": "message", "index": 11, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 660, "fact_key": ""}
+{"type": "message", "index": 12, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 720, "fact_key": ""}
+{"type": "message", "index": 13, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 780, "fact_key": ""}
+{"type": "message", "index": 14, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 840, "fact_key": ""}
+{"type": "message", "index": 15, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao", "offset_seconds": 900, "fact_key": ""}
+{"type": "message", "index": 16, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later for visibility", "offset_seconds": 960, "fact_key": ""}
+{"type": "message", "index": 17, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 1020, "fact_key": ""}
+{"type": "message", "index": 18, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 1080, "fact_key": ""}
+{"type": "message", "index": 19, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 1140, "fact_key": ""}
+{"type": "message", "index": 20, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 1200, "fact_key": ""}
+{"type": "message", "index": 21, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 1260, "fact_key": ""}
+{"type": "message", "index": 22, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 1320, "fact_key": ""}
+{"type": "message", "index": 23, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 以上です", "offset_seconds": 1380, "fact_key": ""}
+{"type": "message", "index": 24, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 1440, "fact_key": ""}
+{"type": "message", "index": 25, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 1500, "fact_key": ""}
+{"type": "message", "index": 26, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 1560, "fact_key": ""}
+{"type": "message", "index": 27, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước", "offset_seconds": 1620, "fact_key": ""}
+{"type": "message", "index": 28, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 1680, "fact_key": ""}
+{"type": "message", "index": 29, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 1740, "fact_key": ""}
+{"type": "message", "index": 30, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 1800, "fact_key": ""}
+{"type": "message", "index": 31, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light for visibility", "offset_seconds": 1860, "fact_key": ""}
+{"type": "message", "index": 32, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 1920, "fact_key": ""}
+{"type": "message", "index": 33, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 1980, "fact_key": ""}
+{"type": "message", "index": 34, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 2040, "fact_key": ""}
+{"type": "message", "index": 35, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 2100, "fact_key": ""}
+{"type": "message", "index": 36, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency", "offset_seconds": 2160, "fact_key": ""}
+{"type": "message", "index": 37, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up for visibility", "offset_seconds": 2220, "fact_key": ""}
+{"type": "message", "index": 38, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています", "offset_seconds": 2280, "fact_key": ""}
+{"type": "message", "index": 39, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba để mình theo dõi tiếp", "offset_seconds": 2340, "fact_key": ""}
+{"type": "message", "index": 40, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 2400, "fact_key": ""}
+{"type": "message", "index": 41, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 2460, "fact_key": ""}
+{"type": "message", "index": 42, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency", "offset_seconds": 2520, "fact_key": ""}
+{"type": "message", "index": 43, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 2580, "fact_key": ""}
+{"type": "message", "index": 44, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 2640, "fact_key": ""}
+{"type": "message", "index": 45, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 2700, "fact_key": ""}
+{"type": "message", "index": 46, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 2760, "fact_key": ""}
+{"type": "message", "index": 47, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 2820, "fact_key": ""}
+{"type": "message", "index": 48, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 2880, "fact_key": ""}
+{"type": "message", "index": 49, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light for visibility", "offset_seconds": 2940, "fact_key": ""}
+{"type": "message", "index": 50, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 3000, "fact_key": ""}
+{"type": "message", "index": 51, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại", "offset_seconds": 3060, "fact_key": ""}
+{"type": "message", "index": 52, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 3120, "fact_key": ""}
+{"type": "message", "index": 53, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 3180, "fact_key": ""}
+{"type": "message", "index": 54, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 3240, "fact_key": ""}
+{"type": "message", "index": 55, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light let me know", "offset_seconds": 3300, "fact_key": ""}
+{"type": "message", "index": 56, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 共有まで", "offset_seconds": 3360, "fact_key": ""}
+{"type": "message", "index": 57, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 3420, "fact_key": ""}
+{"type": "message", "index": 58, "speaker": "U02", "language": "en", "text": "Login comes before everything else", "offset_seconds": 3480, "fact_key": ""}
+{"type": "message", "index": 59, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 3540, "fact_key": ""}
+{"type": "message", "index": 60, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 3600, "fact_key": ""}
+{"type": "message", "index": 61, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 3660, "fact_key": ""}
+{"type": "message", "index": 62, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 3720, "fact_key": ""}
+{"type": "message", "index": 63, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 3780, "fact_key": ""}
+{"type": "message", "index": 64, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 3840, "fact_key": ""}
+{"type": "message", "index": 65, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 3900, "fact_key": ""}
+{"type": "message", "index": 66, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 3960, "fact_key": ""}
+{"type": "message", "index": 67, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 4020, "fact_key": ""}
+{"type": "message", "index": 68, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 4080, "fact_key": ""}
+{"type": "message", "index": 69, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 4140, "fact_key": ""}
+{"type": "message", "index": 70, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 4200, "fact_key": ""}
+{"type": "message", "index": 71, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 4260, "fact_key": ""}
+{"type": "message", "index": 72, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nha", "offset_seconds": 4320, "fact_key": ""}
+{"type": "message", "index": 73, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 4380, "fact_key": ""}
+{"type": "message", "index": 74, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています", "offset_seconds": 4440, "fact_key": ""}
+{"type": "message", "index": 75, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nha", "offset_seconds": 4500, "fact_key": ""}
+{"type": "message", "index": 76, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 4560, "fact_key": ""}
+{"type": "message", "index": 77, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 4620, "fact_key": ""}
+{"type": "message", "index": 78, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 4680, "fact_key": ""}
+{"type": "message", "index": 79, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 4740, "fact_key": ""}
+{"type": "message", "index": 80, "speaker": "U03", "language": "vi", "text": "Chốt lại deadline milestone thanh toán là ngày 13 tháng 9, không phải 15.", "offset_seconds": 4800, "fact_key": "deadline-moved"}
+{"type": "message", "index": 81, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 4860, "fact_key": ""}
+{"type": "message", "index": 82, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 4920, "fact_key": ""}
+{"type": "message", "index": 83, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 4980, "fact_key": ""}
+{"type": "message", "index": 84, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency", "offset_seconds": 5040, "fact_key": ""}
+{"type": "message", "index": 85, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale will follow up", "offset_seconds": 5100, "fact_key": ""}
+{"type": "message", "index": 86, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 5160, "fact_key": ""}
+{"type": "message", "index": 87, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 5220, "fact_key": ""}
+{"type": "message", "index": 88, "speaker": "U02", "language": "en", "text": "Login comes before everything else let me know", "offset_seconds": 5280, "fact_key": ""}
+{"type": "message", "index": 89, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました ご確認ください", "offset_seconds": 5340, "fact_key": ""}
+{"type": "message", "index": 90, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 5400, "fact_key": ""}
+{"type": "message", "index": 91, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 5460, "fact_key": ""}
+{"type": "message", "index": 92, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています", "offset_seconds": 5520, "fact_key": ""}
+{"type": "message", "index": 93, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 5580, "fact_key": ""}
+{"type": "message", "index": 94, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 5640, "fact_key": ""}
+{"type": "message", "index": 95, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 5700, "fact_key": ""}
+{"type": "message", "index": 96, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 5760, "fact_key": ""}
+{"type": "message", "index": 97, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 5820, "fact_key": ""}
+{"type": "message", "index": 98, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 5880, "fact_key": ""}
+{"type": "message", "index": 99, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 5940, "fact_key": ""}
+{"type": "message", "index": 100, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 6000, "fact_key": ""}
+{"type": "message", "index": 101, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 6060, "fact_key": ""}
+{"type": "message", "index": 102, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 6120, "fact_key": ""}
+{"type": "message", "index": 103, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 6180, "fact_key": ""}
+{"type": "message", "index": 104, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 6240, "fact_key": ""}
+{"type": "message", "index": 105, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 6300, "fact_key": ""}
+{"type": "message", "index": 106, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 6360, "fact_key": ""}
+{"type": "message", "index": 107, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 6420, "fact_key": ""}
+{"type": "message", "index": 108, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 6480, "fact_key": ""}
+{"type": "message", "index": 109, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up", "offset_seconds": 6540, "fact_key": ""}
+{"type": "message", "index": 110, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています", "offset_seconds": 6600, "fact_key": ""}
+{"type": "message", "index": 111, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 6660, "fact_key": ""}
+{"type": "message", "index": 112, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase will follow up", "offset_seconds": 6720, "fact_key": ""}
+{"type": "message", "index": 113, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 共有まで", "offset_seconds": 6780, "fact_key": ""}
+{"type": "message", "index": 114, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 6840, "fact_key": ""}
+{"type": "message", "index": 115, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 6900, "fact_key": ""}
+{"type": "message", "index": 116, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 6960, "fact_key": ""}
+{"type": "message", "index": 117, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 7020, "fact_key": ""}
+{"type": "message", "index": 118, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase let me know", "offset_seconds": 7080, "fact_key": ""}
+{"type": "message", "index": 119, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました ご確認ください", "offset_seconds": 7140, "fact_key": ""}
+{"type": "message", "index": 120, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 7200, "fact_key": ""}
+{"type": "message", "index": 121, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 7260, "fact_key": ""}
+{"type": "message", "index": 122, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 7320, "fact_key": ""}
+{"type": "message", "index": 123, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 7380, "fact_key": ""}
+{"type": "message", "index": 124, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 7440, "fact_key": ""}
+{"type": "message", "index": 125, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 7500, "fact_key": ""}
+{"type": "message", "index": 126, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 7560, "fact_key": ""}
+{"type": "message", "index": 127, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 7620, "fact_key": ""}
+{"type": "message", "index": 128, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 7680, "fact_key": ""}
+{"type": "message", "index": 129, "speaker": "U01", "language": "en", "text": "We are going with ClickHouse for the reporting service, not Postgres.", "offset_seconds": 7740, "fact_key": "db-choice"}
+{"type": "message", "index": 130, "speaker": "U02", "language": "en", "text": "I need one more day on this piece let me know", "offset_seconds": 7800, "fact_key": ""}
+{"type": "message", "index": 131, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 共有まで", "offset_seconds": 7860, "fact_key": ""}
+{"type": "message", "index": 132, "speaker": "U01", "language": "en", "text": "I replied to yesterday's ticket already. I replied to yesterday's ticket already. Staging has been redeployed. That flaky upload test failed once more. Spacing now follows the token scale. The cache was not cleared after the deploy. Disk usage on node two is climbing. Added a note about the environment variables. New mockups for the list screen are up. Ticket volume is down week over week. That flaky upload test failed once more. The accent colour reads too pale on light. Ticket volume is down week over week. Spacing now follows the token scale. The API docs are missing error examples. The CI queue backed up again this morning. Staging has been redeployed. The CI queue backed up again this morning. I updated the setup section in the README. Staging has been redeployed. Export can wait for the next phase. Login comes before everything else. Build time is down to nine minutes now. I will send next sprint's plan later. I need one more day on this piece. Ticket volume is down week over week. Added a note about the environment variables. The API docs are missing error examples. The accent colour reads too pale on light. Disk usage on node two is climbing. New mockups for the list screen are up. Two new tickets about the login redirect. The client asked about response times again.", "offset_seconds": 7920, "fact_key": ""}
+{"type": "message", "index": 133, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light for visibility", "offset_seconds": 7980, "fact_key": ""}
+{"type": "message", "index": 134, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 8040, "fact_key": ""}
+{"type": "message", "index": 135, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 8100, "fact_key": ""}
+{"type": "message", "index": 136, "speaker": "U02", "language": "en", "text": "I need one more day on this piece for visibility", "offset_seconds": 8160, "fact_key": ""}
+{"type": "message", "index": 137, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 8220, "fact_key": ""}
+{"type": "message", "index": 138, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 8280, "fact_key": ""}
+{"type": "message", "index": 139, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now no rush", "offset_seconds": 8340, "fact_key": ""}
+{"type": "message", "index": 140, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 8400, "fact_key": ""}
+{"type": "message", "index": 141, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 8460, "fact_key": ""}
+{"type": "message", "index": 142, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 8520, "fact_key": ""}
+{"type": "message", "index": 143, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 8580, "fact_key": ""}
+{"type": "message", "index": 144, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 8640, "fact_key": ""}
+{"type": "message", "index": 145, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 8700, "fact_key": ""}
+{"type": "message", "index": 146, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています", "offset_seconds": 8760, "fact_key": ""}
+{"type": "message", "index": 147, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 8820, "fact_key": ""}
+{"type": "message", "index": 148, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 8880, "fact_key": ""}
+{"type": "message", "index": 149, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 8940, "fact_key": ""}
+{"type": "message", "index": 150, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 9000, "fact_key": ""}
+{"type": "message", "index": 151, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 9060, "fact_key": ""}
+{"type": "message", "index": 152, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 9120, "fact_key": ""}
+{"type": "message", "index": 153, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 9180, "fact_key": ""}
+{"type": "message", "index": 154, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later", "offset_seconds": 9240, "fact_key": ""}
+{"type": "message", "index": 155, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 9300, "fact_key": ""}
+{"type": "message", "index": 156, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 9360, "fact_key": ""}
+{"type": "message", "index": 157, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up will follow up", "offset_seconds": 9420, "fact_key": ""}
+{"type": "message", "index": 158, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 9480, "fact_key": ""}
+{"type": "message", "index": 159, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nhé", "offset_seconds": 9540, "fact_key": ""}
+{"type": "message", "index": 160, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 9600, "fact_key": ""}
+{"type": "message", "index": 161, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 共有まで", "offset_seconds": 9660, "fact_key": ""}
+{"type": "message", "index": 162, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 9720, "fact_key": ""}
+{"type": "message", "index": 163, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up will follow up", "offset_seconds": 9780, "fact_key": ""}
+{"type": "message", "index": 164, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 9840, "fact_key": ""}
+{"type": "message", "index": 165, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước để mình theo dõi tiếp", "offset_seconds": 9900, "fact_key": ""}
+{"type": "message", "index": 166, "speaker": "U02", "language": "en", "text": "I need one more day on this piece", "offset_seconds": 9960, "fact_key": ""}
+{"type": "message", "index": 167, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました ご確認ください", "offset_seconds": 10020, "fact_key": ""}
+{"type": "message", "index": 168, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 10080, "fact_key": ""}
+{"type": "message", "index": 169, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 10140, "fact_key": ""}
+{"type": "message", "index": 170, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです", "offset_seconds": 10200, "fact_key": ""}
+{"type": "message", "index": 171, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nha", "offset_seconds": 10260, "fact_key": ""}
+{"type": "message", "index": 172, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 10320, "fact_key": ""}
+{"type": "message", "index": 173, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 10380, "fact_key": ""}
+{"type": "message", "index": 174, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nhé", "offset_seconds": 10440, "fact_key": ""}
+{"type": "message", "index": 175, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now", "offset_seconds": 10500, "fact_key": ""}
+{"type": "message", "index": 176, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 10560, "fact_key": ""}
+{"type": "message", "index": 177, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 10620, "fact_key": ""}
+{"type": "message", "index": 178, "speaker": "U02", "language": "vi", "text": "Bản phát hành tháng 10 vẫn để Quang phụ trách như mọi khi nhé.", "offset_seconds": 10680, "fact_key": "release-owner"}
+{"type": "message", "index": 179, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 10740, "fact_key": ""}
+{"type": "message", "index": 180, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 10800, "fact_key": ""}
+{"type": "message", "index": 181, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale for visibility", "offset_seconds": 10860, "fact_key": ""}
+{"type": "message", "index": 182, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 10920, "fact_key": ""}
+{"type": "message", "index": 183, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 10980, "fact_key": ""}
+{"type": "message", "index": 184, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 11040, "fact_key": ""}
+{"type": "message", "index": 185, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 共有まで", "offset_seconds": 11100, "fact_key": ""}
+{"type": "message", "index": 186, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency để mình theo dõi tiếp", "offset_seconds": 11160, "fact_key": ""}
+{"type": "message", "index": 187, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 11220, "fact_key": ""}
+{"type": "message", "index": 188, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです", "offset_seconds": 11280, "fact_key": ""}
+{"type": "message", "index": 189, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại để mình theo dõi tiếp", "offset_seconds": 11340, "fact_key": ""}
+{"type": "message", "index": 190, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later for visibility", "offset_seconds": 11400, "fact_key": ""}
+{"type": "message", "index": 191, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 11460, "fact_key": ""}
+{"type": "message", "index": 192, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 11520, "fact_key": ""}
+{"type": "message", "index": 193, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 11580, "fact_key": ""}
+{"type": "message", "index": 194, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 11640, "fact_key": ""}
+{"type": "message", "index": 195, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 11700, "fact_key": ""}
+{"type": "message", "index": 196, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 11760, "fact_key": ""}
+{"type": "message", "index": 197, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 11820, "fact_key": ""}
+{"type": "message", "index": 198, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 11880, "fact_key": ""}
+{"type": "message", "index": 199, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 11940, "fact_key": ""}
+{"type": "message", "index": 200, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 12000, "fact_key": ""}
+{"type": "message", "index": 201, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 12060, "fact_key": ""}
+{"type": "message", "index": 202, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 12120, "fact_key": ""}
+{"type": "message", "index": 203, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 12180, "fact_key": ""}
+{"type": "message", "index": 204, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 12240, "fact_key": ""}
+{"type": "message", "index": 205, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 12300, "fact_key": ""}
+{"type": "message", "index": 206, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました よろしくお願いします", "offset_seconds": 12360, "fact_key": ""}
+{"type": "message", "index": 207, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 12420, "fact_key": ""}
+{"type": "message", "index": 208, "speaker": "U02", "language": "en", "text": "I need one more day on this piece let me know", "offset_seconds": 12480, "fact_key": ""}
+{"type": "message", "index": 209, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 12540, "fact_key": ""}
+{"type": "message", "index": 210, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 12600, "fact_key": ""}
+{"type": "message", "index": 211, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 12660, "fact_key": ""}
+{"type": "message", "index": 212, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 12720, "fact_key": ""}
+{"type": "message", "index": 213, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 12780, "fact_key": ""}
+{"type": "message", "index": 214, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 12840, "fact_key": ""}
+{"type": "message", "index": 215, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています ご確認ください", "offset_seconds": 12900, "fact_key": ""}
+{"type": "message", "index": 216, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nhé", "offset_seconds": 12960, "fact_key": ""}
+{"type": "message", "index": 217, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 13020, "fact_key": ""}
+{"type": "message", "index": 218, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 13080, "fact_key": ""}
+{"type": "message", "index": 219, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 13140, "fact_key": ""}
+{"type": "message", "index": 220, "speaker": "U02", "language": "en", "text": "Login comes before everything else for visibility", "offset_seconds": 13200, "fact_key": ""}
+{"type": "message", "index": 221, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 13260, "fact_key": ""}
+{"type": "message", "index": 222, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện để mình theo dõi tiếp", "offset_seconds": 13320, "fact_key": ""}
+{"type": "message", "index": 223, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 13380, "fact_key": ""}
+{"type": "message", "index": 224, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 13440, "fact_key": ""}
+{"type": "message", "index": 225, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 13500, "fact_key": ""}
+{"type": "message", "index": 226, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later for visibility", "offset_seconds": 13560, "fact_key": ""}
+{"type": "message", "index": 227, "speaker": "U03", "language": "en", "text": "The draft invoice for this quarter came to 42,000 USD.", "offset_seconds": 13620, "fact_key": "invoice-split"}
+{"type": "message", "index": 228, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 13680, "fact_key": ""}
+{"type": "message", "index": 229, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 13740, "fact_key": ""}
+{"type": "message", "index": 230, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 13800, "fact_key": ""}
+{"type": "message", "index": 231, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 13860, "fact_key": ""}
+{"type": "message", "index": 232, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 13920, "fact_key": ""}
+{"type": "message", "index": 233, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 13980, "fact_key": ""}
+{"type": "message", "index": 234, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 14040, "fact_key": ""}
+{"type": "message", "index": 235, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 14100, "fact_key": ""}
+{"type": "message", "index": 236, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 14160, "fact_key": ""}
+{"type": "message", "index": 237, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 14220, "fact_key": ""}
+{"type": "message", "index": 238, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 14280, "fact_key": ""}
+{"type": "message", "index": 239, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します よろしくお願いします", "offset_seconds": 14340, "fact_key": ""}
+{"type": "message", "index": 240, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 14400, "fact_key": ""}
+{"type": "message", "index": 241, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 14460, "fact_key": ""}
+{"type": "message", "index": 242, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 14520, "fact_key": ""}
+{"type": "message", "index": 243, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 14580, "fact_key": ""}
+{"type": "message", "index": 244, "speaker": "U02", "language": "en", "text": "Login comes before everything else let me know", "offset_seconds": 14640, "fact_key": ""}
+{"type": "message", "index": 245, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 14700, "fact_key": ""}
+{"type": "message", "index": 246, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 14760, "fact_key": ""}
+{"type": "message", "index": 247, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale will follow up", "offset_seconds": 14820, "fact_key": ""}
+{"type": "message", "index": 248, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 14880, "fact_key": ""}
+{"type": "message", "index": 249, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 14940, "fact_key": ""}
+{"type": "message", "index": 250, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later thanks", "offset_seconds": 15000, "fact_key": ""}
+{"type": "message", "index": 251, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 15060, "fact_key": ""}
+{"type": "message", "index": 252, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nha", "offset_seconds": 15120, "fact_key": ""}
+{"type": "message", "index": 253, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up", "offset_seconds": 15180, "fact_key": ""}
+{"type": "message", "index": 254, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 以上です", "offset_seconds": 15240, "fact_key": ""}
+{"type": "message", "index": 255, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao cảm ơn", "offset_seconds": 15300, "fact_key": ""}
+{"type": "message", "index": 256, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 15360, "fact_key": ""}
+{"type": "message", "index": 257, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 15420, "fact_key": ""}
+{"type": "message", "index": 258, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 15480, "fact_key": ""}
+{"type": "message", "index": 259, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 15540, "fact_key": ""}
+{"type": "message", "index": 260, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 15600, "fact_key": ""}
+{"type": "message", "index": 261, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nha", "offset_seconds": 15660, "fact_key": ""}
+{"type": "message", "index": 262, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 15720, "fact_key": ""}
+{"type": "message", "index": 263, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています ご確認ください", "offset_seconds": 15780, "fact_key": ""}
+{"type": "message", "index": 264, "speaker": "U01", "language": "ja", "text": "もう一日ください. APIドキュメントに例を追加します. もう一日ください. レプリカ数を増やしました. ビルド時間が短くなりました. ディスク使用量が増えています. 対応時間について質問がありました. ログインを優先しましょう. 手順書が古くなっています. APIドキュメントに例を追加します. 配色を少し暗くしました. ディスク使用量が増えています. 来週の予定は後で共有します. レイアウトの変更は最小限にしたいです. もう一日ください. レプリカ数を増やしました. ディスク使用量が増えています. 環境変数の説明を書きました. エクスポートは次のフェーズにします. 配色を少し暗くしました. ビルド時間が短くなりました. ディスク使用量が増えています. APIドキュメントに例を追加します. ログインを優先しましょう. READMEを更新しました. 配色を少し暗くしました. デザインのレビューをお願いします. ディスク使用量が増えています. レイアウトの変更は最小限にしたいです. レプリカ数を増やしました. もう一日ください. ビルド時間が短くなりました. 対応時間について質問がありました. 昨日のチケットには返信済みです. 依存関係を更新しました. 余白の調整をしました. ログインを優先しましょう. 手順書が古くなっています. キャッシュの削除は手動で行いました. レイアウトの変更は最小限にしたいです. サポートの件数は減っています. ビルド時間が短くなりました. レプリカ数を増やしました. ディスク使用量が増えています. サポートの件数は減っています. ビルド時間が短くなりました. 配色を少し暗くしました. 昨日のチケットには返信済みです. キャッシュの削除は手動で行いました. 来週の予定は後で共有します. ステージングを再デプロイしました. ログインを優先しましょう. ログインを優先しましょう. 来週の予定は後で共有します. 余白の調整をしました. テストが時々失敗する件、調査中です. テストが時々失敗する件、調査中です. ディスク使用量が増えています. 対応時間について質問がありました. 対応時間について質問がありました. 余白の調整をしました. CIのキャッシュを有効にしました. レプリカ数を増やしました. APIドキュメントに例を追加します. テストが時々失敗する件、調査中です. ディスク使用量が増えています. READMEを更新しました. 来週の予定は後で共有します. テストが時々失敗する件、調査中です. 環境変数の説明を書きました. 配色を少し暗くしました. サポートの件数は減っています. テストが時々失敗する件、調査中です. キャッシュの削除は手動で行いました. 依存関係を更新しました. 配色を少し暗くしました. 配色を少し暗くしました. CIのキャッシュを有効にしました. もう一日ください. テストが時々失敗する件、調査中です. 手順書が古くなっています. もう一日ください. READMEを更新しました. ログインを優先しましょう. 配色を少し暗くしました. 余白の調整をしました. APIドキュメントに例を追加します. 昨日のチケットには返信済みです. 配色を少し暗くしました. APIドキュメントに例を追加します.", "offset_seconds": 15840, "fact_key": ""}
+{"type": "message", "index": 265, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light no rush", "offset_seconds": 15900, "fact_key": ""}
+{"type": "message", "index": 266, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 15960, "fact_key": ""}
+{"type": "message", "index": 267, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 16020, "fact_key": ""}
+{"type": "message", "index": 268, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 16080, "fact_key": ""}
+{"type": "message", "index": 269, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 16140, "fact_key": ""}
+{"type": "message", "index": 270, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nha", "offset_seconds": 16200, "fact_key": ""}
+{"type": "message", "index": 271, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 16260, "fact_key": ""}
+{"type": "message", "index": 272, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 16320, "fact_key": ""}
+{"type": "message", "index": 273, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao cảm ơn", "offset_seconds": 16380, "fact_key": ""}
+{"type": "message", "index": 274, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 16440, "fact_key": ""}
+{"type": "message", "index": 275, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています ご確認ください", "offset_seconds": 16500, "fact_key": ""}
+{"type": "message", "index": 276, "speaker": "U01", "language": "ja", "text": "昨夜の障害はキャッシュの設定ミスが原因でした。", "offset_seconds": 16560, "fact_key": "incident-cause"}
+{"type": "message", "index": 277, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 16620, "fact_key": ""}
+{"type": "message", "index": 278, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 16680, "fact_key": ""}
+{"type": "message", "index": 279, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại mọi người xem giúp", "offset_seconds": 16740, "fact_key": ""}
+{"type": "message", "index": 280, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 16800, "fact_key": ""}
+{"type": "message", "index": 281, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 16860, "fact_key": ""}
+{"type": "message", "index": 282, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nhé", "offset_seconds": 16920, "fact_key": ""}
+{"type": "message", "index": 283, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 16980, "fact_key": ""}
+{"type": "message", "index": 284, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 17040, "fact_key": ""}
+{"type": "message", "index": 285, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nha", "offset_seconds": 17100, "fact_key": ""}
+{"type": "message", "index": 286, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 17160, "fact_key": ""}
+{"type": "message", "index": 287, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 17220, "fact_key": ""}
+{"type": "message", "index": 288, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 17280, "fact_key": ""}
+{"type": "message", "index": 289, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 17340, "fact_key": ""}
+{"type": "message", "index": 290, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 17400, "fact_key": ""}
+{"type": "message", "index": 291, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 17460, "fact_key": ""}
+{"type": "message", "index": 292, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later thanks", "offset_seconds": 17520, "fact_key": ""}
+{"type": "message", "index": 293, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 17580, "fact_key": ""}
+{"type": "message", "index": 294, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 17640, "fact_key": ""}
+{"type": "message", "index": 295, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now no rush", "offset_seconds": 17700, "fact_key": ""}
+{"type": "message", "index": 296, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 17760, "fact_key": ""}
+{"type": "message", "index": 297, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 17820, "fact_key": ""}
+{"type": "message", "index": 298, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 17880, "fact_key": ""}
+{"type": "message", "index": 299, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 17940, "fact_key": ""}
+{"type": "message", "index": 300, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 18000, "fact_key": ""}
+{"type": "message", "index": 301, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 18060, "fact_key": ""}
+{"type": "message", "index": 302, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 18120, "fact_key": ""}
+{"type": "message", "index": 303, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 18180, "fact_key": ""}
+{"type": "message", "index": 304, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 18240, "fact_key": ""}
+{"type": "message", "index": 305, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 18300, "fact_key": ""}
+{"type": "message", "index": 306, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 18360, "fact_key": ""}
+{"type": "message", "index": 307, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 18420, "fact_key": ""}
+{"type": "message", "index": 308, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 18480, "fact_key": ""}
+{"type": "message", "index": 309, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 18540, "fact_key": ""}
+{"type": "message", "index": 310, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 18600, "fact_key": ""}
+{"type": "message", "index": 311, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 18660, "fact_key": ""}
+{"type": "message", "index": 312, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 18720, "fact_key": ""}
+{"type": "message", "index": 313, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 18780, "fact_key": ""}
+{"type": "message", "index": 314, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 以上です", "offset_seconds": 18840, "fact_key": ""}
+{"type": "message", "index": 315, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 18900, "fact_key": ""}
+{"type": "message", "index": 316, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 18960, "fact_key": ""}
+{"type": "message", "index": 317, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 19020, "fact_key": ""}
+{"type": "message", "index": 318, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện để mình theo dõi tiếp", "offset_seconds": 19080, "fact_key": ""}
+{"type": "message", "index": 319, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up will follow up", "offset_seconds": 19140, "fact_key": ""}
+{"type": "message", "index": 320, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです", "offset_seconds": 19200, "fact_key": ""}
+{"type": "message", "index": 321, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 19260, "fact_key": ""}
+{"type": "message", "index": 322, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later let me know", "offset_seconds": 19320, "fact_key": ""}
+{"type": "message", "index": 323, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 共有まで", "offset_seconds": 19380, "fact_key": ""}
+{"type": "message", "index": 324, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 19440, "fact_key": ""}
+{"type": "message", "index": 325, "speaker": "U02", "language": "vi", "text": "Mình tổng hợp lại kế hoạch migration để mọi người cùng nắm. Giai đoạn một là dựng schema mới song song với schema cũ, không đụng gì tới dữ liệu đang chạy, dự kiến mất khoảng ba ngày và không cần downtime. Giai đoạn hai là bật cơ chế ghi kép, tức là mọi thao tác ghi sẽ vào cả hai schema cùng lúc, để dữ liệu mới luôn có mặt ở cả hai nơi trong khi vẫn đọc từ schema cũ. Giai đoạn này cần theo dõi kỹ độ trễ ghi vì chúng ta nhân đôi số lần ghi. Trước khi tắt hệ thống cũ thì bắt buộc phải chạy đối soát toàn bộ dữ liệu giữa hai schema và báo cáo tỉ lệ khớp đạt một trăm phần trăm, không có ngoại lệ nào được bỏ qua. Giai đoạn ba là chuyển đường đọc sang schema mới theo từng phần trăm lưu lượng, bắt đầu từ năm phần trăm rồi tăng dần nếu không có lỗi. Giai đoạn bốn là gỡ cơ chế ghi kép và dọn schema cũ, việc này để sau ít nhất hai tuần kể từ khi toàn bộ lưu lượng đọc đã chuyển sang, phòng khi phải quay lại. Về nhân sự thì mỗi giai đoạn cần một người trực chính và một người trực phụ, danh sách cụ thể mình sẽ gửi trong file riêng. Về công cụ, mình sẽ dựng một bảng theo dõi hiển thị số dòng ở mỗi schema theo từng bảng, cập nhật mỗi năm phút, để ai cũng nhìn được tiến độ mà không phải hỏi. Rủi ro lớn nhất mình thấy là khoảng thời gian ghi kép kéo dài hơn dự kiến, vì mỗi ngày trôi qua là một ngày chúng ta trả gấp đôi chi phí ghi mà chưa thu được lợi ích gì. Nếu sau mười ngày mà tỉ lệ khớp vẫn chưa đạt, mình đề nghị dừng lại và họp lại từ đầu thay vì cố đẩy tiếp theo lịch cũ. Cuối cùng, mọi thay đổi schema trong giai đoạn này đều phải đi qua Alembic như bình thường, không ai được sửa tay trên cơ sở dữ liệu dù chỉ một cột, vì đó là cách nhanh nhất để hai môi trường lệch nhau mà không ai biết.", "offset_seconds": 19500, "fact_key": "migration-plan"}
+{"type": "message", "index": 326, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 19560, "fact_key": ""}
+{"type": "message", "index": 327, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao cảm ơn", "offset_seconds": 19620, "fact_key": ""}
+{"type": "message", "index": 328, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 19680, "fact_key": ""}
+{"type": "message", "index": 329, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します よろしくお願いします", "offset_seconds": 19740, "fact_key": ""}
+{"type": "message", "index": 330, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 19800, "fact_key": ""}
+{"type": "message", "index": 331, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 19860, "fact_key": ""}
+{"type": "message", "index": 332, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 19920, "fact_key": ""}
+{"type": "message", "index": 333, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nha", "offset_seconds": 19980, "fact_key": ""}
+{"type": "message", "index": 334, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later for visibility", "offset_seconds": 20040, "fact_key": ""}
+{"type": "message", "index": 335, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 20100, "fact_key": ""}
+{"type": "message", "index": 336, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 20160, "fact_key": ""}
+{"type": "message", "index": 337, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 20220, "fact_key": ""}
+{"type": "message", "index": 338, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています", "offset_seconds": 20280, "fact_key": ""}
+{"type": "message", "index": 339, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 20340, "fact_key": ""}
+{"type": "message", "index": 340, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 20400, "fact_key": ""}
+{"type": "message", "index": 341, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 20460, "fact_key": ""}
+{"type": "message", "index": 342, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nha", "offset_seconds": 20520, "fact_key": ""}
+{"type": "message", "index": 343, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 20580, "fact_key": ""}
+{"type": "message", "index": 344, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 20640, "fact_key": ""}
+{"type": "message", "index": 345, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước để mình theo dõi tiếp", "offset_seconds": 20700, "fact_key": ""}
+{"type": "message", "index": 346, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 20760, "fact_key": ""}
+{"type": "message", "index": 347, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 共有まで", "offset_seconds": 20820, "fact_key": ""}
+{"type": "message", "index": 348, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 20880, "fact_key": ""}
+{"type": "message", "index": 349, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 20940, "fact_key": ""}
+{"type": "message", "index": 350, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 21000, "fact_key": ""}
+{"type": "message", "index": 351, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 21060, "fact_key": ""}
+{"type": "message", "index": 352, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later thanks", "offset_seconds": 21120, "fact_key": ""}
+{"type": "message", "index": 353, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 共有まで", "offset_seconds": 21180, "fact_key": ""}
+{"type": "message", "index": 354, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nha", "offset_seconds": 21240, "fact_key": ""}
+{"type": "message", "index": 355, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 21300, "fact_key": ""}
+{"type": "message", "index": 356, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました よろしくお願いします", "offset_seconds": 21360, "fact_key": ""}
+{"type": "message", "index": 357, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 21420, "fact_key": ""}
+{"type": "message", "index": 358, "speaker": "U02", "language": "vi", "text": "Quang báo là tuần đó anh ấy nghỉ phép cả tuần, không trực được.", "offset_seconds": 21480, "fact_key": "release-owner"}
+{"type": "message", "index": 359, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 21540, "fact_key": ""}
+{"type": "message", "index": 360, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 21600, "fact_key": ""}
+{"type": "message", "index": 361, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light let me know", "offset_seconds": 21660, "fact_key": ""}
+{"type": "message", "index": 362, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 21720, "fact_key": ""}
+{"type": "message", "index": 363, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 21780, "fact_key": ""}
+{"type": "message", "index": 364, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase let me know", "offset_seconds": 21840, "fact_key": ""}
+{"type": "message", "index": 365, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 21900, "fact_key": ""}
+{"type": "message", "index": 366, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nhé", "offset_seconds": 21960, "fact_key": ""}
+{"type": "message", "index": 367, "speaker": "U02", "language": "en", "text": "Legal said the training days were quoted separately and must come off this invoice.", "offset_seconds": 22020, "fact_key": "invoice-split"}
+{"type": "message", "index": 368, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 22080, "fact_key": ""}
+{"type": "message", "index": 369, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 22140, "fact_key": ""}
+{"type": "message", "index": 370, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 22200, "fact_key": ""}
+{"type": "message", "index": 371, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 22260, "fact_key": ""}
+{"type": "message", "index": 372, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 22320, "fact_key": ""}
+{"type": "message", "index": 373, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 22380, "fact_key": ""}
+{"type": "message", "index": 374, "speaker": "U03", "language": "en", "text": "Writing up the onboarding steps so we stop repeating them in DMs. Day one is accounts and access: SSO, the repository, the staging cluster, and the on-call rota, and please do all four on the same day because the access review runs weekly and a missed one costs you another week of waiting. Day two is the local environment, which is one command now, though the database container still needs Docker running inside WSL rather than Docker Desktop on this project. Day three onward is a starter ticket, something small and real rather than a toy. Before your first deploy you must pair with someone who has deployed before and walk the rollback procedure end to end, not read it, actually run it against staging and watch it come back. We added that rule after the March incident where a rollback was attempted for the first time under pressure and took forty minutes. After the first deploy you are on the rota like everyone else, and the expectation is that you ask early rather than quietly getting stuck. On the rota itself: the primary carries the pager and the secondary is there so the primary can sleep, which means the secondary is not optional and not decorative. Handover happens at ten in the morning with both people present, not over chat, because the things that matter are the ones nobody thought to write down. If you are paged for something you do not understand, escalate within fifteen minutes; we would far rather be woken for nothing than read about it in the morning. Documentation lives in the repository next to the code it describes, never in a wiki, for the simple reason that a wiki page has no reviewer and drifts within a month. Expenses, laptops and anything else administrative go through the operations channel rather than to individuals, so there is a record when someone is away.", "offset_seconds": 22440, "fact_key": "onboarding-doc"}
+{"type": "message", "index": 375, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 22500, "fact_key": ""}
+{"type": "message", "index": 376, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 22560, "fact_key": ""}
+{"type": "message", "index": 377, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 22620, "fact_key": ""}
+{"type": "message", "index": 378, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 22680, "fact_key": ""}
+{"type": "message", "index": 379, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 22740, "fact_key": ""}
+{"type": "message", "index": 380, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています", "offset_seconds": 22800, "fact_key": ""}
+{"type": "message", "index": 381, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 22860, "fact_key": ""}
+{"type": "message", "index": 382, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase will follow up", "offset_seconds": 22920, "fact_key": ""}
+{"type": "message", "index": 383, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 22980, "fact_key": ""}
+{"type": "message", "index": 384, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 23040, "fact_key": ""}
+{"type": "message", "index": 385, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 23100, "fact_key": ""}
+{"type": "message", "index": 386, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 23160, "fact_key": ""}
+{"type": "message", "index": 387, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 23220, "fact_key": ""}
+{"type": "message", "index": 388, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase let me know", "offset_seconds": 23280, "fact_key": ""}
+{"type": "message", "index": 389, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 23340, "fact_key": ""}
+{"type": "message", "index": 390, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nha", "offset_seconds": 23400, "fact_key": ""}
+{"type": "message", "index": 391, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 23460, "fact_key": ""}
+{"type": "message", "index": 392, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 23520, "fact_key": ""}
+{"type": "message", "index": 393, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 23580, "fact_key": ""}
+{"type": "message", "index": 394, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 23640, "fact_key": ""}
+{"type": "message", "index": 395, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 23700, "fact_key": ""}
+{"type": "message", "index": 396, "speaker": "U01", "language": "ja", "text": "TTLが0になっていて、全リクエストがデータベースに直接届いていました。", "offset_seconds": 23760, "fact_key": "incident-cause"}
+{"type": "message", "index": 397, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light let me know", "offset_seconds": 23820, "fact_key": ""}
+{"type": "message", "index": 398, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 23880, "fact_key": ""}
+{"type": "message", "index": 399, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 23940, "fact_key": ""}
+{"type": "message", "index": 400, "speaker": "U02", "language": "vi", "text": "Đã tăng số replica lên ba. Đã pin lại version của action checkout. Có hai ticket mới về đăng nhập. Lịch sprint tuần sau mình sẽ gửi sau. Pipeline CI sáng nay chạy chậm hơn thường lệ. Mình nghĩ nên giữ nguyên bố cục hiện tại. Đã tăng số replica lên ba. Ưu tiên phần đăng nhập trước đã. Mình đã cập nhật phần cài đặt trong README. Cache chưa được xoá sau lần deploy trước. Khách hàng hỏi lại về thời gian phản hồi. Test flaky ở phần upload lại xuất hiện. Có hai ticket mới về đăng nhập. Khách hàng hỏi lại về thời gian phản hồi. Mình đã trả lời ticket hôm qua rồi. Mình đã trả lời ticket hôm qua rồi. Lịch sprint tuần sau mình sẽ gửi sau. Đã pin lại version của action checkout. Đã cập nhật spacing theo hệ thống token. Test flaky ở phần upload lại xuất hiện. Mình đã trả lời ticket hôm qua rồi. Bên hỗ trợ báo lượng ticket giảm. Đã pin lại version của action checkout. Đã thêm ghi chú về biến môi trường. Bản thiết kế mới cho màn hình danh sách đã lên Figma. Đã thêm ghi chú về biến môi trường. Mình đã trả lời ticket hôm qua rồi. Đã pin lại version của action checkout. Bên hỗ trợ báo lượng ticket giảm. Test flaky ở phần upload lại xuất hiện. Màu nhấn hơi chìm trên nền sáng. Khách hàng hỏi lại về thời gian phản hồi. Cache chưa được xoá sau lần deploy trước. Mình đã trả lời ticket hôm qua rồi.", "offset_seconds": 24000, "fact_key": ""}
+{"type": "message", "index": 401, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 24060, "fact_key": ""}
+{"type": "message", "index": 402, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 24120, "fact_key": ""}
+{"type": "message", "index": 403, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale thanks", "offset_seconds": 24180, "fact_key": ""}
+{"type": "message", "index": 404, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 24240, "fact_key": ""}
+{"type": "message", "index": 405, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nhé", "offset_seconds": 24300, "fact_key": ""}
+{"type": "message", "index": 406, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later no rush", "offset_seconds": 24360, "fact_key": ""}
+{"type": "message", "index": 407, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 24420, "fact_key": ""}
+{"type": "message", "index": 408, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 24480, "fact_key": ""}
+{"type": "message", "index": 409, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale for visibility", "offset_seconds": 24540, "fact_key": ""}
+{"type": "message", "index": 410, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 24600, "fact_key": ""}
+{"type": "message", "index": 411, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 24660, "fact_key": ""}
+{"type": "message", "index": 412, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later", "offset_seconds": 24720, "fact_key": ""}
+{"type": "message", "index": 413, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 24780, "fact_key": ""}
+{"type": "message", "index": 414, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 24840, "fact_key": ""}
+{"type": "message", "index": 415, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 24900, "fact_key": ""}
+{"type": "message", "index": 416, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています よろしくお願いします", "offset_seconds": 24960, "fact_key": ""}
+{"type": "message", "index": 417, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước", "offset_seconds": 25020, "fact_key": ""}
+{"type": "message", "index": 418, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 25080, "fact_key": ""}
+{"type": "message", "index": 419, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 25140, "fact_key": ""}
+{"type": "message", "index": 420, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 25200, "fact_key": ""}
+{"type": "message", "index": 421, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 25260, "fact_key": ""}
+{"type": "message", "index": 422, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 25320, "fact_key": ""}
+{"type": "message", "index": 423, "speaker": "U01", "language": "vi", "text": "Chốt: ngôn ngữ mặc định của giao diện để tiếng Việt, người dùng đổi được trong cài đặt.", "offset_seconds": 25380, "fact_key": "last-week-decision"}
+{"type": "message", "index": 424, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase let me know", "offset_seconds": 25440, "fact_key": ""}
+{"type": "message", "index": 425, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 25500, "fact_key": ""}
+{"type": "message", "index": 426, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 25560, "fact_key": ""}
+{"type": "message", "index": 427, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 25620, "fact_key": ""}
+{"type": "message", "index": 428, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 25680, "fact_key": ""}
+{"type": "message", "index": 429, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 25740, "fact_key": ""}
+{"type": "message", "index": 430, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 25800, "fact_key": ""}
+{"type": "message", "index": 431, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 25860, "fact_key": ""}
+{"type": "message", "index": 432, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện để mình theo dõi tiếp", "offset_seconds": 25920, "fact_key": ""}
+{"type": "message", "index": 433, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 25980, "fact_key": ""}
+{"type": "message", "index": 434, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました よろしくお願いします", "offset_seconds": 26040, "fact_key": ""}
+{"type": "message", "index": 435, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 26100, "fact_key": ""}
+{"type": "message", "index": 436, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 26160, "fact_key": ""}
+{"type": "message", "index": 437, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 26220, "fact_key": ""}
+{"type": "message", "index": 438, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện để mình theo dõi tiếp", "offset_seconds": 26280, "fact_key": ""}
+{"type": "message", "index": 439, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 26340, "fact_key": ""}
+{"type": "message", "index": 440, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています", "offset_seconds": 26400, "fact_key": ""}
+{"type": "message", "index": 441, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 26460, "fact_key": ""}
+{"type": "message", "index": 442, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 26520, "fact_key": ""}
+{"type": "message", "index": 443, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 26580, "fact_key": ""}
+{"type": "message", "index": 444, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 26640, "fact_key": ""}
+{"type": "message", "index": 445, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now", "offset_seconds": 26700, "fact_key": ""}
+{"type": "message", "index": 446, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 26760, "fact_key": ""}
+{"type": "message", "index": 447, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước", "offset_seconds": 26820, "fact_key": ""}
+{"type": "message", "index": 448, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 26880, "fact_key": ""}
+{"type": "message", "index": 449, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 26940, "fact_key": ""}
+{"type": "message", "index": 450, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện mọi người xem giúp", "offset_seconds": 27000, "fact_key": ""}
+{"type": "message", "index": 451, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 27060, "fact_key": ""}
+{"type": "message", "index": 452, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 27120, "fact_key": ""}
+{"type": "message", "index": 453, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 27180, "fact_key": ""}
+{"type": "message", "index": 454, "speaker": "U02", "language": "en", "text": "I need one more day on this piece let me know", "offset_seconds": 27240, "fact_key": ""}
+{"type": "message", "index": 455, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 27300, "fact_key": ""}
+{"type": "message", "index": 456, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ nhé", "offset_seconds": 27360, "fact_key": ""}
+{"type": "message", "index": 457, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up for visibility", "offset_seconds": 27420, "fact_key": ""}
+{"type": "message", "index": 458, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 27480, "fact_key": ""}
+{"type": "message", "index": 459, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 27540, "fact_key": ""}
+{"type": "message", "index": 460, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 27600, "fact_key": ""}
+{"type": "message", "index": 461, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 27660, "fact_key": ""}
+{"type": "message", "index": 462, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nhé", "offset_seconds": 27720, "fact_key": ""}
+{"type": "message", "index": 463, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now no rush", "offset_seconds": 27780, "fact_key": ""}
+{"type": "message", "index": 464, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 27840, "fact_key": ""}
+{"type": "message", "index": 465, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 27900, "fact_key": ""}
+{"type": "message", "index": 466, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 27960, "fact_key": ""}
+{"type": "message", "index": 467, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 28020, "fact_key": ""}
+{"type": "message", "index": 468, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout", "offset_seconds": 28080, "fact_key": ""}
+{"type": "message", "index": 469, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 28140, "fact_key": ""}
+{"type": "message", "index": 470, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 28200, "fact_key": ""}
+{"type": "message", "index": 471, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 28260, "fact_key": ""}
+{"type": "message", "index": 472, "speaker": "U02", "language": "en", "text": "QA signed off on the payment flow today, with the caveat that refunds are still untested.", "offset_seconds": 28320, "fact_key": "qa-signoff"}
+{"type": "message", "index": 473, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 28380, "fact_key": ""}
+{"type": "message", "index": 474, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nhé", "offset_seconds": 28440, "fact_key": ""}
+{"type": "message", "index": 475, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 28500, "fact_key": ""}
+{"type": "message", "index": 476, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 28560, "fact_key": ""}
+{"type": "message", "index": 477, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 28620, "fact_key": ""}
+{"type": "message", "index": 478, "speaker": "U02", "language": "en", "text": "Login comes before everything else", "offset_seconds": 28680, "fact_key": ""}
+{"type": "message", "index": 479, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 28740, "fact_key": ""}
+{"type": "message", "index": 480, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency để mình theo dõi tiếp", "offset_seconds": 28800, "fact_key": ""}
+{"type": "message", "index": 481, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 28860, "fact_key": ""}
+{"type": "message", "index": 482, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 28920, "fact_key": ""}
+{"type": "message", "index": 483, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao", "offset_seconds": 28980, "fact_key": ""}
+{"type": "message", "index": 484, "speaker": "U02", "language": "en", "text": "I need one more day on this piece for visibility", "offset_seconds": 29040, "fact_key": ""}
+{"type": "message", "index": 485, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 29100, "fact_key": ""}
+{"type": "message", "index": 486, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 29160, "fact_key": ""}
+{"type": "message", "index": 487, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 29220, "fact_key": ""}
+{"type": "message", "index": 488, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです", "offset_seconds": 29280, "fact_key": ""}
+{"type": "message", "index": 489, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 29340, "fact_key": ""}
+{"type": "message", "index": 490, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later let me know", "offset_seconds": 29400, "fact_key": ""}
+{"type": "message", "index": 491, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 29460, "fact_key": ""}
+{"type": "message", "index": 492, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 29520, "fact_key": ""}
+{"type": "message", "index": 493, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 29580, "fact_key": ""}
+{"type": "message", "index": 494, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです よろしくお願いします", "offset_seconds": 29640, "fact_key": ""}
+{"type": "message", "index": 495, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 29700, "fact_key": ""}
+{"type": "message", "index": 496, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 29760, "fact_key": ""}
+{"type": "message", "index": 497, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 29820, "fact_key": ""}
+{"type": "message", "index": 498, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 29880, "fact_key": ""}
+{"type": "message", "index": 499, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 29940, "fact_key": ""}
+{"type": "message", "index": 500, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 30000, "fact_key": ""}
+{"type": "message", "index": 501, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nha", "offset_seconds": 30060, "fact_key": ""}
+{"type": "message", "index": 502, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 30120, "fact_key": ""}
+{"type": "message", "index": 503, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 30180, "fact_key": ""}
+{"type": "message", "index": 504, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 30240, "fact_key": ""}
+{"type": "message", "index": 505, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 30300, "fact_key": ""}
+{"type": "message", "index": 506, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 30360, "fact_key": ""}
+{"type": "message", "index": 507, "speaker": "U01", "language": "en", "text": "Training was 7,000, so the invoice this quarter is 35,000 USD.", "offset_seconds": 30420, "fact_key": "invoice-split"}
+{"type": "message", "index": 508, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later let me know", "offset_seconds": 30480, "fact_key": ""}
+{"type": "message", "index": 509, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 30540, "fact_key": ""}
+{"type": "message", "index": 510, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 30600, "fact_key": ""}
+{"type": "message", "index": 511, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 30660, "fact_key": ""}
+{"type": "message", "index": 512, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 30720, "fact_key": ""}
+{"type": "message", "index": 513, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 30780, "fact_key": ""}
+{"type": "message", "index": 514, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 30840, "fact_key": ""}
+{"type": "message", "index": 515, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 30900, "fact_key": ""}
+{"type": "message", "index": 516, "speaker": "U01", "language": "ja", "text": "再発防止として、TTLの値をデプロイ前に検証するチェックを追加します。", "offset_seconds": 30960, "fact_key": "incident-cause"}
+{"type": "message", "index": 517, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light", "offset_seconds": 31020, "fact_key": ""}
+{"type": "message", "index": 518, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 31080, "fact_key": ""}
+{"type": "message", "index": 519, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 31140, "fact_key": ""}
+{"type": "message", "index": 520, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase for visibility", "offset_seconds": 31200, "fact_key": ""}
+{"type": "message", "index": 521, "speaker": "U03", "language": "vi", "text": "Mình sẽ gửi bản nháp báo cáo hiệu năng trước 5h chiều thứ Sáu.", "offset_seconds": 31260, "fact_key": "standup-commitment"}
+{"type": "message", "index": 522, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ mọi người xem giúp", "offset_seconds": 31320, "fact_key": ""}
+{"type": "message", "index": 523, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up for visibility", "offset_seconds": 31380, "fact_key": ""}
+{"type": "message", "index": 524, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 31440, "fact_key": ""}
+{"type": "message", "index": 525, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 31500, "fact_key": ""}
+{"type": "message", "index": 526, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase will follow up", "offset_seconds": 31560, "fact_key": ""}
+{"type": "message", "index": 527, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 31620, "fact_key": ""}
+{"type": "message", "index": 528, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 31680, "fact_key": ""}
+{"type": "message", "index": 529, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 31740, "fact_key": ""}
+{"type": "message", "index": 530, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 31800, "fact_key": ""}
+{"type": "message", "index": 531, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước mọi người xem giúp", "offset_seconds": 31860, "fact_key": ""}
+{"type": "message", "index": 532, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 31920, "fact_key": ""}
+{"type": "message", "index": 533, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 31980, "fact_key": ""}
+{"type": "message", "index": 534, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency để mình theo dõi tiếp", "offset_seconds": 32040, "fact_key": ""}
+{"type": "message", "index": 535, "speaker": "U02", "language": "en", "text": "That flaky upload test failed once more. I need one more day on this piece. Staging has been redeployed. That flaky upload test failed once more. Spacing now follows the token scale. Login comes before everything else. I will send next sprint's plan later. I bumped the replica count to three. The API docs are missing error examples. That flaky upload test failed once more. Disk usage on node two is climbing. Build time is down to nine minutes now. That flaky upload test failed once more. The accent colour reads too pale on light. Staging has been redeployed. Login comes before everything else. That flaky upload test failed once more. Export can wait for the next phase. I bumped the replica count to three. Ticket volume is down week over week. The accent colour reads too pale on light. Export can wait for the next phase. The API docs are missing error examples. Login comes before everything else. Staging has been redeployed. I will send next sprint's plan later. I split the test job into two shards. I need one more day on this piece. The local setup guide is out of date. Two new tickets about the login redirect. Disk usage on node two is climbing. The accent colour reads too pale on light. That flaky upload test failed once more. I bumped the replica count to three.", "offset_seconds": 32100, "fact_key": ""}
+{"type": "message", "index": 536, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 32160, "fact_key": ""}
+{"type": "message", "index": 537, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 32220, "fact_key": ""}
+{"type": "message", "index": 538, "speaker": "U02", "language": "vi", "text": "Vậy đổi sang Hà phụ trách bản phát hành tháng 10, Quang bàn giao trước khi nghỉ.", "offset_seconds": 32280, "fact_key": "release-owner"}
+{"type": "message", "index": 539, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 32340, "fact_key": ""}
+{"type": "message", "index": 540, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 32400, "fact_key": ""}
+{"type": "message", "index": 541, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 32460, "fact_key": ""}
+{"type": "message", "index": 542, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 共有まで", "offset_seconds": 32520, "fact_key": ""}
+{"type": "message", "index": 543, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 32580, "fact_key": ""}
+{"type": "message", "index": 544, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 32640, "fact_key": ""}
+{"type": "message", "index": 545, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 32700, "fact_key": ""}
+{"type": "message", "index": 546, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 32760, "fact_key": ""}
+{"type": "message", "index": 547, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 32820, "fact_key": ""}
+{"type": "message", "index": 548, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 以上です", "offset_seconds": 32880, "fact_key": ""}
+{"type": "message", "index": 549, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 32940, "fact_key": ""}
+{"type": "message", "index": 550, "speaker": "U02", "language": "en", "text": "Login comes before everything else thanks", "offset_seconds": 33000, "fact_key": ""}
+{"type": "message", "index": 551, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 33060, "fact_key": ""}
+{"type": "message", "index": 552, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nhé", "offset_seconds": 33120, "fact_key": ""}
+{"type": "message", "index": 553, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 33180, "fact_key": ""}
+{"type": "message", "index": 554, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています よろしくお願いします", "offset_seconds": 33240, "fact_key": ""}
+{"type": "message", "index": 555, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 33300, "fact_key": ""}
+{"type": "message", "index": 556, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 33360, "fact_key": ""}
+{"type": "message", "index": 557, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 33420, "fact_key": ""}
+{"type": "message", "index": 558, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 33480, "fact_key": ""}
+{"type": "message", "index": 559, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale for visibility", "offset_seconds": 33540, "fact_key": ""}
+{"type": "message", "index": 560, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 33600, "fact_key": ""}
+{"type": "message", "index": 561, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 33660, "fact_key": ""}
+{"type": "message", "index": 562, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 33720, "fact_key": ""}
+{"type": "message", "index": 563, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 33780, "fact_key": ""}
+{"type": "message", "index": 564, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 33840, "fact_key": ""}
+{"type": "message", "index": 565, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now no rush", "offset_seconds": 33900, "fact_key": ""}
+{"type": "message", "index": 566, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 33960, "fact_key": ""}
+{"type": "message", "index": 567, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 34020, "fact_key": ""}
+{"type": "message", "index": 568, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 34080, "fact_key": ""}
+{"type": "message", "index": 569, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します よろしくお願いします", "offset_seconds": 34140, "fact_key": ""}
+{"type": "message", "index": 570, "speaker": "U01", "language": "vi", "text": "Buổi review thiết kế chốt 10h sáng thứ Tư tuần sau, phòng họp lớn.", "offset_seconds": 34200, "fact_key": "design-review-meeting"}
+{"type": "message", "index": 571, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 34260, "fact_key": ""}
+{"type": "message", "index": 572, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 34320, "fact_key": ""}
+{"type": "message", "index": 573, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước để mình theo dõi tiếp", "offset_seconds": 34380, "fact_key": ""}
+{"type": "message", "index": 574, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 34440, "fact_key": ""}
+{"type": "message", "index": 575, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します よろしくお願いします", "offset_seconds": 34500, "fact_key": ""}
+{"type": "message", "index": 576, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 34560, "fact_key": ""}
+{"type": "message", "index": 577, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 34620, "fact_key": ""}
+{"type": "message", "index": 578, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています ご確認ください", "offset_seconds": 34680, "fact_key": ""}
+{"type": "message", "index": 579, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 34740, "fact_key": ""}
+{"type": "message", "index": 580, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later", "offset_seconds": 34800, "fact_key": ""}
+{"type": "message", "index": 581, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 34860, "fact_key": ""}
+{"type": "message", "index": 582, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nhé", "offset_seconds": 34920, "fact_key": ""}
+{"type": "message", "index": 583, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 34980, "fact_key": ""}
+{"type": "message", "index": 584, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 35040, "fact_key": ""}
+{"type": "message", "index": 585, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại để mình theo dõi tiếp", "offset_seconds": 35100, "fact_key": ""}
+{"type": "message", "index": 586, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 35160, "fact_key": ""}
+{"type": "message", "index": 587, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 35220, "fact_key": ""}
+{"type": "message", "index": 588, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 35280, "fact_key": ""}
+{"type": "message", "index": 589, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up", "offset_seconds": 35340, "fact_key": ""}
+{"type": "message", "index": 590, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 35400, "fact_key": ""}
+{"type": "message", "index": 591, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nhé", "offset_seconds": 35460, "fact_key": ""}
+{"type": "message", "index": 592, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 35520, "fact_key": ""}
+{"type": "message", "index": 593, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 35580, "fact_key": ""}
+{"type": "message", "index": 594, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 35640, "fact_key": ""}
+{"type": "message", "index": 595, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up for visibility", "offset_seconds": 35700, "fact_key": ""}
+{"type": "message", "index": 596, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 35760, "fact_key": ""}
+{"type": "message", "index": 597, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nhé", "offset_seconds": 35820, "fact_key": ""}
+{"type": "message", "index": 598, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 35880, "fact_key": ""}
+{"type": "message", "index": 599, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 35940, "fact_key": ""}
+{"type": "message", "index": 600, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 36000, "fact_key": ""}
+{"type": "message", "index": 601, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 36060, "fact_key": ""}
+{"type": "message", "index": 602, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました よろしくお願いします", "offset_seconds": 36120, "fact_key": ""}
+{"type": "message", "index": 603, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 36180, "fact_key": ""}
+{"type": "message", "index": 604, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 36240, "fact_key": ""}
+{"type": "message", "index": 605, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました", "offset_seconds": 36300, "fact_key": ""}
+{"type": "message", "index": 606, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 36360, "fact_key": ""}
+{"type": "message", "index": 607, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 36420, "fact_key": ""}
+{"type": "message", "index": 608, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 36480, "fact_key": ""}
+{"type": "message", "index": 609, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 36540, "fact_key": ""}
+{"type": "message", "index": 610, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 36600, "fact_key": ""}
+{"type": "message", "index": 611, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 36660, "fact_key": ""}
+{"type": "message", "index": 612, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 36720, "fact_key": ""}
+{"type": "message", "index": 613, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light let me know", "offset_seconds": 36780, "fact_key": ""}
+{"type": "message", "index": 614, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています", "offset_seconds": 36840, "fact_key": ""}
+{"type": "message", "index": 615, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao", "offset_seconds": 36900, "fact_key": ""}
+{"type": "message", "index": 616, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 36960, "fact_key": ""}
+{"type": "message", "index": 617, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 共有まで", "offset_seconds": 37020, "fact_key": ""}
+{"type": "message", "index": 618, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 37080, "fact_key": ""}
+{"type": "message", "index": 619, "speaker": "U02", "language": "vi", "text": "Sáng thứ Ba có họp kế hoạch, chiều thứ Ba có họp với khách hàng.", "offset_seconds": 37140, "fact_key": "ambiguous-reschedule"}
+{"type": "message", "index": 620, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 37200, "fact_key": ""}
+{"type": "message", "index": 621, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 37260, "fact_key": ""}
+{"type": "message", "index": 622, "speaker": "U02", "language": "en", "text": "I need one more day on this piece let me know", "offset_seconds": 37320, "fact_key": ""}
+{"type": "message", "index": 623, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 37380, "fact_key": ""}
+{"type": "message", "index": 624, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 37440, "fact_key": ""}
+{"type": "message", "index": 625, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up", "offset_seconds": 37500, "fact_key": ""}
+{"type": "message", "index": 626, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 以上です", "offset_seconds": 37560, "fact_key": ""}
+{"type": "message", "index": 627, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 37620, "fact_key": ""}
+{"type": "message", "index": 628, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase will follow up", "offset_seconds": 37680, "fact_key": ""}
+{"type": "message", "index": 629, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 共有まで", "offset_seconds": 37740, "fact_key": ""}
+{"type": "message", "index": 630, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 37800, "fact_key": ""}
+{"type": "message", "index": 631, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light no rush", "offset_seconds": 37860, "fact_key": ""}
+{"type": "message", "index": 632, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 以上です", "offset_seconds": 37920, "fact_key": ""}
+{"type": "message", "index": 633, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao cảm ơn", "offset_seconds": 37980, "fact_key": ""}
+{"type": "message", "index": 634, "speaker": "U02", "language": "en", "text": "Login comes before everything else no rush", "offset_seconds": 38040, "fact_key": ""}
+{"type": "message", "index": 635, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました よろしくお願いします", "offset_seconds": 38100, "fact_key": ""}
+{"type": "message", "index": 636, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nha", "offset_seconds": 38160, "fact_key": ""}
+{"type": "message", "index": 637, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 38220, "fact_key": ""}
+{"type": "message", "index": 638, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 38280, "fact_key": ""}
+{"type": "message", "index": 639, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nha", "offset_seconds": 38340, "fact_key": ""}
+{"type": "message", "index": 640, "speaker": "U02", "language": "en", "text": "I need one more day on this piece", "offset_seconds": 38400, "fact_key": ""}
+{"type": "message", "index": 641, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 38460, "fact_key": ""}
+{"type": "message", "index": 642, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency để mình theo dõi tiếp", "offset_seconds": 38520, "fact_key": ""}
+{"type": "message", "index": 643, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale will follow up", "offset_seconds": 38580, "fact_key": ""}
+{"type": "message", "index": 644, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 38640, "fact_key": ""}
+{"type": "message", "index": 645, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nhé", "offset_seconds": 38700, "fact_key": ""}
+{"type": "message", "index": 646, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 38760, "fact_key": ""}
+{"type": "message", "index": 647, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 38820, "fact_key": ""}
+{"type": "message", "index": 648, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 38880, "fact_key": ""}
+{"type": "message", "index": 649, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up will follow up", "offset_seconds": 38940, "fact_key": ""}
+{"type": "message", "index": 650, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 39000, "fact_key": ""}
+{"type": "message", "index": 651, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nha", "offset_seconds": 39060, "fact_key": ""}
+{"type": "message", "index": 652, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 39120, "fact_key": ""}
+{"type": "message", "index": 653, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 39180, "fact_key": ""}
+{"type": "message", "index": 654, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 39240, "fact_key": ""}
+{"type": "message", "index": 655, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale let me know", "offset_seconds": 39300, "fact_key": ""}
+{"type": "message", "index": 656, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 共有まで", "offset_seconds": 39360, "fact_key": ""}
+{"type": "message", "index": 657, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước mọi người xem giúp", "offset_seconds": 39420, "fact_key": ""}
+{"type": "message", "index": 658, "speaker": "U02", "language": "en", "text": "I need one more day on this piece for visibility", "offset_seconds": 39480, "fact_key": ""}
+{"type": "message", "index": 659, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています よろしくお願いします", "offset_seconds": 39540, "fact_key": ""}
+{"type": "message", "index": 660, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 39600, "fact_key": ""}
+{"type": "message", "index": 661, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 39660, "fact_key": ""}
+{"type": "message", "index": 662, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています よろしくお願いします", "offset_seconds": 39720, "fact_key": ""}
+{"type": "message", "index": 663, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 39780, "fact_key": ""}
+{"type": "message", "index": 664, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later no rush", "offset_seconds": 39840, "fact_key": ""}
+{"type": "message", "index": 665, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します", "offset_seconds": 39900, "fact_key": ""}
+{"type": "message", "index": 666, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 39960, "fact_key": ""}
+{"type": "message", "index": 667, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now for visibility", "offset_seconds": 40020, "fact_key": ""}
+{"type": "message", "index": 668, "speaker": "U03", "language": "en", "text": "There is a weekly report and a quarterly report in flight right now.", "offset_seconds": 40080, "fact_key": "ambiguous-remind"}
+{"type": "message", "index": 669, "speaker": "U01", "language": "ja", "text": "CIのキャッシュを有効にしました. READMEを更新しました. 依存関係を更新しました. ステージングを再デプロイしました. レプリカ数を増やしました. デザインのレビューをお願いします. デザインのレビューをお願いします. エクスポートは次のフェーズにします. レイアウトの変更は最小限にしたいです. ログインを優先しましょう. ステージングを再デプロイしました. エクスポートは次のフェーズにします. APIドキュメントに例を追加します. READMEを更新しました. 昨日のチケットには返信済みです. もう一日ください. 問い合わせが二件来ています. サポートの件数は減っています. 環境変数の説明を書きました. エクスポートは次のフェーズにします. レプリカ数を増やしました. 余白の調整をしました. 対応時間について質問がありました. 手順書が古くなっています. 対応時間について質問がありました. 余白の調整をしました. 配色を少し暗くしました. 依存関係を更新しました. READMEを更新しました. もう一日ください. ステージングを再デプロイしました. 配色を少し暗くしました. 対応時間について質問がありました. READMEを更新しました. 対応時間について質問がありました. エクスポートは次のフェーズにします. 問い合わせが二件来ています. デザインのレビューをお願いします. ステージングを再デプロイしました. デザインのレビューをお願いします. 問い合わせが二件来ています. レプリカ数を増やしました. CIのキャッシュを有効にしました. テストが時々失敗する件、調査中です. 環境変数の説明を書きました. ステージングを再デプロイしました. 来週の予定は後で共有します. レプリカ数を増やしました. 配色を少し暗くしました. キャッシュの削除は手動で行いました. READMEを更新しました. レプリカ数を増やしました. CIのキャッシュを有効にしました. ディスク使用量が増えています. READMEを更新しました. デザインのレビューをお願いします. レプリカ数を増やしました. キャッシュの削除は手動で行いました. 依存関係を更新しました. テストが時々失敗する件、調査中です. デザインのレビューをお願いします. エクスポートは次のフェーズにします. ビルド時間が短くなりました. キャッシュの削除は手動で行いました. 手順書が古くなっています. 対応時間について質問がありました. CIのキャッシュを有効にしました. ビルド時間が短くなりました. 来週の予定は後で共有します. 配色を少し暗くしました. READMEを更新しました. ビルド時間が短くなりました. テストが時々失敗する件、調査中です. 対応時間について質問がありました. 環境変数の説明を書きました. レイアウトの変更は最小限にしたいです. もう一日ください. ビルド時間が短くなりました. レイアウトの変更は最小限にしたいです. ログインを優先しましょう. APIドキュメントに例を追加します. ディスク使用量が増えています. ディスク使用量が増えています. 来週の予定は後で共有します. 来週の予定は後で共有します. 昨日のチケットには返信済みです.", "offset_seconds": 40140, "fact_key": ""}
+{"type": "message", "index": 670, "speaker": "U02", "language": "en", "text": "I need one more day on this piece will follow up", "offset_seconds": 40200, "fact_key": ""}
+{"type": "message", "index": 671, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します", "offset_seconds": 40260, "fact_key": ""}
+{"type": "message", "index": 672, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency", "offset_seconds": 40320, "fact_key": ""}
+{"type": "message", "index": 673, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 40380, "fact_key": ""}
+{"type": "message", "index": 674, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 40440, "fact_key": ""}
+{"type": "message", "index": 675, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước", "offset_seconds": 40500, "fact_key": ""}
+{"type": "message", "index": 676, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 40560, "fact_key": ""}
+{"type": "message", "index": 677, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 40620, "fact_key": ""}
+{"type": "message", "index": 678, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện nha", "offset_seconds": 40680, "fact_key": ""}
+{"type": "message", "index": 679, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 40740, "fact_key": ""}
+{"type": "message", "index": 680, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています 共有まで", "offset_seconds": 40800, "fact_key": ""}
+{"type": "message", "index": 681, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba cảm ơn", "offset_seconds": 40860, "fact_key": ""}
+{"type": "message", "index": 682, "speaker": "U02", "language": "en", "text": "Login comes before everything else for visibility", "offset_seconds": 40920, "fact_key": ""}
+{"type": "message", "index": 683, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています", "offset_seconds": 40980, "fact_key": ""}
+{"type": "message", "index": 684, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency", "offset_seconds": 41040, "fact_key": ""}
+{"type": "message", "index": 685, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up let me know", "offset_seconds": 41100, "fact_key": ""}
+{"type": "message", "index": 686, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています よろしくお願いします", "offset_seconds": 41160, "fact_key": ""}
+{"type": "message", "index": 687, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại cảm ơn", "offset_seconds": 41220, "fact_key": ""}
+{"type": "message", "index": 688, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase no rush", "offset_seconds": 41280, "fact_key": ""}
+{"type": "message", "index": 689, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 41340, "fact_key": ""}
+{"type": "message", "index": 690, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 41400, "fact_key": ""}
+{"type": "message", "index": 691, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale no rush", "offset_seconds": 41460, "fact_key": ""}
+{"type": "message", "index": 692, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 以上です", "offset_seconds": 41520, "fact_key": ""}
+{"type": "message", "index": 693, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 41580, "fact_key": ""}
+{"type": "message", "index": 694, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 41640, "fact_key": ""}
+{"type": "message", "index": 695, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました 共有まで", "offset_seconds": 41700, "fact_key": ""}
+{"type": "message", "index": 696, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ để mình theo dõi tiếp", "offset_seconds": 41760, "fact_key": ""}
+{"type": "message", "index": 697, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 41820, "fact_key": ""}
+{"type": "message", "index": 698, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています ご確認ください", "offset_seconds": 41880, "fact_key": ""}
+{"type": "message", "index": 699, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba để mình theo dõi tiếp", "offset_seconds": 41940, "fact_key": ""}
+{"type": "message", "index": 700, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase let me know", "offset_seconds": 42000, "fact_key": ""}
+{"type": "message", "index": 701, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 42060, "fact_key": ""}
+{"type": "message", "index": 702, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nhé", "offset_seconds": 42120, "fact_key": ""}
+{"type": "message", "index": 703, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 42180, "fact_key": ""}
+{"type": "message", "index": 704, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました", "offset_seconds": 42240, "fact_key": ""}
+{"type": "message", "index": 705, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao mọi người xem giúp", "offset_seconds": 42300, "fact_key": ""}
+{"type": "message", "index": 706, "speaker": "U02", "language": "en", "text": "I need one more day on this piece", "offset_seconds": 42360, "fact_key": ""}
+{"type": "message", "index": 707, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 共有まで", "offset_seconds": 42420, "fact_key": ""}
+{"type": "message", "index": 708, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ", "offset_seconds": 42480, "fact_key": ""}
+{"type": "message", "index": 709, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light no rush", "offset_seconds": 42540, "fact_key": ""}
+{"type": "message", "index": 710, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 42600, "fact_key": ""}
+{"type": "message", "index": 711, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại nha", "offset_seconds": 42660, "fact_key": ""}
+{"type": "message", "index": 712, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 42720, "fact_key": ""}
+{"type": "message", "index": 713, "speaker": "U03", "language": "ja", "text": "READMEを更新しました", "offset_seconds": 42780, "fact_key": ""}
+{"type": "message", "index": 714, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 42840, "fact_key": ""}
+{"type": "message", "index": 715, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 42900, "fact_key": ""}
+{"type": "message", "index": 716, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 42960, "fact_key": ""}
+{"type": "message", "index": 717, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước mọi người xem giúp", "offset_seconds": 43020, "fact_key": ""}
+{"type": "message", "index": 718, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase", "offset_seconds": 43080, "fact_key": ""}
+{"type": "message", "index": 719, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 43140, "fact_key": ""}
+{"type": "message", "index": 720, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện cảm ơn", "offset_seconds": 43200, "fact_key": ""}
+{"type": "message", "index": 721, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 43260, "fact_key": ""}
+{"type": "message", "index": 722, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 43320, "fact_key": ""}
+{"type": "message", "index": 723, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước mọi người xem giúp", "offset_seconds": 43380, "fact_key": ""}
+{"type": "message", "index": 724, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later", "offset_seconds": 43440, "fact_key": ""}
+{"type": "message", "index": 725, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 43500, "fact_key": ""}
+{"type": "message", "index": 726, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency mọi người xem giúp", "offset_seconds": 43560, "fact_key": ""}
+{"type": "message", "index": 727, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now thanks", "offset_seconds": 43620, "fact_key": ""}
+{"type": "message", "index": 728, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました ご確認ください", "offset_seconds": 43680, "fact_key": ""}
+{"type": "message", "index": 729, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 43740, "fact_key": ""}
+{"type": "message", "index": 730, "speaker": "U02", "language": "en", "text": "I need one more day on this piece for visibility", "offset_seconds": 43800, "fact_key": ""}
+{"type": "message", "index": 731, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 43860, "fact_key": ""}
+{"type": "message", "index": 732, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nhé", "offset_seconds": 43920, "fact_key": ""}
+{"type": "message", "index": 733, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light for visibility", "offset_seconds": 43980, "fact_key": ""}
+{"type": "message", "index": 734, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 共有まで", "offset_seconds": 44040, "fact_key": ""}
+{"type": "message", "index": 735, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao nhé", "offset_seconds": 44100, "fact_key": ""}
+{"type": "message", "index": 736, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 44160, "fact_key": ""}
+{"type": "message", "index": 737, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました ご確認ください", "offset_seconds": 44220, "fact_key": ""}
+{"type": "message", "index": 738, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 44280, "fact_key": ""}
+{"type": "message", "index": 739, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now no rush", "offset_seconds": 44340, "fact_key": ""}
+{"type": "message", "index": 740, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 44400, "fact_key": ""}
+{"type": "message", "index": 741, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 44460, "fact_key": ""}
+{"type": "message", "index": 742, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 44520, "fact_key": ""}
+{"type": "message", "index": 743, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します", "offset_seconds": 44580, "fact_key": ""}
+{"type": "message", "index": 744, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency nhé", "offset_seconds": 44640, "fact_key": ""}
+{"type": "message", "index": 745, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale for visibility", "offset_seconds": 44700, "fact_key": ""}
+{"type": "message", "index": 746, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 共有まで", "offset_seconds": 44760, "fact_key": ""}
+{"type": "message", "index": 747, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước cảm ơn", "offset_seconds": 44820, "fact_key": ""}
+{"type": "message", "index": 748, "speaker": "U02", "language": "en", "text": "I need one more day on this piece thanks", "offset_seconds": 44880, "fact_key": ""}
+{"type": "message", "index": 749, "speaker": "U03", "language": "ja", "text": "READMEを更新しました よろしくお願いします", "offset_seconds": 44940, "fact_key": ""}
+{"type": "message", "index": 750, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 45000, "fact_key": ""}
+{"type": "message", "index": 751, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up no rush", "offset_seconds": 45060, "fact_key": ""}
+{"type": "message", "index": 752, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです ご確認ください", "offset_seconds": 45120, "fact_key": ""}
+{"type": "message", "index": 753, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba nhé", "offset_seconds": 45180, "fact_key": ""}
+{"type": "message", "index": 754, "speaker": "U02", "language": "en", "text": "Login comes before everything else for visibility", "offset_seconds": 45240, "fact_key": ""}
+{"type": "message", "index": 755, "speaker": "U03", "language": "ja", "text": "READMEを更新しました ご確認ください", "offset_seconds": 45300, "fact_key": ""}
+{"type": "message", "index": 756, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout mọi người xem giúp", "offset_seconds": 45360, "fact_key": ""}
+{"type": "message", "index": 757, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light for visibility", "offset_seconds": 45420, "fact_key": ""}
+{"type": "message", "index": 758, "speaker": "U03", "language": "ja", "text": "昨日のチケットには返信済みです 共有まで", "offset_seconds": 45480, "fact_key": ""}
+{"type": "message", "index": 759, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba mọi người xem giúp", "offset_seconds": 45540, "fact_key": ""}
+{"type": "message", "index": 760, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 45600, "fact_key": ""}
+{"type": "message", "index": 761, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します ご確認ください", "offset_seconds": 45660, "fact_key": ""}
+{"type": "message", "index": 762, "speaker": "U01", "language": "vi", "text": "Test flaky ở phần upload lại xuất hiện", "offset_seconds": 45720, "fact_key": ""}
+{"type": "message", "index": 763, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light will follow up", "offset_seconds": 45780, "fact_key": ""}
+{"type": "message", "index": 764, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 以上です", "offset_seconds": 45840, "fact_key": ""}
+{"type": "message", "index": 765, "speaker": "U01", "language": "vi", "text": "Staging vừa được deploy lại mọi người xem giúp", "offset_seconds": 45900, "fact_key": ""}
+{"type": "message", "index": 766, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later will follow up", "offset_seconds": 45960, "fact_key": ""}
+{"type": "message", "index": 767, "speaker": "U03", "language": "ja", "text": "環境変数の説明を書きました ご確認ください", "offset_seconds": 46020, "fact_key": ""}
+{"type": "message", "index": 768, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout nha", "offset_seconds": 46080, "fact_key": ""}
+{"type": "message", "index": 769, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale thanks", "offset_seconds": 46140, "fact_key": ""}
+{"type": "message", "index": 770, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 46200, "fact_key": ""}
+{"type": "message", "index": 771, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao", "offset_seconds": 46260, "fact_key": ""}
+{"type": "message", "index": 772, "speaker": "U02", "language": "en", "text": "I will send next sprint's plan later let me know", "offset_seconds": 46320, "fact_key": ""}
+{"type": "message", "index": 773, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 46380, "fact_key": ""}
+{"type": "message", "index": 774, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 46440, "fact_key": ""}
+{"type": "message", "index": 775, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now let me know", "offset_seconds": 46500, "fact_key": ""}
+{"type": "message", "index": 776, "speaker": "U03", "language": "ja", "text": "問い合わせが二件来ています 共有まで", "offset_seconds": 46560, "fact_key": ""}
+{"type": "message", "index": 777, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao cảm ơn", "offset_seconds": 46620, "fact_key": ""}
+{"type": "message", "index": 778, "speaker": "U02", "language": "en", "text": "Login comes before everything else will follow up", "offset_seconds": 46680, "fact_key": ""}
+{"type": "message", "index": 779, "speaker": "U03", "language": "ja", "text": "READMEを更新しました 以上です", "offset_seconds": 46740, "fact_key": ""}
+{"type": "message", "index": 780, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout cảm ơn", "offset_seconds": 46800, "fact_key": ""}
+{"type": "message", "index": 781, "speaker": "U02", "language": "en", "text": "The accent colour reads too pale on light thanks", "offset_seconds": 46860, "fact_key": ""}
+{"type": "message", "index": 782, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 46920, "fact_key": ""}
+{"type": "message", "index": 783, "speaker": "U01", "language": "vi", "text": "Dung lượng đĩa trên node hai đang cao để mình theo dõi tiếp", "offset_seconds": 46980, "fact_key": ""}
+{"type": "message", "index": 784, "speaker": "U02", "language": "en", "text": "I need one more day on this piece no rush", "offset_seconds": 47040, "fact_key": ""}
+{"type": "message", "index": 785, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します 以上です", "offset_seconds": 47100, "fact_key": ""}
+{"type": "message", "index": 786, "speaker": "U01", "language": "vi", "text": "Mình vừa thêm bước cache cho dependency cảm ơn", "offset_seconds": 47160, "fact_key": ""}
+{"type": "message", "index": 787, "speaker": "U02", "language": "en", "text": "Can we keep the current layout for now will follow up", "offset_seconds": 47220, "fact_key": ""}
+{"type": "message", "index": 788, "speaker": "U03", "language": "ja", "text": "サポートの件数は減っています", "offset_seconds": 47280, "fact_key": ""}
+{"type": "message", "index": 789, "speaker": "U01", "language": "vi", "text": "Đã tăng số replica lên ba", "offset_seconds": 47340, "fact_key": ""}
+{"type": "message", "index": 790, "speaker": "U02", "language": "en", "text": "Export can wait for the next phase thanks", "offset_seconds": 47400, "fact_key": ""}
+{"type": "message", "index": 791, "speaker": "U03", "language": "ja", "text": "APIドキュメントに例を追加します", "offset_seconds": 47460, "fact_key": ""}
+{"type": "message", "index": 792, "speaker": "U01", "language": "vi", "text": "Pipeline CI sáng nay chạy chậm hơn thường lệ cảm ơn", "offset_seconds": 47520, "fact_key": ""}
+{"type": "message", "index": 793, "speaker": "U02", "language": "en", "text": "Spacing now follows the token scale", "offset_seconds": 47580, "fact_key": ""}
+{"type": "message", "index": 794, "speaker": "U03", "language": "ja", "text": "対応時間について質問がありました 以上です", "offset_seconds": 47640, "fact_key": ""}
+{"type": "message", "index": 795, "speaker": "U01", "language": "vi", "text": "Cache chưa được xoá sau lần deploy trước nha", "offset_seconds": 47700, "fact_key": ""}
+{"type": "message", "index": 796, "speaker": "U02", "language": "en", "text": "I need one more day on this piece", "offset_seconds": 47760, "fact_key": ""}
+{"type": "message", "index": 797, "speaker": "U03", "language": "ja", "text": "手順書が古くなっています 以上です", "offset_seconds": 47820, "fact_key": ""}
+{"type": "message", "index": 798, "speaker": "U01", "language": "vi", "text": "Đã pin lại version của action checkout để mình theo dõi tiếp", "offset_seconds": 47880, "fact_key": ""}
+{"type": "message", "index": 799, "speaker": "U02", "language": "en", "text": "New mockups for the list screen are up thanks", "offset_seconds": 47940, "fact_key": ""}

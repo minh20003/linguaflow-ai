@@ -148,24 +148,32 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   };
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-[#E8EAF0] bg-white dark:border-[#2A2E3D] dark:bg-[#1C1F27]">
-      <header className="flex items-center gap-2 border-b border-[#E8EAF0] px-4 py-3.5 dark:border-[#2A2E3D]">
-        <ListTodo className="h-5 w-5 text-[#2563EB]" />
-        <h2 className="text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
+    <section className="flex h-full w-full flex-col bg-[#F7F8FC] dark:bg-[#14161C]">
+      <header className="flex min-h-16 items-center border-b border-[#E8EAF0] bg-white px-5 dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-7">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+            <ListTodo className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
+            <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">Các đề xuất của trợ lý đang chờ bạn xử lý</p>
+          </div>
+        </div>
         {pendingCount > 0 && (
-          <span className="ml-auto rounded-full bg-[#EFF6FF] px-2 py-0.5 text-[11px] font-bold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
-            {pendingCount} chờ duyệt
+          <span className="ml-auto shrink-0 rounded-full bg-[#EFF6FF] px-3 py-1 text-xs font-bold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+            {pendingCount} cần xử lý
           </span>
         )}
       </header>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7">
+        <div className="mx-auto max-w-5xl space-y-3">
         {isLoading && (
           <p className="px-1 py-6 text-center text-xs text-[#74798C]">Đang tải…</p>
         )}
 
         {!isLoading && ordered.length === 0 && (
-          <div className="px-3 py-10 text-center">
+          <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-3 py-14 text-center dark:border-[#3A3F50] dark:bg-[#1C1F27]">
             <ListTodo className="mx-auto h-8 w-8 text-[#CED2DE] dark:text-[#3A3F50]" />
             <p className="mt-3 text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
               Chưa có việc nào chờ bạn
@@ -184,26 +192,30 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
           return (
             <article
               key={proposal.id}
-              className={`rounded-2xl border p-3.5 ${
+              className={`relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-md dark:bg-[#1C1F27] ${
                 needsAnswer
-                  ? "border-amber-300 bg-amber-50/60 dark:border-amber-400/30 dark:bg-amber-500/10"
-                  : "border-[#E8EAF0] bg-[#F7F8FC] dark:border-[#2A2E3D] dark:bg-[#232630]/60"
+                  ? "border-amber-300 dark:border-amber-400/30"
+                  : "border-[#E8EAF0] dark:border-[#2A2E3D]"
               }`}
             >
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="text-xs font-bold leading-snug text-[#1E2230] dark:text-[#F5F6FA]">
-                  {proposal.title}
-                </h3>
-                <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+              <div className={`absolute inset-y-0 left-0 w-1 ${needsAnswer ? "bg-amber-400" : proposal.status === "confirmed" ? "bg-emerald-500" : "bg-[#2563EB]"}`} />
+              <div className="p-4 pl-5 sm:p-5 sm:pl-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-bold leading-snug text-[#1E2230] dark:text-[#F5F6FA]">
+                        {proposal.title}
+                      </h3>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     proposal.status === "confirmed"
                       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
                       : needsAnswer
                         ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"
                         : "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
-                  }`}
-                >
-                  {proposal.status === "confirmed"
+                        }`}
+                      >
+                        {proposal.status === "confirmed"
                     ? "Đã duyệt"
                     : proposal.status === "rejected"
                       ? "Đã từ chối"
@@ -212,28 +224,42 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         : needsAnswer
                           ? "Cần trả lời"
                           : "Chờ duyệt"}
-                </span>
-              </div>
+                      </span>
+                    </div>
+                    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
+                      <span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5 flex-none" />{formatWhen(proposal)}</span>
+                      {proposal.source_mode === "proactive" && (
+                        <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">tự phát hiện</span>
+                      )}
+                    </p>
+                    {proposal.details && (
+                      <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">{proposal.details}</p>
+                    )}
+                  </div>
 
-              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-[#74798C] dark:text-[#9DA3B4]">
-                <Clock3 className="h-3 w-3 flex-none" />
-                {formatWhen(proposal)}
-                {proposal.source_mode === "proactive" && (
-                  <span className="ml-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">
-                    tự phát hiện
-                  </span>
-                )}
-              </p>
-
-              {proposal.details && (
-                <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">
-                  {proposal.details}
-                </p>
-              )}
+                  {!decided && !needsAnswer && (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id), "Đã duyệt và thêm vào lịch")}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
+                      >
+                        <Check className="h-3.5 w-3.5" /> Duyệt
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void act(proposal, () => rejectActionProposal(token, proposal.id), "Đã từ chối")}
+                        className="rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#62687B] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:text-[#C6CAD6] dark:hover:bg-[#232630]"
+                      >Từ chối</button>
+                    </div>
+                  )}
+                </div>
 
               {needsAnswer && (
-                <div className="mt-3 border-t border-amber-200 pt-3 dark:border-amber-400/20">
-                  <p className="flex items-start gap-1.5 text-[11px] font-medium text-amber-900 dark:text-amber-200">
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
+                  <p className="flex items-start gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-200">
                     <MessageSquareQuote className="mt-0.5 h-3 w-3 flex-none" />
                     {proposal.clarification_question ||
                       proposal.clarification_prompt ||
@@ -249,7 +275,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         }))
                       }
                       placeholder="Ví dụ: 9h sáng thứ năm"
-                      className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-2 py-1.5 text-[11px] outline-none dark:border-amber-400/30 dark:bg-[#232630]"
+                      className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:border-amber-400/30 dark:bg-[#232630]"
                     />
                     <button
                       type="button"
@@ -267,7 +293,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                           "Đã gửi câu trả lời",
                         )
                       }
-                      className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+                      className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
                     >
                       Gửi
                     </button>
@@ -275,8 +301,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                 </div>
               )}
 
-              {!decided && (
-                <div className="mt-3 flex gap-2 border-t border-[#E8EAF0] pt-3 dark:border-[#2A2E3D]">
+              {!decided && needsAnswer && (
+                <div className="mt-3 flex justify-end gap-2">
                   <button
                     type="button"
                     disabled={busy}
@@ -287,7 +313,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         "Đã duyệt và thêm vào lịch",
                       )
                     }
-                    className="inline-flex flex-1 items-center justify-center gap-1 rounded-lg bg-emerald-600 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                    className="inline-flex items-center justify-center gap-1 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                   >
                     <Check className="h-3 w-3" />
                     Duyệt
@@ -302,7 +328,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         "Đã từ chối",
                       )
                     }
-                    className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[11px] font-semibold text-[#74798C] hover:bg-white disabled:opacity-50 dark:hover:bg-[#2E3342]"
+                    className="inline-flex items-center gap-1 rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#74798C] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:hover:bg-[#2E3342]"
                   >
                     <X className="h-3 w-3" />
                     Từ chối
@@ -311,15 +337,17 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
               )}
 
               {proposal.status === "stale" && (
-                <p className="mt-2 flex items-center gap-1 text-[10px] text-[#74798C]">
+                <p className="mt-3 flex items-center gap-1 text-[11px] text-[#74798C]">
                   <AlertCircle className="h-3 w-3 flex-none" />
                   Tin nhắn gốc đã bị sửa hoặc gỡ, nên đề xuất này không còn dùng được.
                 </p>
               )}
+              </div>
             </article>
           );
         })}
+        </div>
       </div>
-    </aside>
+    </section>
   );
 };
