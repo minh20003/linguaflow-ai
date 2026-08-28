@@ -19,7 +19,16 @@ from src.services.embeddings import (
 
 
 def _settings(**overrides) -> Settings:
-    """A Settings that needs no .env, with the translation side configured."""
+    """A Settings built from these values alone, with no `.env` behind it.
+
+    `_env_file=None` is load-bearing rather than tidiness. `Settings` reads the
+    project's `.env`, which is gitignored and different on every machine — so
+    without this the assertions below depend on whether the developer running
+    them happens to have `ASSISTANT_JUDGE_PROVIDER` set. They passed for a week
+    and then failed the moment real values were put in that file, which is the
+    worst way for a test to be wrong: it reports the developer's configuration,
+    not the code.
+    """
     base = {
         "jwt_secret": "x" * 40,
         "llm_provider": "gemini",
@@ -27,7 +36,7 @@ def _settings(**overrides) -> Settings:
         "embedding_provider": "gemini",
         "embedding_model": "models/gemini-embedding-001",
     }
-    return Settings(**{**base, **overrides})
+    return Settings(_env_file=None, **{**base, **overrides})
 
 
 def test_assistant_llm_inherits_translation_model_when_unconfigured():

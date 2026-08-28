@@ -1,5 +1,10 @@
 # Public production stack. Only Caddy publishes ports; the application and
 # database remain on Docker's private network.
+# The production command must still pass `-p linguaflow` explicitly. Keeping
+# this name here protects the durable default-network and volume identities
+# when a release manifest is used from a new directory.
+name: linguaflow
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -17,11 +22,14 @@ services:
     restart: unless-stopped
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # GHCR path components are lowercase because OCI/Docker image references
+    # are normalized that way. RELEASE_SHA is a required full 40-character
+    # commit SHA supplied by the release command, never `latest`.
+    image: ghcr.io/ai20k-build-phase-cohort-3/p-217-backend:${RELEASE_SHA:?RELEASE_SHA must be a full 40-character commit SHA}
     env_file:
-      - .env
+      # Runtime secrets stay on the VPS. The variable is only a local static
+      # validation escape hatch; production uses the fixed default path.
+      - ${LINGUAFLOW_RUNTIME_ENV_FILE:-/etc/linguaflow/production.env}
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       UPLOAD_DIR: /app/data/uploads
@@ -36,12 +44,9 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-        NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+    # NEXT_PUBLIC_* values are compiled into this immutable image by the future
+    # GitHub Actions build job. They are not VPS runtime variables.
+    image: ghcr.io/ai20k-build-phase-cohort-3/p-217-frontend:${RELEASE_SHA:?RELEASE_SHA must be a full 40-character commit SHA}
     environment:
       NODE_ENV: production
     depends_on:

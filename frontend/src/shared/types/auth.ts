@@ -3,6 +3,7 @@ export interface AuthUser {
   email: string;
   username: string;
   display_name: string;
+  avatar_url?: string | null;
   bio?: string | null;
   role: string;
   preferred_language: string;

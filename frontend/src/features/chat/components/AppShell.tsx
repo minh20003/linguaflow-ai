@@ -234,11 +234,19 @@ export const AppShell: React.FC = () => {
     () => new Set(),
   );
   const retryingTranscriptionIdsRef = useRef<Set<string>>(new Set());
+  const retryHistoryRefreshTimersRef = useRef<Set<number>>(new Set());
   const selectedConversationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
+
+  useEffect(() => () => {
+    for (const timer of retryHistoryRefreshTimersRef.current) {
+      window.clearTimeout(timer);
+    }
+    retryHistoryRefreshTimersRef.current.clear();
+  }, []);
 
   const addToast = useCallback((title: string, message?: string, type: ToastItem["type"] = "info") => {
     const id = `toast_${Date.now()}`;
@@ -369,6 +377,25 @@ export const AppShell: React.FC = () => {
     const nextUsers = conversationUsers(visible).filter((user) => user.id !== currentUser.id);
     setUsers((previous) => JSON.stringify(previous) === JSON.stringify(nextUsers) ? previous : nextUsers);
   }, [currentUser.id, settings.interfaceLanguage]);
+
+  const scheduleVoiceRetryHistoryRefresh = useCallback((conversationId: string) => {
+    // The retry endpoint returns after it has durably set `pending`, while the
+    // detached STT task can finish later. Rehydrate a few bounded times so a
+    // missed WebSocket terminal event cannot leave this bubble pending forever.
+    for (const delayMilliseconds of [2_000, 8_000, 20_000]) {
+      const timer = window.setTimeout(() => {
+        retryHistoryRefreshTimersRef.current.delete(timer);
+        void Promise.all([
+          loadConversationMessages(conversationId),
+          refreshConversations(),
+        ]).catch(() => {
+          // Reconnect/history hydration remains available if this transient
+          // refresh fails; do not replace the durable retry result with a toast.
+        });
+      }, delayMilliseconds);
+      retryHistoryRefreshTimersRef.current.add(timer);
+    }
+  }, [loadConversationMessages, refreshConversations]);
 
   useEffect(() => {
     const accessToken = getAccessToken();
@@ -989,7 +1016,14 @@ export const AppShell: React.FC = () => {
       // The detached task can finish before this HTTP response reaches the
       // browser. Rehydrate from durable history so an already-published
       // completion/failure event cannot leave this bubble stuck at pending.
-      await loadConversationMessages(result.conversation_id);
+      try {
+        await loadConversationMessages(result.conversation_id);
+      } catch {
+        // The retry itself was accepted. The bounded follow-up refreshes below
+        // can still recover its persisted terminal state after a transient
+        // history request failure.
+      }
+      scheduleVoiceRetryHistoryRefresh(result.conversation_id);
       void refreshConversations();
     } catch {
       addToast(
@@ -1011,10 +1045,14 @@ export const AppShell: React.FC = () => {
   const saveProfile = async (value: Partial<User>) => {
     if (!token.current) return;
     try {
-      const profile = await updateProfile(token.current, {
+      const changes: { display_name?: string; bio?: string; avatar_url?: string } = {
         display_name: value.name,
         bio: value.bio,
-      });
+      };
+      // Generated fallback avatars are display-only URLs. Only persist a
+      // client-generated data URL when the user actually selected a new photo.
+      if (value.avatar?.startsWith("data:image/")) changes.avatar_url = value.avatar;
+      const profile = await updateProfile(token.current, changes);
       setCurrentUser((previous) => ({ ...previous, ...toChatUser(profile) }));
       addToast("Profile saved", undefined, "success");
     } catch (error) {
@@ -1160,7 +1198,7 @@ export const AppShell: React.FC = () => {
   return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
     <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} pendingTaskCount={pendingTaskCount} /></div>
-    {activeTab !== "calendar" && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
+    {(activeTab === "chats" || activeTab === "contacts" || activeTab === "groups") && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
       {activeTab === "chats" && <ConversationPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onOpenNewChat={() => setIsNewChatOpen(true)} onMarkAllAsRead={() => conversations.forEach((item) => void markRead(token.current!, item.id))} assistantSelected={isAssistantChatOpen} onOpenAssistant={() => {
         if (!token.current) return;
         void getAssistantConversation(token.current).then(async (item) => {

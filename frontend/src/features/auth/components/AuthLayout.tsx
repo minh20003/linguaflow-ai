@@ -46,7 +46,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
           <div className="relative max-w-sm mx-auto space-y-4">
             {/* Bubble 1: Vietnamese */}
             <motion.div
-              initial={{ opacity: 0, y: 15 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
               className="flex items-start gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm shadow-slate-200/60"
@@ -69,7 +69,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
 
             {/* Bubble 2: English (Self / Reply) */}
             <motion.div
-              initial={{ opacity: 0, y: 15 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.25 }}
               className="flex items-start gap-3 bg-indigo-500 text-white p-3.5 rounded-2xl shadow-sm shadow-indigo-400/20 ml-6"
@@ -92,7 +92,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
 
             {/* Bubble 3: Japanese */}
             <motion.div
-              initial={{ opacity: 0, y: 15 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.4 }}
               className="flex items-start gap-3 bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-sm shadow-slate-200/60"

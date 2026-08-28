@@ -7,10 +7,10 @@ Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-
 
 | Thành phần | Nơi chạy | Ghi chú |
 |---|---|---|
-| Backend + Agent | Railway, dựng từ `Dockerfile` | **Đúng 1 bản sao**, không autoscale |
-| Cơ sở dữ liệu | PostgreSQL (plugin của Railway) | Supabase thay được, xem §6 |
-| Tệp đính kèm | Supabase Storage (bucket private `attachments`) khi có đủ `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`; nếu không, Volume gắn vào `/app/data` của container backend | Backend tự chọn theo biến môi trường có đặt hay không (xem §2 bước 4) |
-| Frontend | Vercel, thư mục gốc `frontend-v1/` (v1 — chờ chuyển sang frontend mới của `develop_v2`) | Biến môi trường nhúng lúc build |
+| Backend + Agent | Ubuntu VPS, container GHCR prebuilt | **Đúng 1 bản sao**, không autoscale |
+| Cơ sở dữ liệu | `pgvector/pgvector:pg16` trên VPS | volume `postgres-data` bền vững |
+| Tệp đính kèm | volume `backend-uploads` trên VPS khi không cấu hình đủ Supabase Storage | không xoá/tạo lại trong deploy bình thường |
+| Frontend | Ubuntu VPS, container GHCR prebuilt sau Caddy | `NEXT_PUBLIC_*` nhúng lúc GitHub Actions build image |
 
 > **Chỉ được chạy một bản sao.** `ConnectionManager` giữ danh sách socket trong bộ
 > nhớ tiến trình. Bản sao thứ hai sẽ nhận một nửa số kết nối và **âm thầm đánh rơi**
@@ -19,75 +19,140 @@ Lý do đằng sau các lựa chọn nằm ở `ARCHITECTURE.md` ADR-06 và ADR-
 
 ---
 
-## 1. Chuẩn bị
+## 1. Production VPS release contract (CD-1)
 
-Cần có: tài khoản GitHub (đã đẩy nhánh), tài khoản Railway, tài khoản Vercel, và
-một khoá API của LLM provider (Groq là mặc định, miễn phí).
+Production source of truth is `docker-compose.production.yml`, Caddy, and the
+protected VPS runtime file `/etc/linguaflow/production.env` (root-owned, mode
+`0600`). Do not use the Railway/Vercel instructions from older revisions as a
+production runbook.
 
-Sinh khoá ký JWT — **không dùng lại giá trị mẫu trong `.env.example`**, ứng dụng
-sẽ từ chối khởi động ở production nếu gặp nó:
+The Compose file consumes only these immutable application images:
 
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+```text
+ghcr.io/ai20k-build-phase-cohort-3/p-217-backend:${RELEASE_SHA}
+ghcr.io/ai20k-build-phase-cohort-3/p-217-frontend:${RELEASE_SHA}
 ```
 
-## 2. Backend trên Railway
+OCI image names are lowercase; the organization and repository names are
+normalized to `ai20k-build-phase-cohort-3` and `p-217`. `RELEASE_SHA` is a
+required full 40-character Git commit SHA supplied by the release command. It
+is never `latest`, a branch name, or an unpinned tag.
 
-1. **New Project → Deploy from GitHub repo**, chọn kho này. Railway nhận ra
-   `Dockerfile` ở thư mục gốc và dùng nó.
-2. **Add → Database → PostgreSQL** trong cùng project.
-3. Ở dịch vụ backend, mở **Variables** và đặt:
+Every future production Compose command must use this exact envelope so
+interpolation and Docker identities remain stable:
 
-   | Biến | Giá trị |
-   |---|---|
-   | `APP_ENV` | `production` |
-   | `JWT_SECRET` | chuỗi vừa sinh ở §1 |
-   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (tham chiếu của Railway) |
-   | `CORS_ORIGINS` | `https://<ten-app>.vercel.app` |
-| `SUPABASE_URL` | URL project Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key, chỉ đặt ở backend |
-| `SUPABASE_STORAGE_BUCKET` | `attachments` |
-   | `LLM_PROVIDER` | `groq` |
-   | `GROQ_API_KEY` | khoá của bạn |
-   | `EMAIL_PROVIDER` | `smtp` |
-   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | thông tin máy chủ gửi thư |
+```bash
+RELEASE_SHA=<full-40-character-sha> docker compose \
+  --env-file /etc/linguaflow/production.env \
+  -p linguaflow \
+  -f docker-compose.production.yml \
+  <command>
+```
 
-   **Năm biến SMTP là bắt buộc, không phải tuỳ chọn.** `Settings` từ chối khởi tạo
-   khi `APP_ENV=production` mà `EMAIL_PROVIDER` vẫn là `memory` hoặc `console`, hoặc
-   là `smtp` nhưng thiếu một trong bốn giá trị còn lại — container sẽ lặp vô hạn
-   *trước khi* uvicorn kịp chạy. Bảng này trước đây bỏ sót chúng trong khi §5.1 lại
-   ghi là bắt buộc, và hai chỗ nói ngược nhau thì chỗ người ta làm theo là chỗ có
-   các bước. Không có SMTP thì mã OTP không gửi được, tức **không ai đăng ký được
-   tài khoản mới** dù mọi thứ khác đã chạy.
+`--env-file` is required because a service-level `env_file:` only injects values
+into a container; it does **not** provide values for Compose `${VAR}`
+interpolation. Compose needs the same protected file to resolve Postgres/Caddy
+variables and the release input needs `RELEASE_SHA` from the deployment command.
 
-   Tuỳ chọn: `CORS_ORIGIN_REGEX` cho bản xem trước của Vercel, `BRAINTRUST_API_KEY`
-   để bật tracing (hoặc `OBSERVABILITY_PROVIDER=langfuse` cùng `LANGFUSE_*`), `FALLBACK_TRANSLATOR_ENABLED=false` để **không** gửi văn bản tin
-   nhắn sang endpoint Google Translate không chính thức (ADR-07, ADR-15).
+Normal deployment must preserve exactly these durable volumes:
+`postgres-data`, `backend-uploads`, `caddy-data`, and `caddy-config`. Never use
+`docker compose down -v`, `docker volume rm`, a database reset/seed, or an
+automatic Alembic downgrade. PostgreSQL stays on `pgvector/pgvector:pg16`.
+Caddy remains the only public port publisher and backend/frontend stay on the
+private Compose network.
 
-   Không cần đặt `PORT`: Railway tự tiêm, và `CMD` trong `Dockerfile` đọc nó.
+The backend remains exactly one Uvicorn worker and one service replica because
+the WebSocket `ConnectionManager` is in-process memory. Do not add workers,
+replicas, or autoscaling.
 
-4. Tạo bucket private `attachments` trong Supabase Storage. Backend tự dùng
-   object storage khi có đủ `SUPABASE_URL` và `SUPABASE_SERVICE_ROLE_KEY`.
-5. **Settings → Networking → Generate Domain** để lấy tên miền công khai.
-6. Kiểm tra: `curl https://<backend>/health` phải trả `{"status":"ok","env":"production"}`.
+`NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID` are public
+build-time inputs. A future GitHub Actions build supplies them to
+`frontend/Dockerfile`; they are not runtime secrets and do not belong in a VPS
+Compose build block.
 
-Migration chạy tự động: `CMD` là `alembic upgrade head && uvicorn …`, nên container
-**không khởi động** nếu schema không nâng cấp được — đó là hành vi mong muốn, hơn
-là phục vụ trên một cơ sở dữ liệu sai hình dạng.
+`scripts/configure_vps_env.sh` is **INITIAL VPS PROVISIONING ONLY**. It
+generates `POSTGRES_PASSWORD` and refuses a non-empty existing value; do not
+run it as a release command after PostgreSQL initialization.
 
-## 3. Frontend trên Vercel
+This phase defines the contract only. It does not add a GitHub Actions workflow,
+GHCR login, SSH behavior, or a VPS change.
 
-1. **Add New → Project**, chọn kho này, đặt **Root Directory** là `frontend-v1`.
-2. Environment Variables: `NEXT_PUBLIC_API_URL = https://<backend>.up.railway.app`
-   (không có dấu `/` ở cuối).
-3. Deploy. Sau đó quay lại Railway đặt `CORS_ORIGINS` đúng bằng tên miền Vercel
-   vừa nhận được.
+### 1.1. Release helpers (CD-2)
 
-**Đổi `NEXT_PUBLIC_API_URL` thì phải build lại.** Biến `NEXT_PUBLIC_*` được nhúng
-vào mã JavaScript lúc build; sửa giá trị mà không redeploy thì trang vẫn gọi địa
-chỉ cũ. Địa chỉ WebSocket suy ra từ chính biến này (`https` → `wss`).
+`scripts/deploy_release.sh` accepts only a full 40-character hexadecimal commit
+SHA. It lowercases that SHA before selecting the two GHCR images, so branches,
+tags, `latest`, and abbreviated SHAs cannot reach a production Compose command.
+It resolves the repository root itself and applies the fixed Compose envelope on
+every call; callers must not use the current directory to infer the project.
 
-## 4. Chạy thử tại chỗ trước khi đẩy lên
+Run the deterministic plan first. It validates the SHA and prints the release
+order but never calls Docker, PostgreSQL, SSH, a registry, or last-known-good
+state:
+
+```bash
+sh scripts/deploy_release.sh --dry-run <full-40-character-sha>
+```
+
+The actual command is a VPS-only operation for the future deploy channel:
+
+```bash
+sh scripts/deploy_release.sh <full-40-character-sha>
+```
+
+Its fixed order is: logical PostgreSQL backup under
+`/var/backups/linguaflow/`, pull the two exact images, validate Caddy, run
+`alembic upgrade head` in the new backend image, recreate only backend/frontend/
+Caddy with each service explicitly scaled to one replica, then make bounded
+public checks against the production API and frontend.
+Any failed backup, pull, Caddy validation, migration, rollout, or verification
+stops the remaining release steps. It never automatically rolls back, restores
+a database, marks a release last-known-good, removes a volume, or runs a
+destructive cleanup.
+
+`scripts/verify_production.sh` is independently runnable from any networked
+host with `curl`; it follows redirects and expects API HTTP 200 JSON with
+`service: "LinguaFlow API"` and `database: "ok"`, plus a frontend HTTP 200
+response containing `LinguaFlow`. Retries are bounded by `VERIFY_ATTEMPTS`,
+`VERIFY_DELAY_SECONDS`, and `VERIFY_TIMEOUT_SECONDS`.
+
+After independent acceptance of those checks, an operator may explicitly
+record the deployed SHA, and only then:
+
+```bash
+sh scripts/finalize_release.sh <full-40-character-sha>
+```
+
+The finalizer performs fresh public and running-image verification before it
+writes `/opt/linguaflow/state/last-known-good-sha`; ordinary deployment does
+not call it. The unresolved future SSH privilege model must allow the
+deploy channel to read the protected Compose environment indirectly through
+Docker Compose, while never granting it a way to print, copy, or source
+`/etc/linguaflow/production.env`. Choose and review either a constrained sudo/
+forced-command wrapper or a carefully scoped deployment group before CD-3; this
+repository phase makes no VPS permission change. Future GHCR authentication must
+use a transient stdin credential and a temporary `DOCKER_CONFIG` that is removed
+after the job. Runtime application secrets remain on the VPS.
+
+### 1.2. Finalization image identity guard (CD-2R)
+
+Public health alone does not prove which release is serving traffic. Before
+`scripts/finalize_release.sh` writes LKG, it re-runs public verification, uses
+the fixed Compose envelope to resolve exactly one **running** `backend` and
+`frontend` container, and uses `docker inspect` to require exact equality with
+the requested SHA-tagged image references. A missing container, multiple
+containers, or either image mismatch fails without changing LKG. Its dry-run
+only describes these checks; it does not inspect Docker.
+
+Tag equality is sufficient for this CD-2R guard. CD-3 must additionally build
+both application images with
+`org.opencontainers.image.revision=<full-sha>` and record their immutable image
+digests as release evidence. Because backend still has `depends_on: postgres`,
+CD-4/CD-5 must capture the PostgreSQL container and all durable-volume identity
+before and after the first real deployment as acceptance evidence. This is a
+verification requirement, not permission to recreate, reset, or remove
+PostgreSQL state.
+
+## 2. Chạy thử tại chỗ trước khi đẩy lên
 
 ```bash
 docker compose up --build      # backend + PostgreSQL, giống production
@@ -137,7 +202,7 @@ alembic stamp head
 alembic check     # "No new upgrade operations detected" là đúng
 ```
 
-### 4.1. Voice message và Gemini STT
+### 2.1. Voice message và Gemini STT
 
 Voice ở đây là **tin nhắn ghi âm**, tách biệt hoàn toàn với tính năng gọi
 thoại/video. Luồng production là:
@@ -200,7 +265,7 @@ phải được kiểm tra thủ công trên OS đích dù candidate OGG/Opus, W
 MP4/AAC tương ứng đã có. Khi không có candidate tương thích, client báo lỗi trước
 upload thay vì đổi đuôi hoặc gửi byte sai nhãn.
 
-## 5. Biến môi trường
+## 3. Biến môi trường
 
 Nguồn sự thật là `src/config.py`; `.env.example` là bản chép có chú thích.
 Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng ngay lúc khởi động.
@@ -212,7 +277,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `DATABASE_URL` | PostgreSQL cục bộ của `docker compose` | Bắt buộc là PostgreSQL có `pgvector` (ADR-22). `postgres://` và `postgresql://` được tự đổi sang `postgresql+asyncpg://` |
 | `DATABASE_POOL_SIZE` / `DATABASE_MAX_OVERFLOW` | 5 / 10 | Chỉ dùng cho PostgreSQL. Mỗi WebSocket giữ một phiên suốt thời gian mở |
 | `CORS_ORIGINS` | `http://localhost:3000` | Danh sách ngăn cách bằng dấu phẩy. Cũng là danh sách kiểm tra `Origin` của WebSocket |
-| `CORS_ORIGIN_REGEX` | rỗng | Cho bản xem trước của Vercel |
+| `CORS_ORIGIN_REGEX` | rỗng | Cho hostname xem trước khi thật sự cần dùng |
 | `FRONTEND_URL` | `http://localhost:3000` | URL chuẩn dẫn từ email đặt lại mật khẩu. Bắt buộc dùng HTTPS ở production |
 | `UPLOAD_DIR` | `./data/uploads` | Trỏ vào volume khi chạy trong container |
 | `MAX_UPLOAD_SIZE_BYTES` | 20 MiB | |
@@ -236,7 +301,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `BRAINTRUST_API_KEY`, `BRAINTRUST_PROJECT` | rỗng / `linguaflow` | Rỗng là tắt tracing. Khoá Braintrust bắt đầu bằng `sk-` |
 | `LANGFUSE_*` | rỗng | Chỉ dùng khi `OBSERVABILITY_PROVIDER=langfuse`. Rỗng là tắt tracing. Vùng của host phải khớp vùng cấp khoá |
 
-### 5.1. Khoá bí mật — cần cấp những gì
+### 3.1. Khoá bí mật — cần cấp những gì
 
 | Khoá | Bắt buộc? | Hậu quả nếu thiếu |
 |---|---|---|
@@ -249,7 +314,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `BRAINTRUST_API_KEY` (hoặc `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` khi chọn Langfuse) | Không | Để trống là tắt tracing, luồng dịch không bị ảnh hưởng |
 | `ANTHROPIC_API_KEY`, `LANGCHAIN_*` | Không | Thuộc về công cụ lập trình, `src/config.py` không đọc |
 
-### 5.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)
+### 3.2. Cấu hình Email Provider & Bảo mật OTP (Batch F)
 
 - **Production (`APP_ENV=production`)**:
   - Bắt buộc `EMAIL_PROVIDER=smtp`.
@@ -263,7 +328,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
   - Cơ sở dữ liệu chỉ lưu trữ băm một chiều (bcrypt hash) của mã OTP trong bảng `pending_registrations`.
   - Validation error 422 tự động redact toàn bộ mật khẩu, mã OTP, token ở mọi độ sâu dữ liệu.
 
-### 5.3. Cấu hình Google Sign-In (Batch G)
+### 3.3. Cấu hình Google Sign-In (Batch G)
 
 **Tạo OAuth Client ID trên Google Cloud Console:**
 
@@ -273,7 +338,7 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 4. Application type: **Web application**
 5. Thêm **Authorized JavaScript origins**:
    - Development: `http://localhost:3000`
-   - Production: `https://your-domain.com` (hoặc domain Vercel của bạn)
+   - Production: `https://c3-lingua-flow-217.dquangminh2003.id.vn`
 6. Copy **Client ID** (format: `xxx.apps.googleusercontent.com`)
 
 **Đặt biến môi trường:**
@@ -312,7 +377,7 @@ Kiểm tra nhanh trước khi push — không được có kết quả nào:
 git grep -nIE "(gsk_|sk-ant-|sk-proj-|AIza|sk-lf-|pk-lf-)[A-Za-z0-9_-]{15,}"
 ```
 
-## 6. Dùng Supabase thay cho PostgreSQL của Railway
+## 4. Dùng Supabase PostgreSQL (tuỳ chọn)
 
 Không phải sửa dòng mã nào, chỉ đổi `DATABASE_URL`. Hai điều dễ vấp:
 
@@ -322,7 +387,7 @@ Không phải sửa dòng mã nào, chỉ đổi `DATABASE_URL`. Hai điều d�
 - Chuỗi Supabase cấp bắt đầu bằng `postgresql://`; ứng dụng tự đổi sang
   `postgresql+asyncpg://` nên dán nguyên cũng chạy.
 
-## 7. Quên mật khẩu
+## 5. Quên mật khẩu
 
 `POST /auth/password/forgot` tạo liên kết đặt lại mật khẩu một lần, gửi qua SMTP
 và dẫn tới `FRONTEND_URL/reset-password?token=...`. Đặt `FRONTEND_URL` thành URL
@@ -333,14 +398,17 @@ Endpoint luôn trả phản hồi `200` chung để không dò được địa c
 Vì vậy giao diện phải diễn đạt là "nếu tài khoản tồn tại" thay vì cam kết chắc chắn
 đã gửi mail. Kiểm tra cả Inbox, Spam và log SMTP khi kiểm thử delivery.
 
-## 8. Sao lưu
+## 6. Sao lưu
 
 ```bash
 pg_dump "$DATABASE_URL" > backup-$(date +%F).sql   # cơ sở dữ liệu
 ```
 
-Nội dung tệp đính kèm nằm trong Supabase Storage, không nằm trong bản dump ở trên.
-Trước lần deploy đầu tiên dùng Storage, chuyển file local còn tồn tại bằng:
+Với production hiện tại, nội dung tệp đính kèm nằm trong volume
+`backend-uploads`, không nằm trong bản dump ở trên; phải sao lưu volume đó cùng
+PostgreSQL. Nếu sau này cấu hình đủ Supabase Storage, nội dung mới nằm ở đó và
+cũng không có trong PostgreSQL dump. Trước lần deploy đầu tiên dùng Storage,
+chuyển file local còn tồn tại bằng:
 
 ```bash
 python -m scripts.migrate_attachments_to_supabase
@@ -350,7 +418,7 @@ Lệnh mặc định giữ nguyên file local. Sau khi lượt đầu không có
 `missing_local`, có thể chạy lại với `--delete-local-after-verify`; script chỉ
 xóa từng file sau khi tải object về và xác minh SHA-256 trùng khớp.
 
-## 9. Giới hạn đã biết
+## 7. Giới hạn đã biết
 
 Ghi ra để người vận hành biết, không phải để bỏ qua:
 
@@ -369,12 +437,12 @@ Ghi ra để người vận hành biết, không phải để bỏ qua:
    trả về giá trị *naive* trên SQLite và *aware* trên PostgreSQL, chép thẳng là sai
    múi giờ. Bản triển khai bắt đầu từ cơ sở dữ liệu rỗng.
 
-## 10. Sự cố thường gặp
+## 8. Sự cố thường gặp
 
 | Triệu chứng | Nguyên nhân | Cách xử lý |
 |---|---|---|
 | Trang gọi `http://localhost:8000` dù đã đặt biến | `NEXT_PUBLIC_API_URL` nhúng lúc build | Redeploy frontend sau khi đổi biến |
-| Trình duyệt báo lỗi CORS | Tên miền Vercel chưa có trong `CORS_ORIGINS` | Thêm vào rồi khởi động lại backend |
+| Trình duyệt báo lỗi CORS | App domain chưa có trong `CORS_ORIGINS` | Thêm domain HTTPS công khai rồi khởi động lại backend |
 | WebSocket đóng ngay với mã `4403` | `Origin` không khớp danh sách CORS | Như trên — WebSocket dùng chung danh sách đó |
 | WebSocket đóng với mã `4401` | Token sai, hết hạn, hoặc không gửi khung `auth` trong 10 giây | Đăng nhập lại |
 | Container dừng ngay khi khởi động, log nói `asyncio extension requires an async driver` | `DATABASE_URL` trỏ driver đồng bộ | Hiếm — ứng dụng tự đổi tiền tố; kiểm tra xem URL có ghi rõ `+psycopg` không |

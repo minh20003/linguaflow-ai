@@ -10,28 +10,99 @@ import {
   updateCalendarEvent,
 } from "../api/chat-api";
 import {
-  Bot, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  CirclePlus, Clock3, ExternalLink, ListTodo, Plus, RefreshCw, Search, SendHorizontal, Settings, Trash2, X,
+  Bell, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft,
+  ChevronRight, Clock, Clock3, Copy, FileText,
+  MapPin, Pencil, Plus, RefreshCw, RotateCw, Search, Trash2,
+  Users, Video, X,
 } from "lucide-react";
 
-type TaskStatus = "pending" | "approved" | "rejected" | "done";
-type TaskSource = "assistant" | "manual" | "google";
-type CalendarMode = "day" | "week" | "month";
+/* ────────────────────────── TYPES & MODELS ────────────────────────── */
+export type EventKind = "event" | "task";
+export type TaskStatus = "pending" | "approved" | "rejected" | "done";
+export type TaskSource = "manual" | "google" | "assistant";
+export type CalendarMode = "day" | "week" | "month" | "schedule";
+export type RecurrenceFreq = "none" | "daily" | "weekly" | "monthly" | "yearly" | "workdays";
 
-interface CalendarTask {
+export interface Attendee {
+  email: string;
+  name?: string;
+  status?: "accepted" | "declined" | "tentative" | "needsAction";
+}
+
+export interface EventReminder {
+  id: string;
+  method: "popup" | "email";
+  minutes: number;
+}
+
+export interface CalendarTask {
   id: string;
   title: string;
-  note?: string;
-  dueAt: string;
-  duration: number;
+  kind: EventKind;
+
+  // ── RÀNG BUỘC: MỖI LỊCH CHỈ TRONG 1 NGÀY ──
+  date: string;               // "YYYY-MM-DD" e.g. "2026-08-27"
+  isAllDay?: boolean;         // True nếu cả ngày
+  startTime?: string;         // "HH:mm" e.g. "09:00"
+  endTime?: string;           // "HH:mm" e.g. "10:30" (trong cùng ngày)
+  duration: number;           // Số phút trong ngày
+
+  // ISO timestamps cho grid & sorting
+  dueAt: string;              // ISO start string
+  endAt?: string;             // ISO end string
+
+  // ── CÁC TRƯỜNG CƠ BẢN CHUẨN GOOGLE CALENDAR ──
+  colorId?: string;           // Key in GOOGLE_PALETTE
+  recurrence?: RecurrenceFreq;
+  location?: string;          // Địa điểm / Phòng họp
+  meetLink?: string;          // Google Meet link
+  attendees?: Attendee[];     // Người tham gia
+  reminders?: EventReminder[];// Thông báo
+  note?: string;              // Ghi chú / Mô tả
+
   status: TaskStatus;
   source: TaskSource;
-  priority: "low" | "medium" | "high";
-  category?: "task" | "meeting" | "deadline" | "personal" | "focus";
-  location?: string;
-  tags?: string[];
-  kind?: "task" | "event";
-  link?: string;
+  googleEventId?: string;
+  htmlLink?: string;
+  category?: "meeting" | "task" | "personal" | "deadline";
+  isRecurringInstance?: boolean;
+}
+
+/* ────────────────────────── 11 GOOGLE CALENDAR COLORS ────────────────────────── */
+export interface GoogleColor {
+  id: string;
+  name: string;
+  bg: string;
+  text: string;
+  light: string;
+  border: string;
+}
+
+export const GOOGLE_PALETTE: Record<string, GoogleColor> = {
+  peacock:   { id: "peacock",   name: "Lam khổng tước",  bg: "#039BE5", text: "#FFFFFF", light: "#E1F5FE", border: "#0288D1" },
+  sage:      { id: "sage",      name: "Xô thơm",         bg: "#33B679", text: "#FFFFFF", light: "#E8F5E9", border: "#2E7D32" },
+  grape:     { id: "grape",     name: "Nho tím",         bg: "#8E24AA", text: "#FFFFFF", light: "#F3E5F5", border: "#7B1FA2" },
+  flamingo:  { id: "flamingo",  name: "Hồng hạc",        bg: "#E67C73", text: "#FFFFFF", light: "#FCE4EC", border: "#D81B60" },
+  banana:    { id: "banana",    name: "Vàng chuối",      bg: "#F6BF26", text: "#202124", light: "#FFF9C4", border: "#FBC02D" },
+  tangerine: { id: "tangerine", name: "Cam quýt",        bg: "#F4511E", text: "#FFFFFF", light: "#FBE9E7", border: "#E64A19" },
+  tomato:    { id: "tomato",    name: "Cà chua đỏ",      bg: "#D50000", text: "#FFFFFF", light: "#FFEBEE", border: "#C62828" },
+  basil:     { id: "basil",     name: "Húng quế",        bg: "#0B8043", text: "#FFFFFF", light: "#E8F5E9", border: "#1B5E20" },
+  blueberry: { id: "blueberry", name: "Quả việt quất",   bg: "#3F51B5", text: "#FFFFFF", light: "#E8EAF6", border: "#303F9F" },
+  lavender:  { id: "lavender",  name: "Oải hương",       bg: "#7986CB", text: "#FFFFFF", light: "#EDE7F6", border: "#5C6BC0" },
+  graphite:  { id: "graphite",  name: "Graphit xám",     bg: "#616161", text: "#FFFFFF", light: "#EEEEEE", border: "#424242" },
+};
+
+export function getEventColor(task: CalendarTask): GoogleColor {
+  if (task.status === "done") return GOOGLE_PALETTE.graphite;
+  if (task.colorId && GOOGLE_PALETTE[task.colorId]) return GOOGLE_PALETTE[task.colorId];
+  if (task.kind === "task") return GOOGLE_PALETTE.peacock;
+  if (task.source === "google") return GOOGLE_PALETTE.lavender;
+  switch (task.category) {
+    case "meeting":  return GOOGLE_PALETTE.sage;
+    case "deadline": return GOOGLE_PALETTE.tomato;
+    case "personal": return GOOGLE_PALETTE.flamingo;
+    default:         return GOOGLE_PALETTE.peacock;
+  }
 }
 
 /** Map one stored event onto the shape this component was written around.
@@ -45,17 +116,22 @@ function toCalendarTask(event: ApiCalendarEvent): CalendarTask {
   const starts = new Date(event.starts_at);
   const ends = event.ends_at ? new Date(event.ends_at) : null;
   const minutes = ends ? Math.max(15, Math.round((+ends - +starts) / 60000)) : 60;
+  const isAllDay = event.all_day;
   return {
     id: event.id,
     title: event.title,
     note: event.details ?? undefined,
+    date: toDateString(starts),
+    isAllDay,
+    startTime: isAllDay ? undefined : toTimeString(starts),
+    endTime: isAllDay ? undefined : toTimeString(ends ?? new Date(+starts + minutes * 60_000)),
     dueAt: event.starts_at,
+    endAt: event.ends_at ?? undefined,
     duration: event.all_day ? 1440 : minutes,
     // Everything on the calendar has already been decided; a pending proposal
     // is in the task inbox, not here.
     status: event.status === "cancelled" ? "rejected" : "approved",
     source: event.source,
-    priority: "medium",
     category: event.all_day ? "personal" : "task",
     location: event.location ?? undefined,
     kind: event.all_day ? "event" : "task",
@@ -65,8 +141,185 @@ function toCalendarTask(event: ApiCalendarEvent): CalendarTask {
 const HOUR_HEIGHT = 64;
 const DEFAULT_START_HOUR = 7;
 const DEFAULT_END_HOUR = 22;
+
+/* ────────────────────────── CUSTOM CHECKBOX (MÀU TRẮNG KHI CHƯA TÍCH) ────────────────────────── */
+const CustomCheckbox: React.FC<{
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  className?: string;
+  ariaLabel?: string;
+}> = ({ checked, onChange, className = "h-4 w-4", ariaLabel }) => {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onChange(!checked);
+      }}
+      className={`${className} shrink-0 rounded border flex items-center justify-center transition-all ${
+        checked
+          ? "border-[#1A73E8] bg-[#1A73E8] text-white shadow-xs"
+          : "border-[#DADCE0] bg-white hover:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white"
+      }`}
+    >
+      {checked && <Check className="h-3 w-3 stroke-[3] text-white" />}
+    </button>
+  );
+};
+
+/* ────────────────────────── CONSTANTS & UTILITIES ────────────────────────── */
 const MIN_DURATION = 15;
 
+const REMINDER_OPTIONS = [
+  { minutes: 0, label: "Đúng giờ" },
+  { minutes: 5, label: "5 phút trước" },
+  { minutes: 10, label: "10 phút trước" },
+  { minutes: 15, label: "15 phút trước" },
+  { minutes: 30, label: "30 phút trước" },
+  { minutes: 60, label: "1 giờ trước" },
+  { minutes: 1440, label: "1 ngày trước" },
+];
+
+export function toDateString(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function toTimeString(d: Date): string {
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+export function parseDateString(str: string): Date {
+  const [y, m, d] = str.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+export function buildSingleDayIso(dateStr: string, timeStr?: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = (timeStr || "09:00").split(":").map(Number);
+  const date = new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0);
+  return date.toISOString();
+}
+
+export function timeToMinutes(timeStr?: string): number {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+export function minutesToTime(totalMins: number): string {
+  const safe = Math.min(1439, Math.max(0, totalMins));
+  const h = Math.floor(safe / 60);
+  const m = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+export function formatMinutesDuration(mins: number): string {
+  if (mins >= 60) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m > 0 ? `${h} giờ ${m}p` : `${h} giờ`;
+  }
+  return `${mins} phút`;
+}
+
+export function generateMeetLink(): string {
+  const rand = (len: number) => Math.random().toString(36).substring(2, 2 + len);
+  return `https://meet.google.com/${rand(3)}-${rand(4)}-${rand(3)}`;
+}
+
+export function formatVietnameseDate(date: Date, includeWeekday: boolean = true): string {
+  const weekday = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][date.getDay()];
+  const day = date.getDate();
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear();
+  if (includeWeekday) {
+    return `${weekday}, ${day} tháng ${month}, ${year}`;
+  }
+  return `${day} tháng ${month}, ${year}`;
+}
+
+export function sameDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+export function isAllDayTask(task: CalendarTask): boolean {
+  return task.isAllDay === true;
+}
+
+function taskSpan(task: CalendarTask) {
+  const startMins = task.startTime ? timeToMinutes(task.startTime) : 0;
+  const dur = Math.max(MIN_DURATION, task.duration || (task.endTime ? timeToMinutes(task.endTime) - startMins : 60));
+  return { start: startMins, end: Math.min(1440, startMins + dur) };
+}
+
+function hourRange() {
+  return Array.from({ length: 24 }, (_, hour) => hour);
+}
+
+/* ────────────────────────── RECURRENCE MATCHING ────────────────────────── */
+function matchesRecurrence(task: CalendarTask, targetDay: Date): boolean {
+  const taskStart = parseDateString(task.date || toDateString(new Date(task.dueAt)));
+  const startDay = new Date(taskStart.getFullYear(), taskStart.getMonth(), taskStart.getDate());
+  const curDay = new Date(targetDay.getFullYear(), targetDay.getMonth(), targetDay.getDate());
+
+  if (curDay < startDay) return false;
+  if (sameDay(startDay, curDay)) return true;
+  if (!task.recurrence || task.recurrence === "none") return false;
+
+  if (task.recurrence === "daily") return true;
+  if (task.recurrence === "workdays") {
+    const dayOfWeek = curDay.getDay();
+    return dayOfWeek >= 1 && dayOfWeek <= 5; // Thứ 2 đến Thứ 6
+  }
+  if (task.recurrence === "weekly") {
+    return curDay.getDay() === startDay.getDay();
+  }
+  if (task.recurrence === "monthly") {
+    return curDay.getDate() === startDay.getDate();
+  }
+  if (task.recurrence === "yearly") {
+    return curDay.getDate() === startDay.getDate() && curDay.getMonth() === startDay.getMonth();
+  }
+  return false;
+}
+
+function tasksOfDay(tasks: CalendarTask[], day: Date): CalendarTask[] {
+  const targetDateStr = toDateString(day);
+  const result: CalendarTask[] = [];
+
+  for (const task of tasks) {
+    const taskDateStr = task.date || toDateString(new Date(task.dueAt));
+    if (taskDateStr === targetDateStr) {
+      result.push(task);
+    } else if (matchesRecurrence(task, day)) {
+      const clonedDue = buildSingleDayIso(targetDateStr, task.startTime);
+      const clonedEnd = task.endTime ? buildSingleDayIso(targetDateStr, task.endTime) : undefined;
+      result.push({
+        ...task,
+        date: targetDateStr,
+        dueAt: clonedDue,
+        endAt: clonedEnd,
+        isRecurringInstance: true,
+      });
+    }
+  }
+  return result;
+}
+
+/* ────────────────────────── GOOGLE CALENDAR OVERLAPPING EVENT LAYOUT ────────────────────────── */
 interface PositionedTask {
   task: CalendarTask;
   top: number;
@@ -75,101 +328,253 @@ interface PositionedTask {
   width: number;
 }
 
-const minutesOf = (value: Date) => value.getHours() * 60 + value.getMinutes();
-const taskSpan = (task: CalendarTask) => {
-  const start = minutesOf(new Date(task.dueAt));
-  return { start, end: start + Math.max(MIN_DURATION, task.duration) };
-};
-
-/** Grid chỉ hiển thị 7h–22h theo mặc định, nhưng nới ra nếu có việc nằm ngoài khung đó. */
-function hourRange(tasks: CalendarTask[]) {
-  let first = DEFAULT_START_HOUR;
-  let last = DEFAULT_END_HOUR;
-  for (const task of tasks) {
-    if (task.kind === "event") continue;
-    const { start, end } = taskSpan(task);
-    first = Math.min(first, Math.floor(start / 60));
-    last = Math.max(last, Math.min(23, Math.ceil(end / 60) - 1));
-  }
-  return Array.from({ length: last - first + 1 }, (_, index) => first + index);
+interface DetailPopoverAnchor {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
 }
 
-/** Xếp các việc trùng giờ thành nhiều cột cạnh nhau thay vì đè lên nhau. */
+/**
+ * Thuật toán sắp xếp sự kiện trùng giờ chuẩn Google Calendar:
+ * - Nhóm các sự kiện giao thoa/trùng thời gian thành từng cụm (clusters)
+ * - Xếp song song các cột con (sub-columns) cạnh nhau để không bị che khuất
+ */
 function layoutDay(tasks: CalendarTask[], startHour: number): PositionedTask[] {
   const timed = tasks
-    .filter((task) => task.kind !== "event")
-    .sort((left, right) => taskSpan(left).start - taskSpan(right).start || taskSpan(right).end - taskSpan(left).end);
+    .filter((task) => !isAllDayTask(task))
+    .sort((a, b) => {
+      const aSpan = taskSpan(a);
+      const bSpan = taskSpan(b);
+      if (aSpan.start !== bSpan.start) return aSpan.start - bSpan.start;
+      return (bSpan.end - bSpan.start) - (aSpan.end - aSpan.start);
+    });
 
+  if (timed.length === 0) return [];
+
+  // Gom các sự kiện trùng / giao thoa thành các cụm
   const clusters: CalendarTask[][] = [];
-  let cluster: CalendarTask[] = [];
+  let currentCluster: CalendarTask[] = [];
   let clusterEnd = -1;
+
   for (const task of timed) {
     const { start, end } = taskSpan(task);
-    if (cluster.length && start < clusterEnd) {
-      cluster.push(task);
+    if (currentCluster.length === 0) {
+      currentCluster.push(task);
+      clusterEnd = end;
+    } else if (start < clusterEnd) {
+      // Có trùng / chạm khung giờ với cụm hiện tại
+      currentCluster.push(task);
       clusterEnd = Math.max(clusterEnd, end);
     } else {
-      if (cluster.length) clusters.push(cluster);
-      cluster = [task];
+      clusters.push(currentCluster);
+      currentCluster = [task];
       clusterEnd = end;
     }
   }
-  if (cluster.length) clusters.push(cluster);
+  if (currentCluster.length > 0) {
+    clusters.push(currentCluster);
+  }
 
   const positioned: PositionedTask[] = [];
   const offset = startHour * 60;
-  for (const group of clusters) {
+
+  for (const cluster of clusters) {
+    // Phân bổ cột con bằng Greedy Interval Coloring
     const columns: CalendarTask[][] = [];
-    for (const task of group) {
+    const taskColMap = new Map<string, number>();
+
+    for (const task of cluster) {
       const { start } = taskSpan(task);
-      const column = columns.find((items) => taskSpan(items[items.length - 1]).end <= start);
-      if (column) column.push(task);
-      else columns.push([task]);
+      let colIndex = -1;
+      for (let i = 0; i < columns.length; i++) {
+        const lastInCol = columns[i][columns[i].length - 1];
+        if (taskSpan(lastInCol).end <= start) {
+          colIndex = i;
+          columns[i].push(task);
+          break;
+        }
+      }
+      if (colIndex === -1) {
+        colIndex = columns.length;
+        columns.push([task]);
+      }
+      taskColMap.set(task.id, colIndex);
     }
-    const width = 100 / columns.length;
-    columns.forEach((items, index) => items.forEach((task) => {
+
+    const numCols = Math.max(1, columns.length);
+    const width = 100 / numCols;
+
+    for (const task of cluster) {
       const { start, end } = taskSpan(task);
+      const col = taskColMap.get(task.id) || 0;
       positioned.push({
         task,
         top: ((start - offset) / 60) * HOUR_HEIGHT,
         height: Math.max(26, ((end - start) / 60) * HOUR_HEIGHT - 2),
-        left: index * width,
-        width,
+        left: col * width,
+        width: width,
       });
-    }));
+    }
   }
-  return positioned;
-}
 
-function tasksOfDay(tasks: CalendarTask[], day: Date) {
-  return tasks.filter((task) => sameDay(new Date(task.dueAt), day));
+  return positioned;
 }
 
 function startOfWeek(value: Date) {
   const date = new Date(value);
-  const offset = (date.getDay() + 6) % 7;
+  const offset = (date.getDay() + 6) % 7; // Monday = 0
   date.setDate(date.getDate() - offset);
   date.setHours(0, 0, 0, 0);
   return date;
 }
 
-function sameDay(left: Date, right: Date) {
-  return left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate();
+/* ────────────────────────── DEFAULT SAMPLE TASKS (WITH OVERLAPPING EXAMPLES) ────────────────────────── */
+const defaultTasks = (): CalendarTask[] => {
+  const today = new Date();
+  const dStr = (offset: number) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + offset);
+    return toDateString(d);
+  };
+
+  const t0 = dStr(0);
+  const t1 = dStr(1);
+  const t2 = dStr(2);
+
+  return [
+    {
+      id: "meeting-standup",
+      title: "Họp Stand-up dự án đầu ngày",
+      kind: "event",
+      date: t0,
+      isAllDay: false,
+      startTime: "09:00",
+      endTime: "09:30",
+      duration: 30,
+      dueAt: buildSingleDayIso(t0, "09:00"),
+      endAt: buildSingleDayIso(t0, "09:30"),
+      recurrence: "workdays", // Thứ 2 đến Thứ 6
+      colorId: "sage",
+      category: "meeting",
+      location: "Google Meet",
+      meetLink: "https://meet.google.com/hcm-sync-team",
+      note: "Cập nhật nhanh tiến độ các đầu việc trong ngày với cả nhóm.",
+      attendees: [
+        { email: "leader@company.com", name: "Trưởng nhóm", status: "accepted" },
+        { email: "dev@company.com", name: "Lập trình viên", status: "accepted" },
+      ],
+      reminders: [{ id: "r1", method: "popup", minutes: 10 }],
+      status: "approved",
+      source: "google",
+    },
+    {
+      id: "task-urgent-review",
+      title: "Kiểm tra khẩn cấp báo cáo sự cố",
+      kind: "task",
+      date: t0,
+      isAllDay: false,
+      startTime: "09:00",
+      endTime: "10:00", // Trùng khung giờ 9:00 - 9:30 với họp Stand-up để hiển thị song song!
+      duration: 60,
+      dueAt: buildSingleDayIso(t0, "09:00"),
+      endAt: buildSingleDayIso(t0, "10:00"),
+      colorId: "tomato",
+      category: "deadline",
+      note: "Công việc quan trọng diễn ra song song cùng khung giờ họp.",
+      reminders: [{ id: "r2", method: "popup", minutes: 10 }],
+      status: "approved",
+      source: "manual",
+    },
+    {
+      id: "task-code-review",
+      title: "Rà soát mã nguồn & Tối ưu giao diện",
+      kind: "task",
+      date: t0,
+      isAllDay: false,
+      startTime: "09:45",
+      endTime: "11:15", // Trùng khung giờ 9:45 - 10:00 với task kiểm tra khẩn cấp
+      duration: 90,
+      dueAt: buildSingleDayIso(t0, "09:45"),
+      endAt: buildSingleDayIso(t0, "11:15"),
+      colorId: "peacock",
+      category: "task",
+      note: "Tối ưu hóa khả năng kéo thả và hiển thị lịch trùng khung giờ.",
+      reminders: [{ id: "r3", method: "popup", minutes: 15 }],
+      status: "approved",
+      source: "manual",
+    },
+    {
+      id: "event-lunch",
+      title: "Ăn trưa cùng nhóm thiết kế",
+      kind: "event",
+      date: t0,
+      isAllDay: false,
+      startTime: "12:00",
+      endTime: "13:00",
+      duration: 60,
+      dueAt: buildSingleDayIso(t0, "12:00"),
+      endAt: buildSingleDayIso(t0, "13:00"),
+      colorId: "flamingo",
+      category: "personal",
+      location: "Khu ẩm thực Tầng B1",
+      status: "approved",
+      source: "manual",
+    },
+    {
+      id: "task-send-report",
+      title: "Gửi báo cáo tổng kết tuần cho khách hàng",
+      kind: "task",
+      date: t1,
+      isAllDay: false,
+      startTime: "15:00",
+      endTime: "16:00",
+      duration: 60,
+      dueAt: buildSingleDayIso(t1, "15:00"),
+      endAt: buildSingleDayIso(t1, "16:00"),
+      colorId: "tomato",
+      category: "deadline",
+      note: "Tổng hợp số liệu và đính kèm file PDF.",
+      reminders: [{ id: "r4", method: "popup", minutes: 30 }],
+      status: "approved",
+      source: "manual",
+    },
+    {
+      id: "event-workshop",
+      title: "Hội thảo chuyên đề công nghệ mới",
+      kind: "event",
+      date: t2,
+      isAllDay: true,
+      duration: 1440,
+      dueAt: buildSingleDayIso(t2, "00:00"),
+      endAt: buildSingleDayIso(t2, "23:59"),
+      colorId: "grape",
+      category: "meeting",
+      location: "Trung tâm Hội nghị Quốc tế",
+      status: "approved",
+      source: "manual",
+    },
+  ];
+};
+
+function recurrenceLabel(rec?: RecurrenceFreq) {
+  if (!rec || rec === "none") return "Không lặp lại";
+  if (rec === "daily") return "Hằng ngày";
+  if (rec === "workdays") return "Thứ 2 đến Thứ 6"; // Đã bỏ "Ngày làm việc"
+  if (rec === "weekly") return "Hằng tuần vào ngày này";
+  if (rec === "monthly") return "Hằng tháng vào ngày này";
+  if (rec === "yearly") return "Hằng năm vào ngày này";
+  return "Không lặp lại";
 }
 
-function toInputValue(value: Date) {
-  const offset = value.getTimezoneOffset();
-  return new Date(value.getTime() - offset * 60_000).toISOString().slice(0, 16);
-}
-
-function sourceLabel(source: TaskSource) {
-  if (source === "assistant") return "Trợ lý đề xuất";
-  if (source === "google") return "Google Calendar";
-  return "Tạo thủ công";
-}
-
-function statusLabel(status: TaskStatus) {
-  return ({ pending: "Chờ duyệt", approved: "Đã lên lịch", rejected: "Đã từ chối", done: "Hoàn thành" })[status];
+/* ────────────────────────── DRAG TIME SELECTION STATE ────────────────────────── */
+interface DragTimeSelection {
+  isDragging: boolean;
+  dateStr: string;
+  startMin: number;
+  currentMin: number;
+  columnTop: number;
+  columnHeight: number;
 }
 
 interface PersonalCalendarProps {
@@ -188,24 +593,55 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(() => new Date());
   const [query, setQuery] = useState("");
-  const [showForm, setShowForm] = useState(false);
-  const [newItemKind, setNewItemKind] = useState<"task" | "event">("task");
   const [showCreateMenu, setShowCreateMenu] = useState(false);
-  const [showAssistant, setShowAssistant] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [newItemKind, setNewItemKind] = useState<EventKind>("event");
+  const [draftDate, setDraftDate] = useState<string>(toDateString(new Date()));
+  const [draftStartTime, setDraftStartTime] = useState<string>("09:00");
+  const [draftEndTime, setDraftEndTime] = useState<string>("10:00");
+  const [draftTitle, setDraftTitle] = useState<string>("");
+  const [draftLocation, setDraftLocation] = useState<string>("");
+  const [draftColorId, setDraftColorId] = useState<string>("sage");
+  const [draftIsAllDay, setDraftIsAllDay] = useState<boolean>(false);
+
   const [selectedTask, setSelectedTask] = useState<CalendarTask | null>(null);
+  const [detailAnchor, setDetailAnchor] = useState<DetailPopoverAnchor | null>(null);
   const [editingTask, setEditingTask] = useState<CalendarTask | null>(null);
-  const [sourceFilter, setSourceFilter] = useState<TaskSource | "all">("all");
-  const [statusFilter, setStatusFilter] = useState<TaskStatus | "all">("all");
-  const [showSidebar, setShowSidebar] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [selectedFilters, setSelectedFilters] = useState<Record<string, boolean>>({
+    event: true,
+    task: true,
+    google: true,
+  });
+
+  // Quick click-create popover on grid
+  const [quickCreateState, setQuickCreateState] = useState<{
+    open: boolean;
+    anchor: DetailPopoverAnchor | null;
+    date: string;
+    startTime: string;
+    endTime: string;
+  }>({
+    open: false,
+    anchor: null,
+    date: toDateString(new Date()),
+    startTime: "09:00",
+    endTime: "10:00",
+  });
+
+  // Kéo chọn khung giờ trực tiếp trên lịch
+  const [dragSelection, setDragSelection] = useState<DragTimeSelection | null>(null);
+
   const createMenuRef = useRef<HTMLDivElement | null>(null);
   const hydrated = useRef(false);
 
+  // Update current time tick
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
+  // Close menus on outside click
   useEffect(() => {
     if (!showCreateMenu) return;
     const handleOutside = (event: MouseEvent) => {
@@ -236,19 +672,73 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
     void reload();
   }, [reload, refreshToken]);
 
-  const visibleTasks = useMemo(() => tasks.filter((task) => {
-    const matchesSearch = `${task.title} ${task.note ?? ""}`.toLocaleLowerCase().includes(query.toLocaleLowerCase());
-    return matchesSearch && task.status !== "pending" && (sourceFilter === "all" || task.source === sourceFilter) && (statusFilter === "all" || task.status === statusFilter);
-  }), [query, sourceFilter, statusFilter, tasks]);
+  // Global mousemove & mouseup handler for drag-to-select time range
+  useEffect(() => {
+    if (!dragSelection?.isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const y = e.clientY - dragSelection.columnTop;
+      const rawMin = (y / dragSelection.columnHeight) * 1440;
+      // Snap to 15-minute intervals
+      const snappedMin = Math.max(0, Math.min(1440, Math.round(rawMin / 15) * 15));
+      setDragSelection((prev) => (prev ? { ...prev, currentMin: snappedMin } : null));
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!dragSelection) return;
+
+      const start = Math.min(dragSelection.startMin, dragSelection.currentMin);
+      let end = Math.max(dragSelection.startMin, dragSelection.currentMin);
+
+      // Nếu người dùng chỉ click hoặc kéo < 15 phút, tự động tạo khung 1 giờ
+      if (end - start < 15) {
+        end = Math.min(1440, start + 60);
+      }
+
+      const startTime = minutesToTime(start);
+      const endTime = minutesToTime(end);
+
+      setQuickCreateState({
+        open: true,
+        anchor: { top: e.clientY, right: e.clientX, bottom: e.clientY, left: e.clientX },
+        date: dragSelection.dateStr,
+        startTime,
+        endTime,
+      });
+
+      setDragSelection(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragSelection]);
+
+  // Filter visible tasks
+  const visibleTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      const q = query.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        `${task.title} ${task.note ?? ""} ${task.location ?? ""} ${task.attendees?.map((a) => a.email).join(" ") ?? ""}`
+          .toLowerCase()
+          .includes(q);
+
+      const filterKey = task.source === "google" ? "google" : task.kind;
+      const isEnabled = selectedFilters[filterKey] !== false;
+
+      return matchesSearch && isEnabled;
+    });
+  }, [query, selectedFilters, tasks]);
 
   const scheduledTasks = useMemo(
     () => visibleTasks.filter((task) => task.status === "approved" || task.status === "done" || task.source === "google"),
-    [visibleTasks],
+    [visibleTasks]
   );
-  const upcoming = useMemo(
-    () => [...visibleTasks].sort((left, right) => +new Date(left.dueAt) - +new Date(right.dueAt)),
-    [visibleTasks],
-  );
+
   const weekDays = useMemo(() => {
     const weekStart = startOfWeek(cursor);
     return Array.from({ length: 7 }, (_, index) => {
@@ -257,11 +747,19 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       return date;
     });
   }, [cursor]);
+
   const weekStart = weekDays[0];
-  const hours = useMemo(() => hourRange(scheduledTasks), [scheduledTasks]);
+  const hours = useMemo(() => hourRange(), []);
 
   const updateTask = (id: string, update: Partial<CalendarTask>) =>
     setTasks((items) => items.map((task) => (task.id === id ? { ...task, ...update } : task)));
+
+  // Approval lives in the task inbox, where the proposal and its clarification
+  // question are. The calendar shows what was already decided, so these three
+  // only exist for entries that reached it.
+  const approve = (task: CalendarTask) => updateTask(task.id, { status: "approved" });
+  const reject = (task: CalendarTask) => updateTask(task.id, { status: "rejected" });
+  const finish = (task: CalendarTask) => updateTask(task.id, { status: "done" });
 
   const removeTask = async (task: CalendarTask) => {
     // Optimistic, then reconciled by `reload`. The server cancels rather than
@@ -311,253 +809,2188 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
     }
   };
 
-  const navigate = useCallback((direction: -1 | 1) => setCursor((date) => {
-    const next = new Date(date);
-    if (mode === "day") next.setDate(next.getDate() + direction);
-    else if (mode === "week") next.setDate(next.getDate() + direction * 7);
-    else next.setMonth(next.getMonth() + direction);
-    return next;
-  }), [mode]);
+  const deleteTask = (id: string) => {
+    const task = tasks.find((item) => item.id === id);
+    if (task) void removeTask(task);
+    setSelectedTask(null);
+    setDetailAnchor(null);
+  };
 
-  useEffect(() => {
-    const handleKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (event.key === "ArrowLeft") navigate(-1);
-      else if (event.key === "ArrowRight") navigate(1);
-      else if (event.key.toLowerCase() === "t") setCursor(new Date());
-      else if (event.key.toLowerCase() === "d") setMode("day");
-      else if (event.key.toLowerCase() === "w") setMode("week");
-      else if (event.key.toLowerCase() === "m") setMode("month");
-      else return;
-      event.preventDefault();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [navigate]);
+  // Open Full Form with single-day parameters and prefilled drag details
+  const openCreateForm = useCallback((
+    dateStr: string,
+    startTime: string = "09:00",
+    endTime: string = "10:00",
+    kind: EventKind = "event",
+    title: string = "",
+    colorId: string = "sage",
+    location: string = "",
+    isAllDay: boolean = false
+  ) => {
+    setDraftDate(dateStr);
+    setDraftStartTime(startTime);
+    setDraftEndTime(endTime);
+    setNewItemKind(kind);
+    setDraftTitle(title);
+    setDraftColorId(colorId);
+    setDraftLocation(location);
+    setDraftIsAllDay(isAllDay);
+    setShowForm(true);
+    setQuickCreateState((prev) => ({ ...prev, open: false }));
+  }, []);
 
-  const currentPeriod = mode === "day"
-    ? cursor.toLocaleDateString("vi-VN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
-    : mode === "week"
-    ? `${weekStart.toLocaleDateString("vi-VN", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" })}`
-    : cursor.toLocaleDateString("vi-VN", { month: "long", year: "numeric" });
+  // Xử lý khi bắt đầu kéo chuột trên cột ngày để chọn khung giờ linh hoạt
+  const handleStartDragTime = useCallback((dateStr: string, e: React.MouseEvent<HTMLDivElement>) => {
+    // Không kích hoạt kéo nếu click trúng sự kiện đã có
+    if ((e.target as HTMLElement).closest("button[data-task-block]")) return;
+
+    const columnEl = e.currentTarget;
+    const rect = columnEl.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const totalHeight = 24 * HOUR_HEIGHT;
+    const rawMin = (y / totalHeight) * 1440;
+    const snappedStart = Math.max(0, Math.min(1425, Math.floor(rawMin / 15) * 15));
+
+    setDragSelection({
+      isDragging: true,
+      dateStr,
+      startMin: snappedStart,
+      currentMin: snappedStart + 30,
+      columnTop: rect.top,
+      columnHeight: totalHeight,
+    });
+  }, []);
+
+  const openTaskDetails = useCallback((task: CalendarTask, anchor?: DetailPopoverAnchor) => {
+    setDetailAnchor(anchor ?? null);
+    setSelectedTask(task);
+    setQuickCreateState((prev) => ({ ...prev, open: false }));
+  }, []);
+
+  const navigate = useCallback(
+    (direction: -1 | 1) => {
+      setCursor((date) => {
+        const next = new Date(date);
+        if (mode === "day") next.setDate(next.getDate() + direction);
+        else if (mode === "week") next.setDate(next.getDate() + direction * 7);
+        else if (mode === "month") next.setMonth(next.getMonth() + direction);
+        else next.setDate(next.getDate() + direction * 14);
+        return next;
+      });
+    },
+    [mode]
+  );
+
+  const currentPeriod = useMemo(() => {
+    if (mode === "day") {
+      return formatVietnameseDate(cursor, true);
+    }
+    if (mode === "week") {
+      return `${weekStart.toLocaleDateString("vi-VN", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" })}`;
+    }
+    if (mode === "month") {
+      return `Tháng ${cursor.getMonth() + 1} năm ${cursor.getFullYear()}`;
+    }
+    return `Lịch biểu (${cursor.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })})`;
+  }, [mode, cursor, weekStart, weekDays]);
 
   return (
-    <section className="flex h-screen min-w-0 flex-1 bg-[#F7F8FC] dark:bg-[#14161C]" aria-label="Lịch cá nhân">
+    <section className="flex h-screen min-w-0 flex-1 bg-[#F8FAFD] text-[#1F1F1F] select-none dark:bg-[#131314] dark:text-[#E3E3E3]" aria-label="Lịch Google Calendar">
+      {/* ── MAIN CALENDAR VIEWPORT ── */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="border-b border-[#E8EAF0] bg-white px-5 py-4 dark:border-[#2E3342] dark:bg-[#1C1F27] sm:px-7">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#60A5FA]"><CalendarDays className="h-5 w-5" /></span>
-                <div><h1 className="text-xl font-bold text-[#1E2230] dark:text-[#F5F6FA]">Lịch cá nhân</h1><p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">Sắp xếp công việc, dành thời gian cho điều quan trọng.</p></div>
+        {/* ── GOOGLE CALENDAR HEADER TOOLBAR ── */}
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#DADCE0] bg-white px-3 dark:border-[#36373A] dark:bg-[#1E1F20] sm:px-5">
+          {/* Left: Calendar identity, Today, Navigation */}
+          <div className="flex items-center gap-1.5 sm:gap-3">
+            {/* Calendar logo */}
+            <div className="flex items-center gap-2.5 mr-2">
+              <div className="flex h-9 w-9 items-center justify-center text-[#2563EB] dark:text-[#A8C7FA]">
+                <CalendarDays className="h-5 w-5" />
               </div>
+              <span className="hidden text-[22px] font-normal tracking-tight text-[#3C4043] dark:text-[#E3E3E3] md:inline">
+                Lịch
+              </span>
             </div>
-            <div className="flex items-center gap-2">
-              <GoogleCalendarControls token={token} onSynced={() => void reload()} onNotify={onNotify} />
-              <button onClick={() => setShowAssistant(true)} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-300">Lập lịch bằng Trợ lý</button>
-              <button onClick={() => setShowSidebar(true)} aria-label="Mở danh sách việc" className="inline-flex items-center gap-1.5 rounded-xl border border-[#E8EAF0] bg-white px-3 py-2 text-xs font-semibold text-[#4E5568] hover:bg-[#F7F8FC] dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6] dark:hover:bg-[#2E3342] xl:hidden"><ListTodo className="h-4 w-4" />Việc</button>
-              <div className="relative" ref={createMenuRef}><button onClick={() => setShowCreateMenu((value) => !value)} className="inline-flex items-center gap-1.5 rounded-xl bg-[#2563EB] px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-[#1D4ED8]"><Plus className="h-4 w-4" />Thêm</button>{showCreateMenu && <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1.5 shadow-xl dark:border-[#2E3342] dark:bg-[#232630]"><button onClick={() => { setNewItemKind("event"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#60A5FA]"><CalendarDays className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Sự kiện</span></button><button onClick={() => { setNewItemKind("task"); setShowForm(true); setShowCreateMenu(false); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-[#F7F8FC] dark:hover:bg-[#2E3342]"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300"><CheckCircle2 className="h-4 w-4" /></span><span className="text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">Việc</span></button></div>}</div>
+
+            {/* Today Button */}
+            <button
+              onClick={() => setCursor(new Date())}
+              className="rounded-full border border-[#747775]/50 px-4 py-1.5 text-sm font-medium text-[#1F1F1F] transition-all hover:bg-[#F1F3F4] active:bg-[#E8EAED] dark:border-[#5F6368] dark:text-[#E3E3E3] dark:hover:bg-[#282A2C]"
+            >
+              Hôm nay
+            </button>
+
+            {/* Chevron Prev / Next */}
+            <div className="flex items-center">
+              <button
+                aria-label="Kỳ trước"
+                onClick={() => navigate(-1)}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                aria-label="Kỳ sau"
+                onClick={() => navigate(1)}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
             </div>
+
+            {/* Period Display */}
+            <h2 className="min-w-0 truncate text-sm font-normal text-[#1F1F1F] dark:text-[#E3E3E3] sm:text-lg lg:text-[20px]">
+              {currentPeriod}
+            </h2>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#F1F2F5] pt-3 dark:border-[#2A2E3D]">
-            <div className="flex items-center gap-2">
-              <div className="flex items-center rounded-lg border border-[#E8EAF0] bg-[#F7F8FC] p-0.5 dark:border-[#2E3342] dark:bg-[#232630]">
-                <button aria-label="Kỳ trước" onClick={() => navigate(-1)} className="rounded-md p-1.5 text-[#74798C] hover:bg-white hover:text-[#1E2230] dark:hover:bg-[#2E3342]"><ChevronLeft className="h-4 w-4" /></button>
-                <h2 className="min-w-[180px] px-2 text-center text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA] sm:min-w-[235px]">{currentPeriod}</h2>
-                <button aria-label="Kỳ sau" onClick={() => navigate(1)} className="rounded-md p-1.5 text-[#74798C] hover:bg-white hover:text-[#1E2230] dark:hover:bg-[#2E3342]"><ChevronRight className="h-4 w-4" /></button>
-              </div>
-              <button onClick={() => setCursor(new Date())} className="rounded-lg border border-[#E8EAF0] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#1E2230] hover:bg-[#F7F8FC] dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#F5F6FA] dark:hover:bg-[#2E3342]">Hôm nay</button>
+
+          {/* Right: Search & View Mode Switcher */}
+          <div className="flex items-center gap-2">
+            {/* Instant Search Bar */}
+            <div className="relative hidden md:block">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#747775]" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Tìm kiếm sự kiện, việc cần làm..."
+                className="h-10 w-48 rounded-full border border-[#DADCE0] bg-[#F1F3F4] pl-9 pr-3 text-xs text-[#1F1F1F] outline-none transition-all focus:w-64 focus:border-[#1A73E8] focus:bg-white dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-white dark:focus:bg-[#1E1F20]"
+              />
+              {query && (
+                <button
+                  onClick={() => setQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-[#747775] hover:bg-[#E0E0E0] dark:hover:bg-[#444746]"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex rounded-lg bg-[#F1F2F5] p-1 dark:bg-[#232630]">
-                {(["day", "week", "month"] as CalendarMode[]).map((item) => <button key={item} onClick={() => setMode(item)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${mode === item ? "bg-white text-[#2563EB] shadow-sm dark:bg-[#2E3342] dark:text-[#60A5FA]" : "text-[#74798C]"}`}>{item === "day" ? "Ngày" : item === "week" ? "Tuần" : "Tháng"}</button>)}
-              </div>
+
+            {/* View Mode Switcher (Day / Week / Month / Schedule) */}
+            <div className="flex rounded-lg border border-[#747775]/40 bg-white p-0.5 shadow-2xs dark:border-[#5F6368] dark:bg-[#2D2E30]">
+              {(["day", "week", "month", "schedule"] as CalendarMode[]).map((item) => (
+                <button
+                  key={item}
+                  onClick={() => setMode(item)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
+                    mode === item
+                      ? "bg-[#D3E3FD] text-[#0B57D0] shadow-xs dark:bg-[#004A77] dark:text-[#C2E7FF]"
+                      : "text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
+                  }`}
+                >
+                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : "Lịch biểu"}
+                </button>
+              ))}
             </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#F1F2F5] pt-3 text-xs dark:border-[#2A2E3D]">
-            <span className="font-semibold text-[#74798C]">Lọc:</span>
-            <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as TaskSource | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi nguồn</option><option value="assistant">Trợ lý</option><option value="manual">Thủ công</option><option value="google">Google</option></select>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | "all")} className="rounded-lg border border-[#E8EAF0] bg-white px-2 py-1.5 text-xs text-[#4E5568] outline-none dark:border-[#2E3342] dark:bg-[#232630] dark:text-[#C6CAD6]"><option value="all">Mọi trạng thái</option><option value="approved">Đã lên lịch</option><option value="done">Hoàn thành</option><option value="rejected">Đã từ chối</option></select>
-            
+
+            <button
+              type="button"
+              onClick={() => setNow(new Date())}
+              aria-label="Làm mới lịch"
+              title="Làm mới"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
           </div>
         </header>
 
+        {/* ── CALENDAR BODY WORKSPACE ── */}
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#1C1F27]">
-            {mode === "day" ? <DayGrid day={cursor} hours={hours} now={now} tasks={scheduledTasks} onSelect={setSelectedTask} /> : mode === "week" ? <WeekGrid days={weekDays} hours={hours} now={now} tasks={scheduledTasks} onSelect={setSelectedTask} /> : <MonthGrid cursor={cursor} tasks={scheduledTasks} onSelect={setSelectedTask} />}
-          </div>
-          {showSidebar && <button aria-label="Đóng danh sách" onClick={() => setShowSidebar(false)} className="fixed inset-0 z-30 bg-[#111827]/40 xl:hidden" />}
-          <aside className={`${showSidebar ? "fixed inset-y-0 right-0 z-40 flex w-[300px] max-w-[85vw] flex-col shadow-2xl" : "hidden"} shrink-0 border-l border-[#E8EAF0] bg-white dark:border-[#2E3342] dark:bg-[#1C1F27] xl:static xl:z-auto xl:flex xl:w-[300px] xl:flex-col xl:shadow-none`}>
-            <div className="flex items-center justify-between border-b border-[#E8EAF0] px-4 py-3 dark:border-[#2E3342] xl:hidden">
-              <h3 className="text-xs font-bold uppercase tracking-wide text-[#74798C]">Việc &amp; đề xuất</h3>
-              <button onClick={() => setShowSidebar(false)} aria-label="Đóng" className="rounded-lg p-1 text-[#74798C] hover:bg-[#F4F5F8] dark:hover:bg-[#2E3342]"><X className="h-4 w-4" /></button>
+          {/* ── LEFT SIDEBAR (GOOGLE CALENDAR STYLE) ── */}
+          <aside className="hidden w-[260px] shrink-0 flex-col border-r border-[#DADCE0] bg-white dark:border-[#36373A] dark:bg-[#1E1F20] lg:flex">
+            {/* Nút "+ Tạo" */}
+            <div className="p-4" ref={createMenuRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setShowCreateMenu((v) => !v)}
+                  className="flex h-12 w-fit items-center gap-3 rounded-full bg-white px-5 text-sm font-medium text-[#3C4043] shadow-[0_1px_3px_0_rgba(60,64,67,0.3),0_4px_8px_3px_rgba(60,64,67,0.15)] transition-all hover:bg-[#F8FAFD] hover:shadow-[0_2px_6px_2px_rgba(60,64,67,0.25)] active:scale-98 dark:bg-[#2D2E30] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]"
+                >
+                  <Plus className="h-6 w-6 text-[#1A73E8] stroke-[2.5]" />
+                  <span className="font-medium text-[15px]">Tạo</span>
+                  <ChevronDown className="h-4 w-4 text-[#747775]" />
+                </button>
+
+                {showCreateMenu && (
+                  <div className="absolute left-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-[#DADCE0] bg-white py-1.5 shadow-[0_8px_24px_rgba(0,0,0,.16)] dark:border-[#5F6368] dark:bg-[#2D2E30]">
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false);
+                        openCreateForm(toDateString(cursor), "09:00", "10:00", "event");
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[#1F1F1F] transition-colors hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]"
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F0FE] text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">
+                        <CalendarDays className="h-4 w-4" />
+                      </span>
+                      <span className="font-medium">Sự kiện</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setShowCreateMenu(false);
+                        openCreateForm(toDateString(cursor), "10:00", "11:00", "task");
+                      }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-[#1F1F1F] transition-colors hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]"
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F5E9] text-[#2E7D32] dark:bg-emerald-500/20 dark:text-emerald-300">
+                        <CheckCircle2 className="h-4 w-4" />
+                      </span>
+                      <span className="font-medium">Việc cần làm</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="border-b border-[#E8EAF0] p-4 dark:border-[#2E3342]"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A8F9E]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm việc..." className="w-full rounded-xl border border-[#E8EAF0] bg-[#F7F8FC] py-2 pl-9 pr-3 text-xs text-[#1E2230] outline-none focus:border-[#2563EB] dark:border-[#2E3342] dark:bg-[#232630] dark:text-white" /></div></div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
-              <h3 className="pt-3 text-xs font-bold uppercase tracking-wide text-[#74798C]">Sắp tới</h3>
-              {upcoming.length === 0 ? <Empty label="Không có việc nào khớp bộ lọc" /> : upcoming.map((task) => <TaskCard key={task.id} task={task} onSelect={setSelectedTask} />)}
+
+            {/* Mini Month Calendar */}
+            <div className="px-3 pb-2">
+              <MiniCalendar
+                cursor={cursor}
+                onSelect={(d) => {
+                  setCursor(d);
+                  setMode("day");
+                }}
+                now={now}
+                tasks={scheduledTasks}
+              />
+            </div>
+
+            {/* "Lịch của tôi" Filter (Ô tích chọn màu trắng khi chưa tích) */}
+            <div className="flex-1 overflow-y-auto px-4 py-2 text-xs">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-semibold text-[#444746] dark:text-[#C4C7C5] tracking-wide uppercase text-[11px]">
+                  Lịch của tôi
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                {[
+                  { key: "event", name: "Sự kiện", color: GOOGLE_PALETTE.sage },
+                  { key: "task", name: "Việc cần làm", color: GOOGLE_PALETTE.peacock },
+                  { key: "google", name: "Google Calendar Sync", color: GOOGLE_PALETTE.lavender },
+                ].map((item) => {
+                  const isChecked = selectedFilters[item.key] !== false;
+                  return (
+                    <label
+                      key={item.key}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-lg py-1 px-1.5 hover:bg-[#F1F3F4] dark:hover:bg-[#282A2C]"
+                    >
+                      <CustomCheckbox
+                        checked={isChecked}
+                        onChange={(checked) =>
+                          setSelectedFilters((prev) => ({ ...prev, [item.key]: checked }))
+                        }
+                        ariaLabel={item.name}
+                      />
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color.bg }} />
+                      <span className="truncate text-[#3C4043] dark:text-[#E3E3E3] text-[12px]">{item.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </aside>
+
+          {/* ── GRID WORKSPACE (DAY / WEEK / MONTH / SCHEDULE) ── */}
+          <div className={`flex min-w-0 flex-1 flex-col overflow-hidden ${mode === "month" ? "bg-[#F8FAFD] dark:bg-[#171920]" : "bg-white dark:bg-[#1E1F20]"}`}>
+            {mode === "day" && (
+              <DayGrid
+                day={cursor}
+                hours={hours}
+                now={now}
+                tasks={scheduledTasks}
+                onSelect={openTaskDetails}
+                onStartDrag={handleStartDragTime}
+                dragSelection={dragSelection}
+              />
+            )}
+            {mode === "week" && (
+              <WeekGrid
+                days={weekDays}
+                hours={hours}
+                now={now}
+                tasks={scheduledTasks}
+                onSelect={openTaskDetails}
+                onStartDrag={handleStartDragTime}
+                dragSelection={dragSelection}
+                onOpenDay={(d) => {
+                  setCursor(new Date(d));
+                  setMode("day");
+                }}
+              />
+            )}
+            {mode === "month" && (
+              <MonthGrid
+                cursor={cursor}
+                tasks={scheduledTasks}
+                onSelect={openTaskDetails}
+                onDoubleClickDay={(d) => openCreateForm(toDateString(d), "09:00", "10:00", "event")}
+              />
+            )}
+            {mode === "schedule" && (
+              <ScheduleView
+                cursor={cursor}
+                tasks={scheduledTasks}
+                onSelect={openTaskDetails}
+                onFinish={finish}
+                onCreateNew={() => openCreateForm(toDateString(cursor))}
+              />
+            )}
+          </div>
         </div>
       </main>
-      {showForm && <TaskForm initialKind={newItemKind} onClose={() => setShowForm(false)} onSubmit={(task) => { setTasks((items) => [...items, task]); setShowForm(false); }} />}
-      {editingTask && <TaskForm initialTask={editingTask} onClose={() => setEditingTask(null)} onSubmit={(task) => { setTasks((items) => items.map((item) => item.id === editingTask.id ? { ...task, id: editingTask.id, source: item.source, status: item.status } : item)); setEditingTask(null); setSelectedTask(null); }} />}
-      {showAssistant && <AssistantForm onClose={() => setShowAssistant(false)} onSubmit={(task) => { setTasks((items) => [...items, task]); setShowAssistant(false); }} />}
-      {selectedTask && <TaskDetails task={selectedTask} onClose={() => setSelectedTask(null)} onEdit={() => setEditingTask(selectedTask)} onDelete={() => { setTasks((items) => items.filter((task) => task.id !== selectedTask.id)); setSelectedTask(null); }} />}
+
+      {/* ── QUICK CREATE POPOVER ON GRID DRAG / CLICK ── */}
+      {quickCreateState.open && (
+        <QuickCreatePopover
+          dateStr={quickCreateState.date}
+          startTime={quickCreateState.startTime}
+          endTime={quickCreateState.endTime}
+          anchor={quickCreateState.anchor}
+          onClose={() => setQuickCreateState((prev) => ({ ...prev, open: false }))}
+          onMoreOptions={(title, kind, colorId, location, isAllDay) => {
+            openCreateForm(
+              quickCreateState.date,
+              quickCreateState.startTime,
+              quickCreateState.endTime,
+              kind,
+              title,
+              colorId,
+              location,
+              isAllDay
+            );
+          }}
+          onSave={(task) => {
+            setTasks((prev) => [...prev, task]);
+            setQuickCreateState((prev) => ({ ...prev, open: false }));
+          }}
+        />
+      )}
+
+      {/* ── FULL EVENT / TASK MODAL ── */}
+      {showForm && (
+        <FullEventModal
+          initialKind={newItemKind}
+          initialDate={draftDate}
+          initialStartTime={draftStartTime}
+          initialEndTime={draftEndTime}
+          initialTitle={draftTitle}
+          initialLocation={draftLocation}
+          initialColorId={draftColorId}
+          initialIsAllDay={draftIsAllDay}
+          onClose={() => {
+            setShowForm(false);
+            setDraftTitle("");
+            setDraftLocation("");
+          }}
+          onSubmit={(task) => {
+            setTasks((items) => [...items, task]);
+            setShowForm(false);
+            setDraftTitle("");
+            setDraftLocation("");
+          }}
+        />
+      )}
+
+      {editingTask && (
+        <FullEventModal
+          initialTask={editingTask}
+          onClose={() => setEditingTask(null)}
+          onSubmit={(task) => {
+            setTasks((items) =>
+              items.map((item) => (item.id === editingTask.id ? { ...task, id: editingTask.id } : item))
+            );
+            setEditingTask(null);
+            setSelectedTask(null);
+          }}
+        />
+      )}
+
+      {/* ── EVENT DETAILS MODAL ── */}
+      {selectedTask && (
+        <EventDetailsModal
+          task={selectedTask}
+          anchor={detailAnchor}
+          onClose={() => {
+            setSelectedTask(null);
+            setDetailAnchor(null);
+          }}
+          onFinish={finish}
+          onEdit={() => setEditingTask(selectedTask)}
+          onDelete={() => deleteTask(selectedTask.id)}
+        />
+      )}
     </section>
   );
 };
 
+/* ────────────────────────── MINI CALENDAR COMPONENT ────────────────────────── */
+const MiniCalendar: React.FC<{
+  cursor: Date;
+  onSelect: (date: Date) => void;
+  now: Date;
+  tasks: CalendarTask[];
+}> = ({ cursor, onSelect, now, tasks }) => {
+  const [viewMonth, setViewMonth] = useState(() => new Date(cursor.getFullYear(), cursor.getMonth(), 1));
+
+  useEffect(() => {
+    setViewMonth(new Date(cursor.getFullYear(), cursor.getMonth(), 1));
+  }, [cursor]);
+
+  const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7;
+  const start = new Date(first);
+  start.setDate(first.getDate() - offset);
+  const days = Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+
+  const hasTasks = (day: Date) => {
+    const dStr = toDateString(day);
+    return tasks.some((t) => (t.date ? t.date === dStr : sameDay(new Date(t.dueAt), day)) || matchesRecurrence(t, day));
+  };
+
+  return (
+    <div className="rounded-2xl border border-[#DADCE0] bg-white p-3 dark:border-[#36373A] dark:bg-[#1E1F20]">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">
+          {viewMonth.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })}
+        </span>
+        <div className="flex gap-0.5">
+          <button
+            onClick={() =>
+              setViewMonth((v) => {
+                const d = new Date(v);
+                d.setMonth(d.getMonth() - 1);
+                return d;
+              })
+            }
+            className="flex h-6 w-6 items-center justify-center rounded-full text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() =>
+              setViewMonth((v) => {
+                const d = new Date(v);
+                d.setMonth(d.getMonth() + 1);
+                return d;
+              })
+            }
+            className="flex h-6 w-6 items-center justify-center rounded-full text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-7 text-center text-[10px] font-medium text-[#70757A] dark:text-[#9AA0A6]">
+        {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((d) => (
+          <div key={d} className="py-1">
+            {d}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 text-center">
+        {days.map((day) => {
+          const isToday = sameDay(day, now);
+          const isSelected = sameDay(day, cursor);
+          const isCurrentMonth = day.getMonth() === viewMonth.getMonth();
+          const hasEvent = hasTasks(day);
+
+          return (
+            <button
+              key={day.toISOString()}
+              onClick={() => onSelect(day)}
+              className={`relative mx-auto flex h-6 w-6 items-center justify-center rounded-full text-[11px] transition-colors ${
+                isToday
+                  ? "bg-[#1A73E8] font-medium text-white dark:bg-[#A8C7FA] dark:text-[#131314]"
+                  : isSelected
+                  ? "bg-[#D3E3FD] font-medium text-[#0B57D0] dark:bg-[#004A77] dark:text-[#A8C7FA]"
+                  : isCurrentMonth
+                  ? "text-[#1F1F1F] hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#282A2C]"
+                  : "text-[#9AA0A6] hover:bg-[#F1F3F4] dark:text-[#5F6368] dark:hover:bg-[#282A2C]"
+              }`}
+            >
+              {day.getDate()}
+              {hasEvent && !isToday && (
+                <span className="absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-[#1A73E8] dark:bg-[#A8C7FA]" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/* ────────────────────────── WEEK GRID ────────────────────────── */
 interface GridProps {
   hours: number[];
   now: Date;
   tasks: CalendarTask[];
-  onSelect: (task: CalendarTask) => void;
+  onSelect: (task: CalendarTask, anchor?: DetailPopoverAnchor) => void;
+  onStartDrag: (dateStr: string, e: React.MouseEvent<HTMLDivElement>) => void;
+  dragSelection: DragTimeSelection | null;
 }
 
-/** Canh khung giờ về gần thời điểm hiện tại khi mở lịch hoặc đổi chế độ xem. */
 function useScrollToNow(startHour: number) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const target = ((minutesOf(new Date()) - startHour * 60) / 60) * HOUR_HEIGHT - HOUR_HEIGHT * 1.5;
+    const currentMins = new Date().getHours() * 60 + new Date().getMinutes();
+    const target = ((currentMins - startHour * 60) / 60) * HOUR_HEIGHT - HOUR_HEIGHT * 1.5;
     node.scrollTop = Math.max(0, target);
   }, [startHour]);
   return ref;
 }
 
-const WeekGrid: React.FC<GridProps & { days: Date[] }> = ({ days, hours, now, tasks, onSelect }) => {
+const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => void }> = ({
+  days,
+  hours,
+  now,
+  tasks,
+  onSelect,
+  onStartDrag,
+  dragSelection,
+  onOpenDay,
+}) => {
   const startHour = hours[0];
   const gridHeight = hours.length * HOUR_HEIGHT;
   const scrollRef = useScrollToNow(startHour);
-  const columns = useMemo(() => days.map((day) => {
-    const dayTasks = tasksOfDay(tasks, day);
-    return { day, allDay: dayTasks.filter((task) => task.kind === "event"), timed: layoutDay(dayTasks, startHour) };
-  }), [days, tasks, startHour]);
+
+  const columns = useMemo(
+    () =>
+      days.map((day) => {
+        const dayTasks = tasksOfDay(tasks, day);
+        return {
+          day,
+          dateStr: toDateString(day),
+          allDay: dayTasks.filter(isAllDayTask),
+          timed: layoutDay(dayTasks, startHour),
+        };
+      }),
+    [days, tasks, startHour]
+  );
+
   const hasAllDay = columns.some((column) => column.allDay.length > 0);
 
   return (
-    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-auto pb-4">
-      <div className="sticky top-0 z-20 min-w-[760px] border-b border-[#E8EAF0] bg-white dark:border-[#2E3342] dark:bg-[#1C1F27]">
-        <div className="grid grid-cols-[60px_repeat(7,minmax(100px,1fr))] text-center">
-          <div className="flex items-center justify-center border-r border-[#F1F2F5] p-3 text-[10px] font-bold uppercase tracking-wider text-[#8A8F9E] dark:border-[#2A2E3D]">GMT+7</div>
-          {days.map((day) => <div key={day.toISOString()} className={`border-r border-[#F1F2F5] px-1 py-2 last:border-r-0 dark:border-[#2A2E3D] ${sameDay(day, now) ? "bg-[#EFF6FF]/60 dark:bg-[#2563EB]/10" : ""}`}><div className="text-[11px] font-bold uppercase tracking-wider text-[#8A8F9E]">{day.toLocaleDateString("vi-VN", { weekday: "short" })}</div><span className={`mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${sameDay(day, now) ? "bg-[#2563EB] text-white shadow-sm" : "text-[#1E2230] dark:text-[#F5F6FA]"}`}>{day.getDate()}</span></div>)}
+    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-auto scrollbar-thin">
+      {/* Week Header Column Titles */}
+      <div className="sticky top-0 z-20 min-w-[780px] border-b border-[#DADCE0] bg-white shadow-2xs dark:border-[#36373A] dark:bg-[#1E1F20]">
+        <div className="grid grid-cols-[56px_repeat(7,minmax(100px,1fr))] text-center">
+          <div className="flex items-end justify-center pb-2 text-[10px] font-medium text-[#70757A] border-r border-[#DADCE0] dark:border-[#36373A]">
+            GMT+7
+          </div>
+          {days.map((day) => {
+            const isToday = sameDay(day, now);
+            return (
+              <button
+                key={day.toISOString()}
+                type="button"
+                onClick={() => onOpenDay(day)}
+                className="border-r border-[#DADCE0] py-2 text-center transition-colors hover:bg-[#F8FAFD] last:border-r-0 dark:border-[#36373A] dark:hover:bg-[#282A2C]"
+              >
+                <div
+                  className={`text-[11px] font-medium uppercase tracking-wider ${
+                    isToday ? "text-[#1A73E8] font-bold dark:text-[#A8C7FA]" : "text-[#70757A] dark:text-[#9AA0A6]"
+                  }`}
+                >
+                  {day.toLocaleDateString("vi-VN", { weekday: "short" })}
+                </div>
+                <span
+                  className={`mt-0.5 inline-flex h-10 w-10 items-center justify-center rounded-full text-[24px] font-normal leading-none transition-colors ${
+                    isToday
+                      ? "bg-[#1A73E8] font-medium text-white shadow-sm dark:bg-[#A8C7FA] dark:text-[#131314]"
+                      : "text-[#1F1F1F] hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#282A2C]"
+                  }`}
+                >
+                  {day.getDate()}
+                </span>
+              </button>
+            );
+          })}
         </div>
+
+        {/* Hàng Cả ngày (nếu có sự kiện cả ngày) */}
         {hasAllDay && (
-          <div className="grid grid-cols-[60px_repeat(7,minmax(100px,1fr))] border-t border-[#F1F2F5] dark:border-[#2A2E3D]">
-            <div className="flex items-start justify-end border-r border-[#F1F2F5] px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide text-[#8A8F9E] dark:border-[#2A2E3D]">Cả ngày</div>
-            {columns.map(({ day, allDay }) => <div key={day.toISOString()} className="space-y-1 border-r border-[#F1F2F5] p-1 last:border-r-0 dark:border-[#2A2E3D]">{allDay.map((task) => <AllDayChip key={task.id} task={task} onSelect={onSelect} />)}</div>)}
+          <div className="grid grid-cols-[56px_repeat(7,minmax(100px,1fr))] border-t border-[#DADCE0] dark:border-[#36373A]">
+            <div className="flex items-start justify-end border-r border-[#DADCE0] px-2 py-1.5 text-[10px] font-medium text-[#70757A] dark:border-[#36373A]">
+              Cả ngày
+            </div>
+            {columns.map(({ day, allDay }) => (
+              <div
+                key={day.toISOString()}
+                className="space-y-1 border-r border-[#DADCE0] p-1 last:border-r-0 dark:border-[#36373A]"
+              >
+                {allDay.map((task) => (
+                  <AllDayChip key={`${task.id}-${day.getDate()}`} task={task} onSelect={onSelect} />
+                ))}
+              </div>
+            ))}
           </div>
         )}
       </div>
-      <div className="grid min-w-[760px] grid-cols-[60px_repeat(7,minmax(100px,1fr))] divide-x divide-[#F1F2F5] bg-white dark:divide-[#2A2E3D] dark:bg-[#1C1F27]">
-        <div className="bg-white dark:bg-[#1C1F27]">{hours.map((hour) => <div key={hour} style={{ height: HOUR_HEIGHT }} className="border-b border-[#F1F2F5] pr-2 pt-1 text-right text-[10px] font-bold text-[#8A8F9E] dark:border-[#2A2E3D]">{`${String(hour).padStart(2, "0")}:00`}</div>)}</div>
-        {columns.map(({ day, timed }) => (
-          <div key={day.toISOString()} className={`relative ${sameDay(day, now) ? "bg-[#EFF6FF]/25 dark:bg-[#2563EB]/5" : "bg-white dark:bg-[#1C1F27]"}`} style={{ height: gridHeight }}>
-            {hours.map((hour) => <div key={hour} style={{ height: HOUR_HEIGHT }} className="border-b border-[#F1F2F5] dark:border-[#2A2E3D]" />)}
-            {timed.map((item) => <TimedTask key={item.task.id} item={item} onSelect={onSelect} />)}
-            {sameDay(day, now) && <NowLine now={now} startHour={startHour} gridHeight={gridHeight} />}
-          </div>
-        ))}
+
+      {/* Grid Canvas: 24h slots */}
+      <div className="grid min-w-[780px] grid-cols-[56px_repeat(7,minmax(100px,1fr))]">
+        {/* Time Labels */}
+        <div className="border-r border-[#DADCE0] bg-white select-none dark:border-[#36373A] dark:bg-[#1E1F20]">
+          {hours.map((hour) => (
+            <div key={hour} style={{ height: HOUR_HEIGHT }} className="relative">
+              <span className="absolute -top-2.5 right-2 text-[10px] font-normal text-[#70757A] dark:text-[#9AA0A6]">
+                {hour > 0 ? `${String(hour).padStart(2, "0")}:00` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* 7 Day Columns với hỗ trợ kéo chọn khung giờ linh hoạt */}
+        {columns.map(({ day, dateStr, timed }) => {
+          const isDraggingThisDay = dragSelection?.isDragging && dragSelection.dateStr === dateStr;
+          const dragStart = isDraggingThisDay ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
+          const dragEnd = isDraggingThisDay ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
+          const dragTop = isDraggingThisDay ? (dragStart / 60) * HOUR_HEIGHT : 0;
+          const dragHeight = isDraggingThisDay ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
+
+          return (
+            <div
+              key={day.toISOString()}
+              onMouseDown={(e) => onStartDrag(dateStr, e)}
+              className="relative border-r border-[#DADCE0] bg-white last:border-r-0 cursor-crosshair dark:border-[#36373A] dark:bg-[#1E1F20]"
+              style={{ height: gridHeight }}
+            >
+              {hours.map((hour) => (
+                <div
+                  key={hour}
+                  style={{ height: HOUR_HEIGHT }}
+                  className="group border-b border-[#DADCE0]/80 transition-colors hover:bg-[#F8FAFD]/60 dark:border-[#36373A]/80 dark:hover:bg-[#282A2C]/20 pointer-events-none"
+                >
+                  <div className="h-1/2 border-b border-dashed border-[#F1F3F4] dark:border-[#2D2E30]" />
+                </div>
+              ))}
+
+              {/* Riêng lúc kéo thả trong khung Tuần: Vẫn hiển thị thời gian bắt đầu – kết thúc, bỏ chữ Chưa có tiêu đề */}
+              {isDraggingThisDay && (
+                <div
+                  style={{ top: dragTop, height: dragHeight }}
+                  className="pointer-events-none absolute inset-x-1 z-30 flex items-center justify-center rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/30 px-1 py-0.5 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
+                >
+                  <span className="truncate rounded bg-white/95 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-[#1A73E8] shadow-2xs">
+                    {minutesToTime(dragStart)} – {minutesToTime(dragEnd)}
+                  </span>
+                </div>
+              )}
+
+              {/* Các sự kiện/việc cần làm trong tuần: hiển thị tiêu đề và thời gian đầu – kết thúc */}
+              {timed.map((item) => (
+                <TimedEventBlock
+                  key={`${item.task.id}-${day.getDate()}`}
+                  item={item}
+                  onSelect={onSelect}
+                />
+              ))}
+
+              {/* Red NowLine if today */}
+              {sameDay(day, now) && <NowLine now={now} startHour={startHour} gridHeight={gridHeight} />}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
-const DayGrid: React.FC<GridProps & { day: Date }> = ({ day, hours, now, tasks, onSelect }) => {
+/* ────────────────────────── DAY GRID ────────────────────────── */
+const DayGrid: React.FC<GridProps & { day: Date }> = ({
+  day,
+  hours,
+  now,
+  tasks,
+  onSelect,
+  onStartDrag,
+  dragSelection,
+}) => {
   const startHour = hours[0];
   const gridHeight = hours.length * HOUR_HEIGHT;
   const scrollRef = useScrollToNow(startHour);
+  const dateStr = toDateString(day);
   const dayTasks = tasksOfDay(tasks, day);
-  const allDay = dayTasks.filter((task) => task.kind === "event");
+  const allDay = dayTasks.filter(isAllDayTask);
   const timed = layoutDay(dayTasks, startHour);
+  const isToday = sameDay(day, now);
 
-  return <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-auto pb-4">
-    <div className="sticky top-0 z-20 min-w-[520px] border-b border-[#E8EAF0] bg-white px-5 py-3 dark:border-[#2E3342] dark:bg-[#1C1F27]">
-      <div className="text-xs font-bold uppercase tracking-wide text-[#8A8F9E]">{day.toLocaleDateString("vi-VN", { weekday: "long" })}</div>
-      <div className={`mt-1 inline-flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${sameDay(day, now) ? "bg-[#2563EB] text-white" : "bg-[#F1F2F5] text-[#1E2230] dark:bg-[#2E3342] dark:text-[#F5F6FA]"}`}>{day.getDate()}</div>
-      {allDay.length > 0 && <div className="mt-3 flex items-start gap-3"><span className="pt-1 text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">Cả ngày</span><div className="flex flex-1 flex-wrap gap-1.5">{allDay.map((task) => <AllDayChip key={task.id} task={task} onSelect={onSelect} />)}</div></div>}
-    </div>
-    <div className="grid min-w-[520px] grid-cols-[72px_minmax(0,1fr)] bg-white dark:bg-[#1C1F27]">
-      <div className="border-r border-[#E8EAF0] bg-white dark:border-[#2E3342] dark:bg-[#1C1F27]">{hours.map((hour) => <div key={hour} style={{ height: HOUR_HEIGHT }} className="border-b border-[#F1F2F5] pr-3 pt-1 text-right text-[10px] font-bold text-[#8A8F9E] dark:border-[#2A2E3D]">{String(hour).padStart(2, "0")}:00</div>)}</div>
-      <div className={`relative ${sameDay(day, now) ? "bg-[#EFF6FF]/25 dark:bg-[#2563EB]/5" : "bg-white dark:bg-[#1C1F27]"}`} style={{ height: gridHeight }}>
-        {hours.map((hour) => <div key={hour} style={{ height: HOUR_HEIGHT }} className="border-b border-[#F1F2F5] dark:border-[#2A2E3D]" />)}
-        {timed.map((item) => <TimedTask key={item.task.id} item={item} onSelect={onSelect} />)}
-        {sameDay(day, now) && <NowLine now={now} startHour={startHour} gridHeight={gridHeight} />}
-        {timed.length === 0 && <div className="absolute inset-x-0 top-20 text-center text-xs text-[#8A8F9E]">Chưa có việc nào trong ngày này.</div>}
+  const isDraggingThisDay = dragSelection?.isDragging && dragSelection.dateStr === dateStr;
+  const dragStart = isDraggingThisDay ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
+  const dragEnd = isDraggingThisDay ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
+  const dragTop = isDraggingThisDay ? (dragStart / 60) * HOUR_HEIGHT : 0;
+  const dragHeight = isDraggingThisDay ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
+
+  return (
+    <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-auto scrollbar-thin">
+      <div className="min-w-[540px]">
+        {/* Day Header */}
+        <div className="sticky top-0 z-20 border-b border-[#DADCE0] bg-white px-6 py-3 text-left dark:border-[#36373A] dark:bg-[#1E1F20]">
+          <div
+            className={`text-xs font-semibold uppercase tracking-wider ${
+              isToday ? "text-[#1A73E8] dark:text-[#A8C7FA]" : "text-[#70757A] dark:text-[#9AA0A6]"
+            }`}
+          >
+            {day.toLocaleDateString("vi-VN", { weekday: "long" })}
+          </div>
+          <div className="flex items-center gap-3">
+            <span
+              className={`mt-0.5 inline-flex h-11 w-11 items-center justify-center rounded-full text-[28px] font-normal leading-none ${
+                isToday
+                  ? "bg-[#1A73E8] font-medium text-white shadow-sm dark:bg-[#A8C7FA] dark:text-[#131314]"
+                  : "text-[#1F1F1F] dark:text-[#E3E3E3]"
+              }`}
+            >
+              {day.getDate()}
+            </span>
+            <span className="text-sm text-[#70757A] dark:text-[#9AA0A6]">
+              {day.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })}
+            </span>
+          </div>
+
+          {allDay.length > 0 && (
+            <div className="mt-3 flex items-start gap-3 border-t border-[#DADCE0] pt-2 dark:border-[#36373A]">
+              <span className="pt-1 text-[11px] font-medium uppercase tracking-wide text-[#70757A]">Cả ngày</span>
+              <div className="flex flex-1 flex-wrap gap-1.5">
+                {allDay.map((task) => (
+                  <AllDayChip key={task.id} task={task} onSelect={onSelect} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 24h Time Grid với kéo chọn linh hoạt */}
+        <div className="grid grid-cols-[56px_minmax(0,1fr)]">
+          <div className="border-r border-[#DADCE0] bg-white select-none dark:border-[#36373A] dark:bg-[#1E1F20]">
+            {hours.map((hour) => (
+              <div key={hour} style={{ height: HOUR_HEIGHT }} className="relative">
+                <span className="absolute -top-2.5 right-2 text-[10px] font-normal text-[#70757A] dark:text-[#9AA0A6]">
+                  {hour > 0 ? `${String(hour).padStart(2, "0")}:00` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div
+            onMouseDown={(e) => onStartDrag(dateStr, e)}
+            className="relative bg-white cursor-crosshair dark:bg-[#1E1F20]"
+            style={{ height: gridHeight }}
+          >
+            {hours.map((hour) => (
+              <div
+                key={hour}
+                style={{ height: HOUR_HEIGHT }}
+                className="border-b border-[#DADCE0]/80 transition-colors hover:bg-[#F8FAFD]/60 dark:border-[#36373A]/80 dark:hover:bg-[#282A2C]/20 pointer-events-none"
+              >
+                <div className="h-1/2 border-b border-dashed border-[#F1F3F4] dark:border-[#2D2E30]" />
+              </div>
+            ))}
+
+            {/* Khung xem trước kéo chọn giờ: Hiển thị đầy đủ chi tiết */}
+            {isDraggingThisDay && (
+              <div
+                style={{ top: dragTop, height: dragHeight }}
+                className="pointer-events-none absolute inset-x-2 z-30 flex flex-col justify-start rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/25 p-2 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
+              >
+                <div className="flex items-center justify-between gap-2 leading-tight text-xs font-semibold text-[#0B57D0] dark:text-[#A8C7FA]">
+                  <span className="truncate text-xs font-semibold">(Chưa có tiêu đề)</span>
+                  <span className="shrink-0 rounded bg-white px-2 py-0.5 text-xs font-bold text-[#1A73E8] shadow-2xs">
+                    {minutesToTime(dragStart)} – {minutesToTime(dragEnd)}
+                  </span>
+                </div>
+
+                {dragHeight >= 36 && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs font-medium text-[#1A73E8] dark:text-[#A8C7FA] truncate">
+                    <Clock className="h-3.5 w-3.5 shrink-0" />
+                    <span>Thời lượng: {formatMinutesDuration(dragEnd - dragStart)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sự kiện (Tự động dàn đều song song khi trùng giờ) */}
+            {timed.map((item) => (
+              <TimedEventBlock key={item.task.id} item={item} onSelect={onSelect} />
+            ))}
+
+            {isToday && <NowLine now={now} startHour={startHour} gridHeight={gridHeight} />}
+          </div>
+        </div>
       </div>
     </div>
-  </div>;
+  );
 };
 
-const taskColor = (task: CalendarTask) => task.source === "google"
-  ? "border-sky-500 bg-sky-50 text-sky-800 dark:bg-sky-500/15 dark:text-sky-200"
-  : task.status === "done"
-    ? "border-emerald-500 bg-emerald-50 text-emerald-800 opacity-70 dark:bg-emerald-500/15 dark:text-emerald-200"
-    : "border-[#2563EB] bg-[#EFF6FF] text-[#1D4ED8] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]";
+/* ────────────────────────── MONTH GRID ────────────────────────── */
+const MonthGrid: React.FC<{
+  cursor: Date;
+  tasks: CalendarTask[];
+  onSelect: (task: CalendarTask, anchor?: DetailPopoverAnchor) => void;
+  onDoubleClickDay: (date: Date) => void;
+}> = ({ cursor, tasks, onSelect, onDoubleClickDay }) => {
+  const today = new Date();
+  const [expandedDay, setExpandedDay] = useState<Date | null>(null);
 
-const TimedTask: React.FC<{ item: PositionedTask; onSelect: (task: CalendarTask) => void }> = ({ item, onSelect }) => {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const offset = (first.getDay() + 6) % 7;
+  const start = new Date(first);
+  start.setDate(first.getDate() - offset);
+
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return date;
+  });
+
+  return (
+    <div className="mr-4 mb-4 flex min-h-0 flex-1 flex-col overflow-auto rounded-b-xl border-b border-r border-[#DADCE0] bg-white scrollbar-thin dark:border-[#36373A] dark:bg-[#1E1F20]">
+      {/* Month Days of Week Header */}
+      <div className="grid min-w-[700px] grid-cols-7 border-b border-[#DADCE0] bg-white dark:border-[#36373A] dark:bg-[#1E1F20]">
+        {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => (
+          <div
+            key={day}
+            className="py-2.5 text-center text-[11px] font-semibold uppercase tracking-wider text-[#70757A] dark:text-[#9AA0A6]"
+          >
+            {day}
+          </div>
+        ))}
+      </div>
+
+      {/* Month Grid Cells */}
+      <div className="grid min-h-[620px] min-w-[700px] flex-1 grid-cols-7 grid-rows-6">
+        {days.map((day) => {
+          const items = tasksOfDay(tasks, day);
+          const isCurrentMonth = day.getMonth() === cursor.getMonth();
+          const isToday = sameDay(day, today);
+
+          return (
+            <div
+              key={day.toISOString()}
+              onDoubleClick={() => onDoubleClickDay(day)}
+              className={`relative border-b border-r border-[#DADCE0] p-1.5 transition-colors hover:bg-[#F8FAFD] dark:border-[#36373A] dark:hover:bg-[#282A2C]/30 ${
+                !isCurrentMonth ? "bg-[#F8F9FA] dark:bg-[#171920]" : "bg-white dark:bg-[#1E1F20]"
+              }`}
+            >
+              {/* Day Header Badge */}
+              <div className="flex items-center justify-between">
+                <span
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs transition-colors ${
+                    isToday
+                      ? "bg-[#1A73E8] font-medium text-white dark:bg-[#A8C7FA] dark:text-[#131314]"
+                      : isCurrentMonth
+                      ? "font-medium text-[#3C4043] dark:text-[#E3E3E3]"
+                      : "text-[#80868B] dark:text-[#5F6368]"
+                  }`}
+                >
+                  {day.getDate()}
+                </span>
+                {items.length > 0 && (
+                  <span className="text-[10px] text-[#70757A] font-medium">
+                    {items.length} mục
+                  </span>
+                )}
+              </div>
+
+              {/* Day's Event Chips */}
+              <div className="mt-1 space-y-1">
+                {items.slice(0, 3).map((task) => {
+                  const isAllDay = isAllDayTask(task);
+                  const color = getEventColor(task);
+                  const isTask = task.kind === "task";
+
+                  return isAllDay ? (
+                    <button
+                      key={`${task.id}-${day.getDate()}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        onSelect(task, { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+                      }}
+                      style={{ backgroundColor: color.bg }}
+                      className="flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] font-medium text-white transition-all hover:brightness-105"
+                    >
+                      {isTask && <CheckCircle2 className="h-3 w-3 shrink-0" />}
+                      <span className="truncate flex-1">{task.title}</span>
+                    </button>
+                  ) : (
+                    <button
+                      key={`${task.id}-${day.getDate()}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        onSelect(task, { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+                      }}
+                      className="flex w-full items-center gap-1.5 truncate rounded px-1 py-0.5 text-left text-[11px] transition-colors hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+                    >
+                      <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color.bg }} />
+                      <span className="font-semibold text-[#3C4043] dark:text-[#E3E3E3]">
+                        {task.startTime || new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      <span className={`truncate text-[#3C4043] dark:text-[#C4C7C5] flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
+                        {task.title}
+                      </span>
+                      {task.meetLink && <Video className="h-3 w-3 text-[#1A73E8] shrink-0" />}
+                    </button>
+                  );
+                })}
+
+                {items.length > 3 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedDay(new Date(day));
+                    }}
+                    className="rounded px-1.5 text-[11px] font-medium text-[#1A73E8] hover:bg-[#E8F0FE] hover:underline dark:text-[#A8C7FA]"
+                  >
+                    +{items.length - 3} mục khác
+                  </button>
+                )}
+              </div>
+
+              {/* Month Day Expanded Modal */}
+              {expandedDay && sameDay(expandedDay, day) && (
+                <div
+                  role="dialog"
+                  className="absolute left-1 top-8 z-30 w-72 overflow-hidden rounded-2xl border border-[#DADCE0] bg-white shadow-2xl dark:border-[#5F6368] dark:bg-[#2D2E30]"
+                >
+                  <div className="flex items-center justify-between border-b border-[#DADCE0] px-3.5 py-2.5 dark:border-[#5F6368]">
+                    <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">
+                      Lịch ngày {day.toLocaleDateString("vi-VN", { day: "numeric", month: "long" })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedDay(null);
+                      }}
+                      className="rounded-full p-1 text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-2 space-y-1">
+                    {items.map((task) => {
+                      const color = getEventColor(task);
+                      return (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedDay(null);
+                            onSelect(task);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-xl p-2 text-left text-xs transition-colors hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+                        >
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color.bg }} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{task.title}</p>
+                            <p className="text-[10px] text-[#70757A] dark:text-[#9AA0A6]">
+                              {isAllDayTask(task) ? "Cả ngày" : `${task.startTime} – ${task.endTime}`}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/* ────────────────────────── SCHEDULE (AGENDA) VIEW ────────────────────────── */
+const ScheduleView: React.FC<{
+  cursor: Date;
+  tasks: CalendarTask[];
+  onSelect: (task: CalendarTask) => void;
+  onFinish: (task: CalendarTask) => void;
+  onCreateNew: () => void;
+}> = ({ cursor, tasks, onSelect, onFinish, onCreateNew }) => {
+  const daysList = useMemo(() => {
+    const list: { date: Date; dateStr: string; items: CalendarTask[] }[] = [];
+    const base = new Date(cursor);
+    base.setDate(base.getDate() - 3);
+
+    for (let i = 0; i < 21; i++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      const dayItems = tasksOfDay(tasks, d);
+      if (dayItems.length > 0) {
+        list.push({ date: d, dateStr: toDateString(d), items: dayItems });
+      }
+    }
+    return list;
+  }, [cursor, tasks]);
+
+  const today = new Date();
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6 scrollbar-thin">
+      <div className="mx-auto w-full max-w-4xl space-y-6">
+        <div className="flex items-center justify-between border-b border-[#DADCE0] pb-3 dark:border-[#36373A]">
+          <h3 className="text-base font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">
+            Danh sách Lịch biểu (Sự kiện &amp; Việc cần làm 1 ngày)
+          </h3>
+          <button
+            onClick={onCreateNew}
+            className="flex items-center gap-1.5 rounded-full bg-[#1A73E8] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#1557B0]"
+          >
+            <Plus className="h-4 w-4" /> Thêm lịch mới
+          </button>
+        </div>
+
+        {daysList.length === 0 ? (
+          <div className="py-16 text-center text-[#70757A]">
+            <CalendarDays className="mx-auto mb-3 h-12 w-12 text-[#DADCE0] dark:text-[#444746]" />
+            <p className="text-sm font-medium">Không có sự kiện hoặc việc cần làm nào</p>
+            <p className="text-xs mt-1">Nhấp "+ Thêm lịch mới" để tạo.</p>
+          </div>
+        ) : (
+          daysList.map(({ date, items }) => {
+            const isToday = sameDay(date, today);
+            return (
+              <div key={date.toISOString()} className="space-y-3">
+                {/* Date Header Badge */}
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex h-10 w-10 flex-col items-center justify-center rounded-2xl border ${
+                      isToday
+                        ? "border-[#1A73E8] bg-[#1A73E8] text-white"
+                        : "border-[#DADCE0] bg-white text-[#1F1F1F] dark:border-[#36373A] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                    }`}
+                  >
+                    <span className="text-[10px] uppercase font-bold">{date.toLocaleDateString("vi-VN", { weekday: "short" })}</span>
+                    <span className="text-sm font-bold leading-tight">{date.getDate()}</span>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm text-[#1F1F1F] dark:text-[#E3E3E3]">
+                      {formatVietnameseDate(date, true)}
+                    </h4>
+                    <span className="text-[11px] text-[#70757A]">
+                      {items.length} mục trong ngày
+                    </span>
+                  </div>
+                </div>
+
+                {/* Items in that day */}
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  {items.map((task) => {
+                    const color = getEventColor(task);
+                    const isTask = task.kind === "task";
+                    return (
+                      <article
+                        key={task.id}
+                        onClick={() => onSelect(task)}
+                        className="group cursor-pointer rounded-2xl border border-[#DADCE0] bg-white p-4 transition-all hover:border-[#1A73E8] hover:shadow-md dark:border-[#36373A] dark:bg-[#1E1F20] dark:hover:border-[#A8C7FA]"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            {isTask ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onFinish(task);
+                                }}
+                                className="mt-0.5 text-[#1A73E8]"
+                              >
+                                <CheckCircle2 className={`h-4 w-4 ${task.status === "done" ? "fill-[#1A73E8] text-white" : "text-[#70757A]"}`} />
+                              </button>
+                            ) : (
+                              <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color.bg }} />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <h5 className={`text-sm font-medium text-[#1F1F1F] dark:text-[#E3E3E3] truncate ${task.status === "done" ? "line-through opacity-60" : ""}`}>
+                                {task.title}
+                              </h5>
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#70757A] dark:text-[#9AA0A6]">
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3.5 w-3.5 text-[#1A73E8]" />
+                                  {isAllDayTask(task) ? "Cả ngày" : `${task.startTime} – ${task.endTime}`}
+                                </span>
+                                {task.duration && !isAllDayTask(task) && <span>({formatMinutesDuration(task.duration)})</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          <span
+                            className="rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0"
+                            style={{ backgroundColor: color.light, color: color.bg }}
+                          >
+                            {task.kind === "task" ? "Việc cần làm" : "Sự kiện"}
+                          </span>
+                        </div>
+
+                        {/* Location & Google Meet */}
+                        {(task.meetLink || task.location || (task.attendees && task.attendees.length > 0)) && (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 pt-2 border-t border-[#F1F3F4] text-xs dark:border-[#2D2E30]">
+                            {task.meetLink && (
+                              <a
+                                href={task.meetLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1.5 rounded-full bg-[#E8F0FE] px-3 py-1 text-[11px] font-medium text-[#1A73E8] hover:bg-[#D2E3FC] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
+                              >
+                                <Video className="h-3.5 w-3.5" /> Tham gia Meet
+                              </a>
+                            )}
+                            {task.location && (
+                              <span className="inline-flex items-center gap-1 text-[#70757A] dark:text-[#9AA0A6] text-[11px] truncate max-w-[200px]">
+                                <MapPin className="h-3.5 w-3.5" /> {task.location}
+                              </span>
+                            )}
+                            {task.attendees && task.attendees.length > 0 && (
+                              <span className="inline-flex items-center gap-1 text-[#70757A] text-[11px]">
+                                <Users className="h-3.5 w-3.5" /> {task.attendees.length} người
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ────────────────────────── TIMED EVENT BLOCK (WEEK / DAY) ────────────────────────── */
+const TimedEventBlock: React.FC<{
+  item: PositionedTask;
+  onSelect: (task: CalendarTask, anchor?: DetailPopoverAnchor) => void;
+}> = ({ item, onSelect }) => {
   const { task } = item;
-  const date = new Date(task.dueAt);
-  return <button onClick={() => onSelect(task)} style={{ top: item.top + 1, height: item.height, left: `calc(${item.left}% + 4px)`, width: `calc(${item.width}% - 8px)` }} className={`absolute overflow-hidden rounded-lg border-l-4 p-1.5 text-left shadow-sm transition-shadow hover:shadow-md ${taskColor(task)}`}><span className="block truncate text-[10px] font-bold">{task.title}</span><span className="block text-[9px] opacity-75">{date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span></button>;
-};
+  const color = getEventColor(task);
+  const isTask = task.kind === "task";
+  const isShort = item.height < 36;
+  const timeRange = `${task.startTime || "00:00"} – ${task.endTime || "00:00"}`;
 
-const AllDayChip: React.FC<{ task: CalendarTask; onSelect: (task: CalendarTask) => void }> = ({ task, onSelect }) => <button onClick={() => onSelect(task)} className={`max-w-full truncate rounded-md border-l-4 px-2 py-1 text-left text-[10px] font-bold ${taskColor(task)}`}>{task.title}</button>;
-
-const NowLine: React.FC<{ now: Date; startHour: number; gridHeight: number }> = ({ now, startHour, gridHeight }) => {
-  const offset = (minutesOf(now) - startHour * 60) / 60 * HOUR_HEIGHT;
-  if (offset < 0 || offset > gridHeight) return null;
-  return <div aria-label="Thời điểm hiện tại" className="pointer-events-none absolute inset-x-0 z-10 flex items-center" style={{ top: offset }}><span className="ml-[-4px] h-2 w-2 rounded-full bg-rose-500" /><span className="h-px flex-1 bg-rose-500" /></div>;
-};
-
-const MonthGrid: React.FC<{ cursor: Date; tasks: CalendarTask[]; onSelect: (task: CalendarTask) => void }> = ({ cursor, tasks, onSelect }) => {
-  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1); const offset = (first.getDay() + 6) % 7; const start = new Date(first); start.setDate(first.getDate() - offset);
-  const days = Array.from({ length: 42 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date; });
-  return <div className="flex min-h-0 flex-1 flex-col overflow-auto pr-4 pb-4"><div className="grid min-w-[680px] grid-cols-7 border-b border-[#E8EAF0] bg-white dark:border-[#2E3342] dark:bg-[#1C1F27]">{["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => <div key={day} className="py-2 text-center text-[10px] font-bold text-[#8A8F9E]">{day}</div>)}</div><div className="grid min-h-[600px] min-w-[680px] flex-1 grid-cols-7 grid-rows-6">{days.map((day) => { const items = tasks.filter((task) => sameDay(new Date(task.dueAt), day)); return <div key={day.toISOString()} className={`border-b border-r border-[#F1F2F5] p-1.5 dark:border-[#2A2E3D] ${day.getMonth() !== cursor.getMonth() ? "bg-[#F7F8FC] opacity-50 dark:bg-[#171920]" : ""}`}><span className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${sameDay(day, new Date()) ? "bg-[#2563EB] text-white" : "text-[#1E2230] dark:text-[#F5F6FA]"}`}>{day.getDate()}</span><div className="mt-1 space-y-1">{items.slice(0, 3).map((task) => <button key={task.id} onClick={() => onSelect(task)} className={`block w-full truncate rounded px-1.5 py-1 text-left text-[10px] font-semibold ${task.source === "google" ? "bg-sky-50 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200" : task.status === "done" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200" : "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"}`}>{task.title}</button>)}</div></div>; })}</div></div>;
-};
-
-/** One entry in the sidebar list.
- *
- *  Read-only by design. Deciding whether something belongs on the calendar
- *  happens in the task inbox, where the proposal and its clarification question
- *  live; by the time an entry is here that decision was already made.
- */
-const TaskCard: React.FC<{ task: CalendarTask; onSelect: (task: CalendarTask) => void }> = ({ task, onSelect }) => (
-  <article className="rounded-xl border border-[#E8EAF0] bg-white p-3 dark:border-[#2E3342] dark:bg-[#232630]">
-    <button onClick={() => onSelect(task)} className="w-full text-left">
-      <div className="flex items-start justify-between gap-2">
-        <span className="line-clamp-2 text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">{task.title}</span>
-        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${task.source === "google" ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200" : "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"}`}>{sourceLabel(task.source)}</span>
-      </div>
-      <div className="mt-2 flex items-center gap-1 text-[10px] text-[#74798C]">
-        <Clock3 className="h-3 w-3" />
-        {new Date(task.dueAt).toLocaleString("vi-VN", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}
-      </div>
+  return (
+    <button
+      data-task-block="true"
+      onClick={(e) => {
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        onSelect(task, { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+      }}
+      style={{
+        top: item.top + 1,
+        height: Math.max(22, item.height),
+        left: `calc(${item.left}% + 1px)`,
+        width: `calc(${item.width}% - 2px)`,
+        backgroundColor: color.bg,
+      }}
+      className={`absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-white shadow-2xs ring-1 ring-white/90 transition-all hover:z-30 hover:brightness-105 hover:shadow-md select-none dark:ring-[#1E1F20] ${
+        task.status === "done" ? "opacity-60" : ""
+      }`}
+    >
+      {isShort ? (
+        /* Sự kiện ngắn (15 - 30p): Tiêu đề và giờ trên cùng 1 dòng liền mạch */
+        <div className="flex h-full items-center gap-1 overflow-hidden text-[10px] sm:text-[11px] leading-none">
+          {isTask && <CheckCircle2 className="h-3 w-3 shrink-0 opacity-90" />}
+          <span className="shrink-0 font-medium tracking-tight opacity-95">
+            {timeRange}
+          </span>
+          <span className="opacity-40">•</span>
+          <span className={`truncate font-semibold flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
+            {task.title}
+          </span>
+        </div>
+      ) : (
+        /* Sự kiện từ 45p trở lên: Hàng 1 Tiêu đề, Hàng 2 Thời gian đầu – đến trên cùng 1 hàng */
+        <div className="flex h-full flex-col justify-start gap-0.5 overflow-hidden">
+          <div className="flex items-center gap-1 leading-tight">
+            {isTask && <CheckCircle2 className="h-3 w-3 shrink-0 opacity-90" />}
+            <span className={`truncate text-[11px] sm:text-xs font-semibold flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
+              {task.title}
+            </span>
+          </div>
+          <div className="truncate text-[10px] sm:text-[11px] font-medium tracking-tight opacity-95 leading-none">
+            {timeRange}
+          </div>
+        </div>
+      )}
     </button>
-  </article>
-);
-
-const Empty: React.FC<{ label: string }> = ({ label }) => <div className="rounded-xl border border-dashed border-[#D8DCE7] px-3 py-7 text-center text-xs text-[#8A8F9E] dark:border-[#3A3F50]">{label}</div>;
-
-const TaskForm: React.FC<{ initialTask?: CalendarTask; initialKind?: "task" | "event"; onClose: () => void; onSubmit: (task: CalendarTask) => void }> = ({ initialTask, initialKind = "task", onClose, onSubmit }) => {
-  const kind = initialTask?.kind ?? initialKind; const isEvent = kind === "event";
-  const [title, setTitle] = useState(initialTask?.title ?? ""); const [when, setWhen] = useState(initialTask ? toInputValue(new Date(initialTask.dueAt)) : toInputValue(new Date())); const [eventDate, setEventDate] = useState(initialTask ? initialTask.dueAt.slice(0, 10) : toInputValue(new Date()).slice(0, 10)); const [note, setNote] = useState(initialTask?.note ?? ""); const [priority, setPriority] = useState<CalendarTask["priority"]>(initialTask?.priority ?? "medium"); const [category, setCategory] = useState<NonNullable<CalendarTask["category"]>>(initialTask?.category ?? (isEvent ? "personal" : "task")); const [location, setLocation] = useState(initialTask?.location ?? ""); const [link, setLink] = useState(initialTask?.link ?? ""); const [tags, setTags] = useState(initialTask?.tags?.join(", ") ?? "");
-  return <Modal title={initialTask ? `Chỉnh sửa ${isEvent ? "sự kiện" : "công việc"}` : isEvent ? "Thêm sự kiện" : "Thêm việc vào lịch"} onClose={onClose}><form onSubmit={(event) => { event.preventDefault(); if (!title.trim()) return; onSubmit({ id: initialTask?.id ?? `manual-${Date.now()}`, title: title.trim(), note: note.trim() || undefined, dueAt: isEvent ? new Date(`${eventDate}T00:00:00`).toISOString() : new Date(when).toISOString(), duration: isEvent ? 1440 : initialTask?.duration ?? 60, status: initialTask?.status ?? "approved", source: initialTask?.source ?? "manual", priority, category, location: location.trim() || undefined, link: link.trim() || undefined, kind, tags: tags.split(",").map((value) => value.trim()).filter(Boolean) }); }} className="space-y-4"><Field label={isEvent ? "Tên sự kiện" : "Tên công việc"}><input autoFocus required value={title} onChange={(event) => setTitle(event.target.value)} placeholder={isEvent ? "Ví dụ: Sinh nhật, kỳ nghỉ, hội thảo" : "Ví dụ: Chuẩn bị báo cáo"} /></Field>{isEvent ? <Field label="Ngày diễn ra"><input type="date" required value={eventDate} onChange={(event) => setEventDate(event.target.value)} /></Field> : <Field label="Thời gian"><input type="datetime-local" required value={when} onChange={(event) => setWhen(event.target.value)} /></Field>}<div className="grid grid-cols-2 gap-3"><Field label="Loại"><select value={category} onChange={(event) => setCategory(event.target.value as NonNullable<CalendarTask["category"]>)}><option value="task">Công việc</option><option value="meeting">Cuộc họp</option><option value="deadline">Hạn chót</option><option value="personal">Cá nhân</option><option value="focus">Tập trung</option></select></Field><Field label="Ưu tiên"><select value={priority} onChange={(event) => setPriority(event.target.value as CalendarTask["priority"])}><option value="low">Thấp</option><option value="medium">Trung bình</option><option value="high">Cao</option></select></Field></div><Field label="Địa điểm"><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Tuỳ chọn" /></Field>{isEvent && <Field label="Liên kết"><input type="url" value={link} onChange={(event) => setLink(event.target.value)} placeholder="https://meet.google.com/..." /></Field>}<Field label="Nhãn (cách nhau bằng dấu phẩy)"><input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Ví dụ: dự án, khẩn" /></Field><Field label="Ghi chú"><textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Thông tin thêm (tuỳ chọn)" rows={3} /></Field><ModalActions onClose={onClose} label={initialTask ? "Lưu thay đổi" : isEvent ? "Thêm sự kiện" : "Thêm vào lịch"} /></form></Modal>;
+  );
 };
 
-const AssistantForm: React.FC<{ onClose: () => void; onSubmit: (task: CalendarTask) => void }> = ({ onClose, onSubmit }) => {
-  const [prompt, setPrompt] = useState(""); const [isProcessing, setIsProcessing] = useState(false); const [success, setSuccess] = useState(false);
-  const schedule = (value = prompt) => { const clean = value.trim(); if (!clean || isProcessing) return; setIsProcessing(true); window.setTimeout(() => { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0); onSubmit({ id: `proposal-${Date.now()}`, title: clean, note: `Được Trợ lý thông minh đề xuất từ yêu cầu: “${clean}”. Cần được duyệt trước khi vào lịch.`, dueAt: tomorrow.toISOString(), duration: 60, status: "pending", source: "assistant", priority: /ưu tiên cao|hạn chót|deadline/i.test(clean) ? "high" : "medium", category: /họp|1:1/i.test(clean) ? "meeting" : /gym|cá nhân/i.test(clean) ? "personal" : /hạn chót|deadline/i.test(clean) ? "deadline" : "task", tags: ["Trợ lý đề xuất"] }); setIsProcessing(false); setSuccess(true); window.setTimeout(onClose, 800); }, 550); };
-  return <Modal title="Trợ lý lập lịch" onClose={onClose}><div className="space-y-4"><div className="flex items-start gap-3 rounded-xl border border-violet-200 bg-violet-50 p-3 dark:border-violet-400/25 dark:bg-violet-500/10"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600 text-white"><Bot className="h-5 w-5" /></span><div><div className="flex items-center gap-2"><h3 className="text-sm font-bold text-violet-950 dark:text-violet-100">Trợ lý lập lịch</h3><span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">Đang hoạt động</span></div><p className="mt-0.5 text-[11px] text-violet-700 dark:text-violet-300">Lập lịch bằng ngôn ngữ tự nhiên và điều phối công việc</p></div></div><div><label className="mb-1.5 flex items-center gap-1.5 text-xs font-bold text-[#4E5568] dark:text-[#C6CAD6]"><Bot className="h-3.5 w-3.5 text-violet-600" />Bạn muốn Trợ lý lập kế hoạch gì?</label><textarea autoFocus value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); schedule(); } }} rows={3} placeholder="Ví dụ: Lên lịch 2 giờ làm việc tập trung vào sáng thứ Ba" className="w-full resize-none rounded-xl border border-[#DDE1EA] bg-white p-3 text-sm text-[#1E2230] outline-none focus:border-violet-500 dark:border-[#3A4050] dark:bg-[#1C1F27] dark:text-[#F5F6FA]" /></div>{success && <div className="rounded-lg bg-emerald-50 p-2.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">Đã tạo đề xuất chờ duyệt trong lịch.</div>}<div className="flex items-center justify-between border-t border-[#E8EAF0] pt-4 dark:border-[#2E3342]"><span className="max-w-[210px] text-[10px] leading-relaxed text-[#8A8F9E]">Trợ lý luôn tạo task ở trạng thái <strong>Chờ duyệt</strong>.</span><div className="flex gap-2"><button onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-semibold text-[#74798C] hover:bg-[#F4F5F8] dark:hover:bg-[#2E3342]">Huỷ</button><button onClick={() => schedule()} disabled={!prompt.trim() || isProcessing} className="inline-flex rounded-lg bg-violet-600 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-50">{isProcessing ? "Đang lập lịch" : "Lập lịch với Trợ lý"}</button></div></div></div></Modal>;
+/* ────────────────────────── ALL-DAY CHIP ────────────────────────── */
+const AllDayChip: React.FC<{
+  task: CalendarTask;
+  onSelect: (task: CalendarTask, anchor?: DetailPopoverAnchor) => void;
+}> = ({ task, onSelect }) => {
+  const color = getEventColor(task);
+  const isTask = task.kind === "task";
+
+  return (
+    <button
+      data-task-block="true"
+      onClick={(e) => {
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        onSelect(task, { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left });
+      }}
+      style={{ backgroundColor: color.bg }}
+      className={`flex w-full items-center gap-1 truncate rounded-md px-2 py-1 text-left text-[11px] font-medium text-white transition-all hover:brightness-105 hover:shadow-xs ${
+        task.status === "done" ? "opacity-60 line-through" : ""
+      }`}
+    >
+      {isTask && <CheckCircle2 className="h-3 w-3 shrink-0" />}
+      <span className="truncate flex-1">{task.title}</span>
+    </button>
+  );
 };
 
+/* ────────────────────────── NOW LINE ────────────────────────── */
+const NowLine: React.FC<{ now: Date; startHour: number; gridHeight: number }> = ({ now, startHour, gridHeight }) => {
+  const currentMins = now.getHours() * 60 + now.getMinutes();
+  const offset = ((currentMins - startHour * 60) / 60) * HOUR_HEIGHT;
+  if (offset < 0 || offset > gridHeight) return null;
 
-const TaskDetails: React.FC<{ task: CalendarTask; onClose: () => void; onEdit: () => void; onDelete: () => void }> = ({ task, onClose, onEdit, onDelete }) => <Modal title={task.kind === "event" ? "Chi tiết sự kiện" : "Chi tiết công việc"} onClose={onClose}><div className="space-y-4"><div><h3 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">{task.title}</h3><div className="mt-3 rounded-xl bg-[#F7F8FC] p-3 dark:bg-[#1C1F27]"><span className="block text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">Mô tả</span><p className="mt-1 text-xs leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">{task.note || "Chưa có mô tả."}</p></div></div><div className="grid grid-cols-2 gap-2 text-xs"><Info label={task.kind === "event" ? "Ngày" : "Bắt đầu"} value={new Date(task.dueAt).toLocaleString("vi-VN", task.kind === "event" ? { dateStyle: "medium" } : { dateStyle: "medium", timeStyle: "short" })} />{task.kind !== "event" && <Info label="Thời lượng" value={`${task.duration} phút`} />}<Info label="Trạng thái" value={statusLabel(task.status)} /><Info label="Ưu tiên" value={task.priority === "high" ? "Cao" : task.priority === "low" ? "Thấp" : "Trung bình"} /><Info label="Danh mục" value={({ task: "Công việc", meeting: "Cuộc họp", deadline: "Hạn chót", personal: "Cá nhân", focus: "Tập trung" })[task.category ?? "task"]} /><Info label="Nguồn" value={sourceLabel(task.source)} /></div><div className="space-y-2 rounded-xl border border-[#E8EAF0] p-3 text-xs dark:border-[#2E3342]"><div><span className="text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">Địa điểm</span><p className="mt-0.5 font-medium text-[#4E5568] dark:text-[#C6CAD6]">{task.location || "Chưa có địa điểm"}</p></div><div><span className="text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">Nhãn</span><div className="mt-1 flex flex-wrap gap-1">{task.tags?.length ? task.tags.map((tag) => <span key={tag} className="rounded-full bg-[#EFF6FF] px-2 py-0.5 text-[10px] font-semibold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">{tag}</span>) : <span className="text-[#74798C]">Chưa có nhãn</span>}</div></div></div>{task.link && <a href={task.link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-[#2563EB] hover:underline"><ExternalLink className="h-3.5 w-3.5" />Mở liên kết sự kiện</a>}{task.source === "google" && <div className="rounded-lg bg-sky-50 p-2.5 text-[11px] text-sky-700 dark:bg-sky-500/10 dark:text-sky-200"><ExternalLink className="mr-1 inline h-3.5 w-3.5" />Sự kiện đồng bộ từ Google Calendar — chỉ đọc.</div>}<div className="flex flex-wrap justify-between gap-2 border-t border-[#E8EAF0] pt-4 dark:border-[#2E3342]"><button onClick={onDelete} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5" />Xoá</button><div className="flex gap-2">{task.source !== "google" && <button onClick={onEdit} className="rounded-lg border border-[#E8EAF0] px-3 py-1.5 text-xs font-semibold text-[#4E5568] dark:border-[#2E3342]">Chỉnh sửa</button>}</div></div></div></Modal>;
+  return (
+    <div
+      aria-label="Thời điểm hiện tại"
+      className="pointer-events-none absolute inset-x-0 z-20 flex items-center"
+      style={{ top: offset }}
+    >
+      <span className="ml-[-6px] h-3.5 w-3.5 rounded-full bg-[#EA4335] shadow-[0_0_6px_rgba(234,67,53,0.8)]" />
+      <span className="h-[2px] flex-1 bg-[#EA4335]" />
+    </div>
+  );
+};
 
-const Modal: React.FC<{ title: string; onClose: () => void; children: React.ReactNode }> = ({ title, onClose, children }) => <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/45 p-4" role="dialog" aria-modal="true"><div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-[#232630]"><div className="mb-4 flex items-center justify-between"><h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">{title}</h2><button onClick={onClose} aria-label="Đóng" className="rounded-lg p-1 text-[#74798C] hover:bg-[#F4F5F8] dark:hover:bg-[#2E3342]"><X className="h-5 w-5" /></button></div>{children}</div></div>;
-const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => <label className="block text-xs font-semibold text-[#4E5568] dark:text-[#C6CAD6]"><span className="mb-1.5 block">{label}</span>{React.Children.map(children, (child) => React.isValidElement(child) ? React.cloneElement(child as React.ReactElement<{ className?: string }>, { className: "w-full rounded-lg border border-[#DDE1EA] bg-white px-3 py-2 text-sm font-normal text-[#1E2230] outline-none focus:border-[#2563EB] dark:border-[#3A4050] dark:bg-[#1C1F27] dark:text-[#F5F6FA]" }) : child)}</label>;
-const ModalActions: React.FC<{ onClose: () => void; label: string }> = ({ onClose, label }) => <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-xs font-semibold text-[#74798C] hover:bg-[#F4F5F8] dark:hover:bg-[#2E3342]">Huỷ</button><button className="rounded-lg bg-[#2563EB] px-3 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8]">{label}</button></div>;
-const Info: React.FC<{ label: string; value: string }> = ({ label, value }) => <div className="rounded-lg bg-[#F7F8FC] p-2 dark:bg-[#1C1F27]"><span className="block text-[10px] font-bold uppercase tracking-wide text-[#8A8F9E]">{label}</span><span className="mt-0.5 block text-xs font-medium text-[#1E2230] dark:text-[#F5F6FA]">{value}</span></div>;
+/* ────────────────────────── QUICK CREATE POPOVER ────────────────────────── */
+const QuickCreatePopover: React.FC<{
+  dateStr: string;
+  startTime: string;
+  endTime: string;
+  anchor: DetailPopoverAnchor | null;
+  onClose: () => void;
+  onMoreOptions: (title: string, kind: EventKind, colorId: string, location: string, isAllDay: boolean) => void;
+  onSave: (task: CalendarTask) => void;
+}> = ({ dateStr, startTime, endTime, anchor, onClose, onMoreOptions, onSave }) => {
+  const [title, setTitle] = useState("");
+  const [kind, setKind] = useState<EventKind>("event");
+  const [isAllDay, setIsAllDay] = useState(false);
+  const [location, setLocation] = useState("");
+  const [colorId, setColorId] = useState<string>("sage");
+  const [note, setNote] = useState("");
+  const dateObj = parseDateString(dateStr);
+
+  const startMins = timeToMinutes(startTime);
+  const endMins = timeToMinutes(endTime);
+  const duration = isAllDay ? 1440 : Math.max(15, endMins - startMins);
+
+  const handleQuickSave = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!title.trim()) return;
+
+    const newTask: CalendarTask = {
+      id: `task-${Date.now()}`,
+      title: title.trim(),
+      kind,
+      date: dateStr,
+      isAllDay,
+      startTime: isAllDay ? undefined : startTime,
+      endTime: isAllDay ? undefined : endTime,
+      duration,
+      dueAt: buildSingleDayIso(dateStr, isAllDay ? "00:00" : startTime),
+      endAt: buildSingleDayIso(dateStr, isAllDay ? "23:59" : endTime),
+      recurrence: "none",
+      colorId,
+      category: kind === "task" ? "task" : "meeting",
+      location: kind === "event" && location.trim() ? location.trim() : undefined,
+      note: note.trim() || undefined,
+      reminders: [{ id: "r1", method: "popup", minutes: 10 }],
+      status: "approved",
+      source: "manual",
+    };
+
+    onSave(newTask);
+  };
+
+  return (
+    <Modal title="" maxWidth="max-w-md" popoverAnchor={anchor} onClose={onClose}>
+      <form onSubmit={handleQuickSave} className="space-y-3.5">
+        {/* Title Input */}
+        <input
+          autoFocus
+          required
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+          className="w-full border-0 border-b-2 border-[#1A73E8] bg-transparent px-0 py-1.5 text-base font-medium text-[#1F1F1F] outline-none placeholder:text-[#9AA0A6] dark:text-[#E3E3E3]"
+        />
+
+        {/* 2 Lựa chọn: Sự kiện & Việc cần làm */}
+        <div className="flex gap-1 rounded-xl bg-[#F1F3F4] p-1 dark:bg-[#2D2E30]">
+          <button
+            type="button"
+            onClick={() => {
+              setKind("event");
+              if (colorId === "peacock") setColorId("sage");
+            }}
+            className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-all ${
+              kind === "event"
+                ? "bg-white text-[#1A73E8] shadow-xs dark:bg-[#444746] dark:text-[#A8C7FA]"
+                : "text-[#5F6368] dark:text-[#C4C7C5]"
+            }`}
+          >
+            📅 Sự kiện
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setKind("task");
+              if (colorId === "sage") setColorId("peacock");
+            }}
+            className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-all ${
+              kind === "task"
+                ? "bg-white text-[#1A73E8] shadow-xs dark:bg-[#444746] dark:text-[#A8C7FA]"
+                : "text-[#5F6368] dark:text-[#C4C7C5]"
+            }`}
+          >
+            🎯 Việc cần làm
+          </button>
+        </div>
+
+        {/* Single-Day Info Badge & Cả ngày Checkbox */}
+        <div className="flex items-center justify-between gap-2 rounded-xl bg-[#F8FAFD] p-2.5 text-xs text-[#3C4043] dark:bg-[#1E1F20] dark:text-[#C4C7C5]">
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
+            <div className="min-w-0 truncate">
+              <span className="font-medium">{formatVietnameseDate(dateObj, true)}</span>
+              {!isAllDay && <span className="ml-1.5 font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">({startTime} – {endTime})</span>}
+              {!isAllDay && <span className="ml-1 text-[11px] text-[#70757A]">({formatMinutesDuration(duration)})</span>}
+            </div>
+          </div>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3] shrink-0">
+            <CustomCheckbox checked={isAllDay} onChange={setIsAllDay} />
+            <span>Cả ngày</span>
+          </label>
+        </div>
+
+        {/* Địa điểm (cho Sự kiện). Google Meet chỉ hiển thị khi đã có tích hợp thật. */}
+        {kind === "event" && (
+          <div className="flex items-center gap-2 rounded-xl border border-[#DADCE0] bg-white px-2.5 py-1.5 text-xs dark:border-[#5F6368] dark:bg-[#2D2E30]">
+            <MapPin className="h-3.5 w-3.5 text-[#70757A] shrink-0" />
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Thêm vị trí, phòng họp..."
+              className="w-full bg-transparent text-xs text-[#1F1F1F] outline-none dark:text-[#E3E3E3]"
+            />
+          </div>
+        )}
+
+        {/* ── BẢNG 11 MÀU SẮC CHUẨN GOOGLE PALETTE ── */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-medium text-[#70757A]">
+            <span>Màu phân loại</span>
+            <span className="font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">
+              {GOOGLE_PALETTE[colorId]?.name || "Lam khổng tước"}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 py-1 pl-1">
+            {Object.values(GOOGLE_PALETTE).map((color) => {
+              const isSelected = colorId === color.id;
+              return (
+                <button
+                  key={color.id}
+                  type="button"
+                  onClick={() => setColorId(color.id)}
+                  title={color.name}
+                  style={{ backgroundColor: color.bg }}
+                  className={`relative flex h-5 w-5 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 ${
+                    isSelected ? "ring-2 ring-offset-2 ring-[#1A73E8] shadow-sm dark:ring-offset-[#1E1F20]" : ""
+                  }`}
+                >
+                  {isSelected && <Check className="h-3 w-3 text-white stroke-[3]" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center justify-between pt-2 border-t border-[#DADCE0] dark:border-[#36373A]">
+          <button
+            type="button"
+            onClick={() => onMoreOptions(title, kind, colorId, location, isAllDay)}
+            className="text-xs font-medium text-[#1A73E8] hover:underline dark:text-[#A8C7FA]"
+          >
+            Tùy chọn khác
+          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full px-4 py-1.5 text-xs font-medium text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+            >
+              Huỷ
+            </button>
+            <button
+              type="submit"
+              disabled={!title.trim()}
+              className="rounded-full bg-[#1A73E8] px-5 py-1.5 text-xs font-medium text-white transition-all hover:bg-[#1557B0] disabled:opacity-50"
+            >
+              Lưu
+            </button>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+/* ────────────────────────── FULL EVENT / TASK MODAL ────────────────────────── */
+interface FullEventModalProps {
+  initialTask?: CalendarTask;
+  initialKind?: EventKind;
+  initialDate?: string;
+  initialStartTime?: string;
+  initialEndTime?: string;
+  initialTitle?: string;
+  initialLocation?: string;
+  initialColorId?: string;
+  initialIsAllDay?: boolean;
+  onClose: () => void;
+  onSubmit: (task: CalendarTask) => void;
+}
+
+const FullEventModal: React.FC<FullEventModalProps> = ({
+  initialTask,
+  initialKind = "event",
+  initialDate = toDateString(new Date()),
+  initialStartTime = "09:00",
+  initialEndTime = "10:00",
+  initialTitle = "",
+  initialLocation = "",
+  initialColorId,
+  initialIsAllDay = false,
+  onClose,
+  onSubmit,
+}) => {
+  const [kind, setKind] = useState<EventKind>(initialTask?.kind ?? initialKind);
+  const [title, setTitle] = useState(initialTask?.title ?? initialTitle);
+
+  // ── RÀNG BUỘC: 1 NGÀY DUY NHẤT VỚI LỰA CHỌN CẢ NGÀY ──
+  const [date, setDate] = useState<string>(
+    initialTask?.date || (initialTask?.dueAt ? toDateString(new Date(initialTask.dueAt)) : initialDate)
+  );
+  const [isAllDay, setIsAllDay] = useState<boolean>(initialTask?.isAllDay ?? initialIsAllDay);
+
+  // Giờ bắt đầu & Giờ kết thúc
+  const [startTime, setStartTime] = useState<string>(
+    initialTask?.startTime || (initialTask?.dueAt ? toTimeString(new Date(initialTask.dueAt)) : initialStartTime)
+  );
+  const [endTime, setEndTime] = useState<string>(
+    initialTask?.endTime || (initialTask?.endAt ? toTimeString(new Date(initialTask.endAt)) : initialEndTime)
+  );
+
+  // Lặp lại (Đã sửa: "Thứ 2 đến Thứ 6")
+  const [recurrence, setRecurrence] = useState<RecurrenceFreq>(initialTask?.recurrence ?? "none");
+
+  // Google Meet & Địa điểm (chỉ dùng cho Sự kiện)
+  const [meetLink, setMeetLink] = useState<string>(initialTask?.meetLink ?? "");
+  const [location, setLocation] = useState(initialTask?.location ?? initialLocation);
+
+  // Người tham gia (Khách mời)
+  const [attendees, setAttendees] = useState<Attendee[]>(initialTask?.attendees ?? []);
+  const [guestEmail, setGuestEmail] = useState("");
+
+  // Màu sắc (11 màu chuẩn Google Calendar)
+  const [colorId, setColorId] = useState<string>(
+    initialTask?.colorId ?? initialColorId ?? (kind === "task" ? "peacock" : "sage")
+  );
+
+  // Nhắc nhở (Thông báo)
+  const [reminders, setReminders] = useState<EventReminder[]>(
+    initialTask?.reminders && initialTask.reminders.length > 0
+      ? initialTask.reminders
+      : [{ id: "r1", method: "popup", minutes: 10 }]
+  );
+
+  // Ghi chú / Mô tả
+  const [note, setNote] = useState(initialTask?.note ?? "");
+
+  // Tính thời lượng
+  const calculatedDuration = useMemo(() => {
+    if (isAllDay) return 1440;
+    const startMins = timeToMinutes(startTime);
+    const endMins = timeToMinutes(endTime);
+    return Math.max(15, endMins - startMins);
+  }, [isAllDay, startTime, endTime]);
+
+  // Điều chỉnh giờ kết thúc tự động khi đổi giờ bắt đầu
+  const handleStartTimeChange = (newStart: string) => {
+    setStartTime(newStart);
+    const startM = timeToMinutes(newStart);
+    const endM = timeToMinutes(endTime);
+    if (endM <= startM) {
+      setEndTime(minutesToTime(Math.min(1439, startM + 60)));
+    }
+  };
+
+  const applyQuickDuration = (minutes: number) => {
+    const startM = timeToMinutes(startTime);
+    setEndTime(minutesToTime(Math.min(1439, startM + minutes)));
+  };
+
+  const handleAddGuest = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const clean = guestEmail.trim();
+    if (!clean) return;
+    if (!attendees.some((a) => a.email.toLowerCase() === clean.toLowerCase())) {
+      setAttendees([
+        ...attendees,
+        {
+          email: clean,
+          name: clean.split("@")[0],
+          status: "needsAction",
+        },
+      ]);
+    }
+    setGuestEmail("");
+  };
+
+  const handleRemoveGuest = (email: string) => {
+    setAttendees(attendees.filter((a) => a.email !== email));
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!title.trim()) return;
+
+    const dueAtStr = isAllDay ? buildSingleDayIso(date, "00:00") : buildSingleDayIso(date, startTime);
+    const endAtStr = isAllDay ? buildSingleDayIso(date, "23:59") : buildSingleDayIso(date, endTime);
+
+    const taskData: CalendarTask = {
+      id: initialTask?.id ?? `task-${Date.now()}`,
+      title: title.trim(),
+      kind,
+      date,
+      isAllDay,
+      startTime: isAllDay ? undefined : startTime,
+      endTime: isAllDay ? undefined : endTime,
+      duration: isAllDay ? 1440 : calculatedDuration,
+      dueAt: dueAtStr,
+      endAt: endAtStr,
+      recurrence,
+      colorId,
+      location: kind === "event" && location.trim() ? location.trim() : undefined,
+      meetLink: kind === "event" && meetLink.trim() ? meetLink.trim() : undefined,
+      attendees: kind === "event" && attendees.length > 0 ? attendees : undefined,
+      reminders: reminders.length > 0 ? reminders : undefined,
+      note: note.trim() || undefined,
+      status: initialTask?.status ?? "approved",
+      source: initialTask?.source ?? "manual",
+      category: kind === "task" ? "task" : "meeting",
+    };
+
+    onSubmit(taskData);
+  };
+
+  return (
+    <Modal
+      title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : "Chỉnh sửa sự kiện") : (kind === "task" ? "Tạo việc cần làm mới" : "Tạo sự kiện mới")}
+      maxWidth="max-w-xl"
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-4 max-h-[80vh] overflow-y-auto pr-1 scrollbar-thin">
+        {/* 2 Tab chuyển đổi: Sự kiện vs Việc cần làm */}
+        <div className="flex rounded-xl bg-[#F1F3F4] p-1 dark:bg-[#2D2E30]" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={kind === "event"}
+            onClick={() => {
+              setKind("event");
+              if (colorId === "peacock") setColorId("sage");
+            }}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-all ${
+              kind === "event"
+                ? "bg-white text-[#1A73E8] shadow-xs dark:bg-[#444746] dark:text-[#A8C7FA]"
+                : "text-[#5F6368] dark:text-[#C4C7C5]"
+            }`}
+          >
+            <CalendarDays className="h-4 w-4" />
+            <span>Sự kiện</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={kind === "task"}
+            onClick={() => {
+              setKind("task");
+              if (colorId === "sage") setColorId("peacock");
+            }}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-xs font-medium transition-all ${
+              kind === "task"
+                ? "bg-white text-[#1A73E8] shadow-xs dark:bg-[#444746] dark:text-[#A8C7FA]"
+                : "text-[#5F6368] dark:text-[#C4C7C5]"
+            }`}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Việc cần làm</span>
+          </button>
+        </div>
+
+        {/* Tiêu đề */}
+        <div>
+          <input
+            autoFocus
+            required
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+            className="w-full border-0 border-b border-[#DADCE0] bg-transparent px-0 py-2 text-xl font-normal text-[#202124] outline-none transition-colors placeholder:text-[#9AA0A6] focus:border-[#1A73E8] focus:ring-0 dark:border-[#5F6368] dark:text-[#E8EAED]"
+          />
+        </div>
+
+        {/* ── THỜI GIAN: 1 NGÀY VỚI LỰA CHỌN CẢ NGÀY HOẶC THEO GIỜ ── */}
+        <div className="rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-3.5 dark:border-[#36373A] dark:bg-[#1E1F20] space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock3 className="h-4 w-4 text-[#1A73E8]" />
+              <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">
+                Thời gian (Trong 1 ngày)
+              </span>
+            </div>
+            {/* Checkbox Cả ngày (Màu trắng khi chưa tích) */}
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">
+              <CustomCheckbox checked={isAllDay} onChange={setIsAllDay} />
+              <span>Cả ngày</span>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
+                Ngày diễn ra
+              </label>
+              <input
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+              />
+            </div>
+
+            {!isAllDay && (
+              <>
+                <div>
+                  <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
+                    Bắt đầu
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={startTime}
+                    onChange={(e) => handleStartTimeChange(e.target.value)}
+                    className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
+                    Kết thúc
+                  </label>
+                  <input
+                    type="time"
+                    required
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Quick duration chips nếu không chọn cả ngày */}
+          {!isAllDay && (
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#DADCE0]/60 dark:border-[#36373A]">
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[11px] text-[#70757A]">Chọn nhanh:</span>
+                {[15, 30, 45, 60, 90, 120].map((mins) => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => applyQuickDuration(mins)}
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                      calculatedDuration === mins
+                        ? "bg-[#1A73E8] text-white"
+                        : "bg-[#F1F3F4] text-[#444746] hover:bg-[#E8EAED] dark:bg-[#2D2E30] dark:text-[#C4C7C5]"
+                    }`}
+                  >
+                    {mins >= 60 ? `${mins / 60}h` : `${mins}p`}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] font-medium text-[#1A73E8] dark:text-[#A8C7FA]">
+                {calculatedDuration >= 60 ? `${Math.floor(calculatedDuration / 60)} giờ ${calculatedDuration % 60 ? `${calculatedDuration % 60}p` : ""}` : `${calculatedDuration} phút`}
+              </span>
+            </div>
+          )}
+
+          {/* Quy tắc lặp lại (Đã bỏ chữ "Ngày làm việc") */}
+          <div>
+            <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
+              Lặp lại
+            </label>
+            <select
+              value={recurrence}
+              onChange={(e) => setRecurrence(e.target.value as RecurrenceFreq)}
+              className="w-full rounded-lg border border-[#DADCE0] bg-white px-2.5 py-1.5 text-xs text-[#1F1F1F] outline-none dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+            >
+              <option value="none">Không lặp lại</option>
+              <option value="daily">Hằng ngày</option>
+              <option value="workdays">Thứ 2 đến Thứ 6</option>
+              <option value="weekly">Hằng tuần vào ngày này</option>
+              <option value="monthly">Hằng tháng vào ngày này</option>
+              <option value="yearly">Hằng năm vào ngày này</option>
+            </select>
+          </div>
+        </div>
+
+        {/* ── NẾU LÀ SỰ KIỆN: GOOGLE MEET, ĐỊA ĐIỂM, KHÁCH MỜI ── */}
+        {kind === "event" && (
+          <>
+            {/* Google Meet */}
+            <div className="rounded-2xl border border-[#DADCE0] bg-white p-3 dark:border-[#36373A] dark:bg-[#1E1F20] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3] flex items-center gap-2">
+                  <Video className="h-4 w-4 text-[#1A73E8]" />
+                  Hội nghị truyền hình Google Meet
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMeetLink(meetLink ? "" : generateMeetLink())}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    meetLink
+                      ? "bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300"
+                      : "bg-[#1A73E8] text-white hover:bg-[#1557B0]"
+                  }`}
+                >
+                  {meetLink ? "Xoá Meet" : "+ Thêm Google Meet"}
+                </button>
+              </div>
+
+              {meetLink && (
+                <div className="flex items-center justify-between rounded-xl bg-[#E8F0FE] p-2 text-xs text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">
+                  <span className="truncate font-mono">{meetLink}</span>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(meetLink)}
+                    className="p-1 hover:bg-[#D2E3FC] rounded text-[#1A73E8]"
+                    title="Sao chép link"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Địa điểm */}
+            <div>
+              <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
+                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />Địa điểm / Phòng họp</span>
+              </label>
+              <input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Ví dụ: Phòng họp Tầng 4, Quán Cafe..."
+                className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+              />
+            </div>
+
+            {/* Khách mời */}
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
+                <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm người tham gia (Khách mời)</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  value={guestEmail}
+                  onChange={(e) => setGuestEmail(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddGuest();
+                    }
+                  }}
+                  placeholder="Nhập email khách (ví dụ: friend@company.com)..."
+                  className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAddGuest()}
+                  className="shrink-0 rounded-lg bg-[#E8F0FE] px-3.5 py-2 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
+                >
+                  Thêm
+                </button>
+              </div>
+
+              {attendees.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {attendees.map((guest) => (
+                    <span
+                      key={guest.email}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#F1F3F4] px-2.5 py-1 text-xs text-[#3C4043] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                    >
+                      <span>{guest.email}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveGuest(guest.email)}
+                        className="rounded-full hover:text-red-500"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── BẢNG 11 MÀU CHUẨN GOOGLE CALENDAR (DỊCH SANG PHẢI KHÔNG BỊ CHE) ── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
+              Màu sắc phân loại
+            </label>
+            <span className="text-xs font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">
+              {GOOGLE_PALETTE[colorId]?.name || "Lam khổng tước"}
+            </span>
+          </div>
+
+          {/* Khung màu dịch sang phải (ml-2 pl-3) để các nút màu và viền ring không bị che */}
+          <div className="ml-2 flex flex-wrap items-center gap-2.5 rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-3 dark:border-[#36373A] dark:bg-[#1E1F20]">
+            {Object.values(GOOGLE_PALETTE).map((color) => {
+              const isSelected = colorId === color.id;
+              return (
+                <button
+                  key={color.id}
+                  type="button"
+                  onClick={() => setColorId(color.id)}
+                  title={color.name}
+                  style={{ backgroundColor: color.bg }}
+                  className={`relative flex h-7 w-7 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 ${
+                    isSelected ? "ring-2 ring-offset-2 ring-[#1A73E8] shadow-sm dark:ring-offset-[#1E1F20]" : ""
+                  }`}
+                >
+                  {isSelected && <Check className="h-4 w-4 text-white stroke-[3]" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── THÔNG BÁO NHẮC LỊCH ── */}
+        <div>
+          <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
+            <span className="flex items-center gap-1"><Bell className="h-3.5 w-3.5 text-[#1A73E8]" />Thông báo nhắc lịch</span>
+          </label>
+          <select
+            value={reminders[0]?.minutes ?? 10}
+            onChange={(e) => {
+              const mins = parseInt(e.target.value, 10);
+              setReminders([{ id: "r1", method: "popup", minutes: mins }]);
+            }}
+            className="w-full rounded-lg border border-[#DADCE0] bg-white px-2.5 py-2 text-xs text-[#1F1F1F] outline-none dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+          >
+            {REMINDER_OPTIONS.map((opt) => (
+              <option key={opt.minutes} value={opt.minutes}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* ── GHI CHÚ / MÔ TẢ ── */}
+        <div>
+          <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
+            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : "Mô tả / Ghi chú"}</span>
+          </label>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            placeholder={kind === "task" ? "Thêm mô tả hoặc chi tiết việc cần thực hiện..." : "Thêm mô tả cho sự kiện..."}
+            className="w-full rounded-xl border border-[#DADCE0] bg-white p-2.5 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+          />
+        </div>
+
+        {/* Footer Actions */}
+        <div className="flex justify-end gap-2.5 pt-3 border-t border-[#DADCE0] dark:border-[#36373A]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full px-5 py-2 text-xs font-medium text-[#70757A] transition-colors hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+          >
+            Huỷ
+          </button>
+          <button
+            type="submit"
+            className="rounded-full bg-[#1A73E8] px-6 py-2 text-xs font-medium text-white transition-all hover:bg-[#1557B0] shadow-sm active:scale-95"
+          >
+            {initialTask ? "Lưu thay đổi" : "Lưu"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+/* ────────────────────────── EVENT DETAILS MODAL ────────────────────────── */
+const EventDetailsModal: React.FC<{
+  task: CalendarTask;
+  anchor: DetailPopoverAnchor | null;
+  onClose: () => void;
+  onFinish: (task: CalendarTask) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}> = ({ task, anchor, onClose, onFinish, onEdit, onDelete }) => {
+  const color = getEventColor(task);
+  const isTask = task.kind === "task";
+  const taskDateObj = parseDateString(task.date || toDateString(new Date(task.dueAt)));
+
+  return (
+    <Modal title="" maxWidth="max-w-md" popoverAnchor={anchor} onClose={onClose}>
+      <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1 scrollbar-thin">
+        {/* Top Header Actions */}
+        <div className="flex items-center justify-between border-b border-[#DADCE0] pb-2 dark:border-[#36373A]">
+          <div className="flex items-center gap-1.5">
+            <span
+              className="rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+              style={{ backgroundColor: color.light, color: color.bg }}
+            >
+              {isTask ? "Việc cần làm" : "Sự kiện"}
+            </span>
+            {task.status === "done" && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
+                Đã hoàn thành
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onEdit}
+              title="Chỉnh sửa"
+              className="rounded-full p-1.5 text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              onClick={onDelete}
+              title="Xoá"
+              className="rounded-full p-1.5 text-[#D93025] hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+            <button
+              onClick={onClose}
+              title="Đóng"
+              className="rounded-full p-1.5 text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Title */}
+        <div className="flex items-start gap-3">
+          <span className="mt-1 h-4 w-4 shrink-0 rounded-md" style={{ backgroundColor: color.bg }} />
+          <div className="min-w-0 flex-1">
+            <h3 className={`text-lg font-medium text-[#1F1F1F] dark:text-[#E3E3E3] leading-snug ${task.status === "done" ? "line-through opacity-60" : ""}`}>
+              {task.title}
+            </h3>
+            <p className="text-xs text-[#70757A] mt-0.5">
+              {formatVietnameseDate(taskDateObj, true)}
+            </p>
+          </div>
+        </div>
+
+        {/* Single-Day Time Card */}
+        <div className="rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-3 text-xs space-y-1.5 dark:border-[#36373A] dark:bg-[#1E1F20]">
+          <div className="flex items-center gap-2 font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">
+            <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
+            <span>
+              {isAllDayTask(task)
+                ? "Sự kiện cả ngày"
+                : `${task.startTime || toTimeString(new Date(task.dueAt))} – ${task.endTime || (task.endAt ? toTimeString(new Date(task.endAt)) : "")} (${formatMinutesDuration(task.duration)})`}
+            </span>
+          </div>
+          {task.recurrence && task.recurrence !== "none" && (
+            <div className="flex items-center gap-1 text-[11px] text-[#1A73E8] font-medium pl-6 dark:text-[#A8C7FA]">
+              <RotateCw className="h-3 w-3" />
+              {recurrenceLabel(task.recurrence)}
+            </div>
+          )}
+        </div>
+
+        {/* Google Meet Join Button */}
+        {task.meetLink && (
+          <div className="rounded-2xl border border-[#1A73E8]/30 bg-[#E8F0FE]/70 p-3 dark:bg-[#1A73E8]/10 space-y-2">
+            <div className="flex items-center justify-between">
+              <a
+                href={task.meetLink}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-full bg-[#1A73E8] px-4 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#1557B0]"
+              >
+                <Video className="h-4 w-4" /> Tham gia Google Meet
+              </a>
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(task.meetLink!)}
+                className="flex items-center gap-1 rounded-full border border-[#1A73E8]/40 bg-white px-2.5 py-1 text-[11px] font-medium text-[#1A73E8] hover:bg-[#F1F3F4] dark:bg-[#2D2E30] dark:text-[#A8C7FA]"
+              >
+                <Copy className="h-3.5 w-3.5" /> Sao chép
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Location */}
+        {task.location && (
+          <div className="flex items-start gap-2.5 text-xs text-[#3C4043] dark:text-[#C4C7C5]">
+            <MapPin className="h-4 w-4 text-[#1A73E8] shrink-0 mt-0.5" />
+            <span className="font-medium">{task.location}</span>
+          </div>
+        )}
+
+        {/* Attendees */}
+        {task.attendees && task.attendees.length > 0 && (
+          <div className="rounded-2xl border border-[#DADCE0] p-3 text-xs space-y-1.5 dark:border-[#36373A]">
+            <span className="font-semibold text-[#1F1F1F] dark:text-[#E3E3E3] flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5 text-[#1A73E8]" />
+              Người tham gia ({task.attendees.length})
+            </span>
+            <div className="flex flex-wrap gap-1 pt-1">
+              {task.attendees.map((g) => (
+                <span key={g.email} className="rounded-full bg-[#F1F3F4] px-2.5 py-0.5 text-[11px] text-[#3C4043] dark:bg-[#2D2E30] dark:text-[#E3E3E3]">
+                  {g.email}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Description */}
+        {task.note && (
+          <div className="rounded-2xl bg-[#F1F3F4] p-3 text-xs leading-relaxed text-[#3C4043] dark:bg-[#2D2E30] dark:text-[#C4C7C5]">
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#70757A] mb-1">Mô tả</span>
+            {task.note}
+          </div>
+        )}
+
+        {/* Bottom Actions */}
+        <div className="flex items-center justify-between border-t border-[#DADCE0] pt-3 dark:border-[#36373A]">
+          <button
+            onClick={() => {
+              onFinish(task);
+              onClose();
+            }}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+              task.status === "done"
+                ? "border border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300"
+                : "border border-emerald-600 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-400 dark:text-emerald-300"
+            }`}
+          >
+            <Check className="h-3.5 w-3.5" />
+            {task.status === "done" ? "Đánh dấu chưa xong" : "Đánh dấu hoàn thành"}
+          </button>
+
+          <button
+            onClick={onClose}
+            className="rounded-full bg-[#F1F3F4] px-4 py-1.5 text-xs font-medium text-[#3C4043] hover:bg-[#E0E0E0] dark:bg-[#36373A] dark:text-[#E3E3E3]"
+          >
+            Đóng
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+/* ────────────────────────── SHARED MODAL SHELL ────────────────────────── */
+const Modal: React.FC<{
+  title?: React.ReactNode;
+  onClose: () => void;
+  children: React.ReactNode;
+  maxWidth?: string;
+  popoverAnchor?: DetailPopoverAnchor | null;
+}> = ({ title, onClose, children, maxWidth = "max-w-md", popoverAnchor = null }) => {
+  const isDetailsPopover = typeof title === "string" && title.startsWith("Chi tiết");
+  const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+  const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
+  const canOpenRight = popoverAnchor && viewportWidth - popoverAnchor.right >= 420;
+
+  const anchoredStyle = popoverAnchor
+    ? {
+        left: Math.max(16, canOpenRight ? popoverAnchor.right + 12 : popoverAnchor.left - 410),
+        top: Math.max(72, Math.min(popoverAnchor.top - 12, viewportHeight - 560)),
+      }
+    : undefined;
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 flex p-3 ${
+        isDetailsPopover
+          ? "pointer-events-none items-start justify-end bg-transparent pt-20 sm:pr-8"
+          : "items-center justify-center bg-black/40 backdrop-blur-[2px]"
+      }`}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        style={anchoredStyle}
+        className={`pointer-events-auto w-full ${
+          isDetailsPopover ? `${popoverAnchor ? "fixed" : ""} max-w-sm max-h-[calc(100vh-6rem)] overflow-y-auto` : maxWidth
+        } animate-[fadeIn_150ms_ease-out] rounded-3xl bg-white p-5 shadow-[0_24px_38px_3px_rgba(0,0,0,.14),0_9px_46px_8px_rgba(0,0,0,.12)] dark:bg-[#2D2E30]`}
+      >
+        {title ? (
+          <div className="mb-3.5 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">{title}</h2>
+            <button
+              onClick={onClose}
+              aria-label="Đóng"
+              className="rounded-full p-1.5 text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        ) : null}
+        {children}
+      </div>
+    </div>
+  );
+};
