@@ -394,7 +394,7 @@ message”; không ghi placeholder vào message. Với voice `completed`, quy t�
 preview bản dịch/`original_text` ngay dưới đây được dùng y hệt text. Timestamp,
 unread và ordering không đổi.
 
-**Tin mới nhất đã bị gỡ thì `last_message` là chuỗi rỗng, `last_message_at` vẫn giữ nguyên** (sửa 16/08). Trước đây tin đã gỡ bị loại khỏi phép tính, nên dòng xem trước lùi về tin trước đó — hoặc trống hẳn khi không còn tin nào — và người dùng không có cách nào biết chuyện gì vừa xảy ra. Chuỗi rỗng là tín hiệu không nhập nhằng vì tin nhắn thường **không bao giờ** rỗng: endpoint gửi tin từ chối nội dung trắng (§3.6). Câu chữ hiển thị ("Tin nhắn đã được thu hồi") do client quyết định — đó là chữ giao diện và phải theo ngôn ngữ người đọc, không phải thứ server áp đặt. Chúng tồn tại để danh sách hội thoại hiển thị được dòng xem trước và thời gian mà không phải gọi thêm một request cho mỗi hội thoại.
+**Tin mới nhất đã bị gỡ không được dùng làm preview.** Danh sách hội thoại trả về tin nhắn còn hiển thị gần nhất trước đó; chỉ trả `null` khi không còn tin nhắn nào. Nhờ vậy dòng xem trước luôn khớp với nội dung người dùng vẫn có thể mở trong hội thoại.
 
 `last_message` là **dữ liệu riêng theo người gọi**, cùng nguyên tắc với `my_rating` ở §3.2: nếu tin nhắn đó đã có bản dịch sang `preferred_language` của tài khoản đang gọi thì trả về bản dịch, không thì trả về `original_text`. Lý do: danh sách hội thoại mà hiển thị thứ tiếng người đọc không hiểu thì không dùng để nhận ra hội thoại được. Vì vậy tuyệt đối không cache chung giá trị này giữa các tài khoản.
 

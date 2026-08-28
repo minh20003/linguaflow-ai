@@ -3028,7 +3028,8 @@ async def edit_message(
             edited_at=message.edited_at,
         ).model_dump(mode="json"),
     )
-    schedule_translations(message=message, publisher=manager)
+    if message.visible_to_user_id is None:
+        schedule_translations(message=message, publisher=manager)
 
     return MessageResponse(
         id=message.id,
@@ -3462,6 +3463,10 @@ async def list_conversation_attachments(
                 Attachment.conversation_id == conversation_id,
                 Attachment.message_id.is_not(None),
                 Message.deleted_at.is_(None),
+                or_(
+                    Message.visible_to_user_id.is_(None),
+                    Message.visible_to_user_id == current_user.id,
+                ),
             )
             .order_by(Attachment.created_at.desc(), Attachment.id.desc())
         )
@@ -3488,9 +3493,16 @@ async def download_conversation_attachment(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     attachment = await db.scalar(
-        select(Attachment).where(
+        select(Attachment)
+        .join(Message, Message.id == Attachment.message_id)
+        .where(
             Attachment.id == attachment_id,
             Attachment.conversation_id == conversation_id,
+            Message.deleted_at.is_(None),
+            or_(
+                Message.visible_to_user_id.is_(None),
+                Message.visible_to_user_id == current_user.id,
+            ),
         )
     )
     if attachment is None:

@@ -29,29 +29,40 @@ def upgrade() -> None:
     exactly what `public` means. Backfilling would say the same thing more
     slowly.
     """
-    op.add_column(
-        "messages",
-        sa.Column("visibility", sa.String(length=16), nullable=False, server_default="public"),
-    )
-    op.add_column(
-        "messages",
-        sa.Column(
-            "visible_to_user_id",
-            sa.String(length=36),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=True,
-        ),
-    )
-    op.create_check_constraint(
-        "ck_messages_visibility",
-        "messages",
-        "visibility IN ('public', 'private')",
-    )
-    op.create_check_constraint(
-        "ck_messages_private_names_a_reader",
-        "messages",
-        "visibility = 'public' OR visible_to_user_id IS NOT NULL",
-    )
+    # An earlier local privacy migration already added ``visible_to_user_id``
+    # on some developer databases. Keep this upstream migration safe for both
+    # histories while still creating the column on a fresh installation.
+    inspector = sa.inspect(op.get_bind())
+    columns = {column["name"] for column in inspector.get_columns("messages")}
+    if "visibility" not in columns:
+        op.add_column(
+            "messages",
+            sa.Column("visibility", sa.String(length=16), nullable=False, server_default="public"),
+        )
+    if "visible_to_user_id" not in columns:
+        op.add_column(
+            "messages",
+            sa.Column(
+                "visible_to_user_id",
+                sa.String(length=36),
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                nullable=True,
+            ),
+        )
+
+    constraints = {constraint["name"] for constraint in inspector.get_check_constraints("messages")}
+    if "ck_messages_visibility" not in constraints:
+        op.create_check_constraint(
+            "ck_messages_visibility",
+            "messages",
+            "visibility IN ('public', 'private')",
+        )
+    if "ck_messages_private_names_a_reader" not in constraints:
+        op.create_check_constraint(
+            "ck_messages_private_names_a_reader",
+            "messages",
+            "visibility = 'public' OR visible_to_user_id IS NOT NULL",
+        )
 
 
 def downgrade() -> None:
