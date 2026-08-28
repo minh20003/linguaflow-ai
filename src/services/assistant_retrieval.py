@@ -48,6 +48,7 @@ are answers, not source material.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Sequence
@@ -64,6 +65,7 @@ from src.services.embeddings import (
     assistant_embedding_settings,
     embed,
     embedding_model_name,
+    local_models_ready,
 )
 
 logger = logging.getLogger(__name__)
@@ -322,16 +324,27 @@ async def expand_query(
 
 
 def _load_cross_encoder(model_name: str):
-    """Import and cache the reranker, or return None if it is unavailable.
+    """Build and cache the reranker, or return None if it is unavailable.
 
-    Imported inside the function for the reason `embeddings.py` gives about
-    `sentence-transformers`: it pulls in torch, several hundred megabytes that
-    have no place in an image which will never call it (ADR-18). A deployment
-    that has not installed it simply skips reranking.
+    Blocking: it reads a model off disk. Callers must reach it through
+    :func:`rerank`, which runs this in a worker thread — loading the model on
+    the event loop stalled every other request for several seconds.
+
+    Never triggers the first import of `sentence-transformers` itself:
+    :func:`preload_local_models` does that at startup, for the reason given
+    there.
     """
     cached = _CROSS_ENCODERS.get(model_name)
     if cached is not None:
         return cached
+    if not local_models_ready():
+        logger.info(
+            "Cross-encoder %r skipped: sentence-transformers was not preloaded. "
+            "Retrieval returns the fused ranking unreranked.",
+            model_name,
+        )
+        _CROSS_ENCODERS[model_name] = False
+        return None
     try:
         from sentence_transformers import CrossEncoder
 
@@ -356,7 +369,7 @@ _CROSS_ENCODERS: dict[str, Any] = {}
 DEFAULT_RERANK_MODEL = "BAAI/bge-reranker-v2-m3"
 
 
-def rerank(
+async def rerank(
     query_text: str,
     candidates: Sequence[RetrievedChunk],
     *,
@@ -372,16 +385,21 @@ def rerank(
 
     Falls through to the input order when the model is unavailable, which keeps
     reranking an improvement rather than a dependency.
+
+    Async because both halves — loading the model and scoring with it — are
+    blocking CPU work in torch. Run inline they held the event loop long enough
+    for health checks to time out while one person's question was answered.
     """
     if not candidates:
         return []
-    encoder = _load_cross_encoder(model_name)
+    encoder = await asyncio.to_thread(_load_cross_encoder, model_name)
     if not encoder:
         return list(candidates[:top_n])
 
     try:
-        scores = encoder.predict(
-            [(query_text, candidate.text) for candidate in candidates]
+        scores = await asyncio.to_thread(
+            encoder.predict,
+            [(query_text, candidate.text) for candidate in candidates],
         )
     except Exception:
         logger.warning("Cross-encoder scoring failed", exc_info=True)
@@ -506,6 +524,7 @@ async def retrieve(
     config = config or RetrievalConfig(
         top_k=settings.assistant_retrieval_top_k,
         top_n=settings.assistant_rerank_top_n,
+        use_rerank=settings.assistant_rerank_enabled,
     )
 
     # Every embedding on this path — chunks at write time, queries here — goes
@@ -580,9 +599,9 @@ async def retrieve(
         ]
 
         results = (
-            rerank(cleaned, candidates, top_n=config.top_n)
+            await rerank(cleaned, candidates, top_n=config.top_n)
             if config.use_rerank
-            else candidates[: config.top_n]
+            else list(candidates[: config.top_n])
         )
 
         if config.use_parent_expansion and config.strategy == "parent_child":

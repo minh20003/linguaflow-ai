@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     # with near-misses.
     assistant_retrieval_top_k: int = Field(default=8, ge=1, le=50)
     assistant_rerank_top_n: int = Field(default=4, ge=1, le=20)
+    # The reranker is the one part of this stack that runs a local model, so it
+    # is also the one part an operator may need to switch off without editing
+    # code: `sentence-transformers` pulls torch into the process, and a host
+    # that cannot load it took the whole server down rather than degrading.
+    # False keeps the fused hybrid ranking, which is the same fallback a
+    # deployment without the package already gets.
+    assistant_rerank_enabled: bool = True
 
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""

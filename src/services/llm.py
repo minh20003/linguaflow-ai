@@ -11,9 +11,15 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.config import Settings, get_settings
 
-# Model used when LLM_MODEL is left empty
+# Model used when LLM_MODEL is left empty.
+#
+# These go stale without warning. `llama-3.3-70b-versatile` sat here until Groq
+# withdrew it, and because a failed LLM call is a fallback by design (NFR-02)
+# the symptom was not an error but every message quietly arriving untranslated.
+# Verified against each provider's own model listing on 28/08; when a whole run
+# reports `is_fallback`, check these names before reading any other code.
 DEFAULT_MODELS: dict[str, str] = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "deepseek": "deepseek-chat",
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o-mini",

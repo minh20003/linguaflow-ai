@@ -5,7 +5,10 @@
 #   ./run.sh              # chạy cả hai
 #   ./run.sh backend      # chỉ backend
 #   ./run.sh frontend     # chỉ frontend
-#   SKIP_MIGRATE=1 ./run.sh
+#
+#   SKIP_MIGRATE=1 ./run.sh    # bỏ qua alembic upgrade head
+#   NO_DB_AUTOSTART=1 ./run.sh # không tự bật Postgres trong WSL
+#   BACKEND_PORT=8001 ./run.sh # đổi cổng
 #
 # Frontend là `frontend/` (bản đang phát triển, có màn Calendar + Google OAuth).
 # `frontend-v1/` là bản cũ, KHÔNG chạy ở đây.
@@ -28,14 +31,61 @@ export PYTHONUTF8=1
 BE_PID=""
 FE_PID=""
 
-# Git Bash trên Windows không có setsid. Ở đó chỉ chạy trực tiếp và giết theo
-# từng PID; trên Linux/macOS dùng setsid để giết được cả nhóm tiến trình con
-# (Next.js sinh thêm tiến trình và sẽ giữ cổng 3000 nếu chỉ giết tiến trình cha).
-if command -v setsid >/dev/null 2>&1; then
-    run_detached() { setsid "$@" & }
-else
-    run_detached() { "$@" & }
-fi
+# ─── Quản lý tiến trình ────────────────────────────────────────────────────
+# Trên Windows, `$!` của Git Bash không phải PID mà Task Manager nhìn thấy, và
+# `kill` nó thường không hạ được tiến trình Windows thật — lần chạy trước để lại
+# uvicorn giữ cổng 8000, khiến lần chạy sau chết vì "only one usage of each
+# socket address". Vì vậy PID luôn được tra lại từ chính cổng đang lắng nghe,
+# rồi hạ bằng `taskkill /T` để diệt cả cây con (Next.js sinh nhiều tiến trình
+# con và chỉ giết tiến trình cha là bỏ sót).
+
+is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; *) return 1 ;; esac; }
+
+port_pids() {
+    # MỌI PID đang LISTENING trên một cổng, mỗi dòng một PID.
+    #
+    # Số nhiều là cần thiết: một cổng có thể có nhiều mục (0.0.0.0 và 127.0.0.1,
+    # hoặc một tiến trình cũ chưa chết hẳn), và bản trước chỉ lấy `head -1` nên
+    # nó giết một cái rồi báo "không giải phóng được" vì cái thứ hai vẫn còn.
+    if is_windows; then
+        netstat -ano 2>/dev/null \
+            | grep -E "[:.]$1[[:space:]]" \
+            | grep -i "LISTENING" \
+            | awk '{print $NF}' | tr -d '\r' | sort -u
+    else
+        lsof -ti ":$1" -sTCP:LISTEN 2>/dev/null | sort -u
+    fi
+}
+
+port_pid() { port_pids "$1" | head -1; }
+
+kill_tree() {
+    local pid="$1"
+    [ -n "$pid" ] || return 0
+    if is_windows; then
+        taskkill //PID "$pid" //T //F >/dev/null 2>&1 || true
+    else
+        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    fi
+}
+
+free_port() {
+    # Dọn tiến trình cũ còn giữ cổng. Không làm việc này thì lần chạy thứ hai
+    # trong vòng vài giây sẽ hỏng, và triệu chứng nằm trong log chứ không hiện
+    # ra màn hình.
+    local port="$1" label="$2" pids pid
+    pids="$(port_pids "$port")"
+    [ -n "$pids" ] || return 0
+    echo "♻️  Cổng $port ($label) đang bị PID $(echo "$pids" | tr '\n' ' ')giữ — dọn trước khi chạy."
+    for _ in $(seq 1 20); do
+        pids="$(port_pids "$port")"
+        [ -z "$pids" ] && return 0
+        for pid in $pids; do kill_tree "$pid"; done
+        sleep 0.5
+    done
+    echo "❌ Không giải phóng được cổng $port. Hãy đóng tiến trình đó rồi chạy lại." >&2
+    exit 1
+}
 
 cleanup() {
     trap - INT TERM EXIT
@@ -43,15 +93,34 @@ cleanup() {
     echo "=================================================="
     echo " 🛑 Đang dừng Backend và Frontend..."
     echo "=================================================="
-    # Next.js sinh tiến trình con; giết cả nhóm để không sót cái nào giữ cổng.
-    for pid in "$FE_PID" "$BE_PID"; do
-        [ -n "$pid" ] || continue
-        kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-    done
-    wait 2>/dev/null || true
+    # Theo cổng chứ không theo `$!`, vì lý do đã nói ở trên.
+    [ -n "$FE_PID" ] && kill_tree "$(port_pid "$FRONTEND_PORT")"
+    [ -n "$BE_PID" ] && kill_tree "$(port_pid "$BACKEND_PORT")"
+    kill_tree "$FE_PID"
+    kill_tree "$BE_PID"
     echo " ✅ Đã dừng xong."
 }
 trap cleanup INT TERM EXIT
+
+# Đợi tới khi dịch vụ thật sự trả lời. Trước đây script in URL ngay lập tức,
+# trong khi backend cần ~15–20s để khởi động (nạp tracing, kiểm tra CSDL), nên
+# ai mở link ngay cũng gặp connection refused và tưởng là hỏng.
+wait_until_up() {
+    local label="$1" port="$2" url="${3:-}" limit="${4:-90}" i=0
+    printf "   ⏳ Đợi %s" "$label"
+    while [ "$i" -lt "$limit" ]; do
+        if [ -n "$url" ]; then
+            curl -s -m 3 -o /dev/null "$url" && { printf " — sẵn sàng sau %ss\n" "$i"; return 0; }
+        elif [ -n "$(port_pid "$port")" ]; then
+            printf " — sẵn sàng sau %ss\n" "$i"; return 0
+        fi
+        printf "."
+        sleep 1
+        i=$((i + 1))
+    done
+    printf " — quá %ss mà chưa lên.\n" "$limit"
+    return 1
+}
 
 echo "=================================================="
 echo " 🚀 LinguaFlow — môi trường phát triển"
@@ -88,19 +157,48 @@ fi
 
 # ─── 2. PostgreSQL ─────────────────────────────────────────────────────────
 # Docker Engine chạy trong WSL2 trên máy này, và VM tự ngủ sau ~60s idle — kéo
-# theo Postgres. Kiểm tra trước còn hơn để lỗi nổ giữa lúc migrate.
-DB_PORT="$(grep -oP '(?<=@localhost:)\d+' .env 2>/dev/null | head -1 | tr -d '\r')"
+# theo Postgres. Đây là sự cố thường gặp nhất khi chạy dự án, nên script tự bật
+# lại thay vì chỉ báo lỗi rồi thoát.
+db_reachable() {
+    "$PYTHON" - "$1" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket()
+s.settimeout(3)
+s.connect(("127.0.0.1", int(sys.argv[1])))
+s.close()
+PY
+}
+
+# Chỉ lấy DATABASE_URL đang có hiệu lực; các dòng ví dụ bị comment trong .env
+# cũng khớp mẫu cổng và sẽ cho số sai.
+DB_PORT="$(grep -E '^DATABASE_URL=' .env 2>/dev/null | head -1 \
+    | grep -oE '@[^:/]+:[0-9]+' | grep -oE '[0-9]+$' | tr -d '\r')"
 DB_PORT="${DB_PORT:-5433}"
-if ! "$PYTHON" -c "import socket, sys; s = socket.socket(); s.connect(('127.0.0.1', int(sys.argv[1]))); s.close()" "$DB_PORT"; then
-    echo "⚠️  Không kết nối được PostgreSQL ở localhost:$DB_PORT."
-    echo "    Từ WSL chạy: docker compose up -d postgres"
+
+if ! db_reachable "$DB_PORT"; then
+    if [ "${NO_DB_AUTOSTART:-0}" != "1" ] && command -v wsl >/dev/null 2>&1; then
+        echo "🐘 PostgreSQL chưa chạy — thử bật trong WSL..."
+        wsl -e bash -lc "cd '$(wsl wslpath -a "$ROOT_DIR" 2>/dev/null || echo .)' && docker compose up -d postgres" >/dev/null 2>&1 || true
+        for _ in $(seq 1 20); do
+            db_reachable "$DB_PORT" && break
+            sleep 1
+        done
+    fi
+fi
+
+if ! db_reachable "$DB_PORT"; then
+    echo "⚠️  Không kết nối được PostgreSQL ở localhost:$DB_PORT." >&2
+    echo "    Từ WSL chạy: docker compose up -d postgres" >&2
+    echo "    (VM của WSL ngủ sau ~60s idle và kéo Postgres theo — xem CLAUDE.md.)" >&2
     exit 1
 fi
 echo "🐘 PostgreSQL: localhost:$DB_PORT — OK"
 
-# ─── 3. Migration ──────────────────────────────────────────────────────────
-# Alembic sở hữu schema (ADR-06); app không tự tạo bảng lúc khởi động.
+# ─── 3. Backend ────────────────────────────────────────────────────────────
 run_backend() {
+    free_port "$BACKEND_PORT" "backend"
+
+    # Alembic sở hữu schema (ADR-06); app không tự tạo bảng lúc khởi động.
     if [ "${SKIP_MIGRATE:-0}" != "1" ]; then
         echo "📦 alembic upgrade head ..."
         "$PYTHON" -m alembic upgrade head || {
@@ -112,13 +210,23 @@ run_backend() {
     echo "⚡ Backend: http://localhost:$BACKEND_PORT (docs: /docs)"
     # Một tiến trình duy nhất, không --workers: ConnectionManager giữ socket
     # trong bộ nhớ tiến trình (ADR-18).
-    nohup "$PYTHON" -m uvicorn src.main:app --host 0.0.0.0 --port "$BACKEND_PORT" > "$ROOT_DIR/backend.log" 2>&1 &
+    "$PYTHON" -m uvicorn src.main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
+        > "$ROOT_DIR/backend.log" 2>&1 &
     BE_PID=$!
+
+    if ! wait_until_up "backend" "$BACKEND_PORT" "http://127.0.0.1:$BACKEND_PORT/health" 90; then
+        echo "❌ Backend không khởi động được. 20 dòng cuối của backend.log:" >&2
+        tail -20 "$ROOT_DIR/backend.log" >&2
+        exit 1
+    fi
 }
 
 # ─── 4. Frontend ───────────────────────────────────────────────────────────
 run_frontend() {
     [ -d "$FRONTEND_DIR" ] || { echo "❌ Không thấy $FRONTEND_DIR" >&2; exit 1; }
+    command -v npm >/dev/null 2>&1 || { echo "❌ Không thấy npm trong PATH." >&2; exit 1; }
+
+    free_port "$FRONTEND_PORT" "frontend"
 
     if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
         echo "📥 Cài dependency frontend (npm install) ..."
@@ -134,15 +242,26 @@ run_frontend() {
     fi
 
     echo "🎨 Frontend: http://localhost:$FRONTEND_PORT"
-    ( cd "$FRONTEND_DIR" && nohup npm run dev -- --port "$FRONTEND_PORT" > "$ROOT_DIR/frontend.log" 2>&1 & )
+    # Không bọc trong subshell chạy nền: `( ... & )` khiến `$!` trỏ vào subshell
+    # chứ không phải npm, nên FE_PID trước đây luôn sai và Next không bao giờ bị
+    # dừng đúng cách.
+    cd "$FRONTEND_DIR"
+    npm run dev -- --port "$FRONTEND_PORT" > "$ROOT_DIR/frontend.log" 2>&1 &
     FE_PID=$!
+    cd "$ROOT_DIR"
+
+    if ! wait_until_up "frontend" "$FRONTEND_PORT" "" 120; then
+        echo "❌ Frontend không khởi động được. 20 dòng cuối của frontend.log:" >&2
+        tail -20 "$ROOT_DIR/frontend.log" >&2
+        exit 1
+    fi
 }
 
 # ─── 5. Điều phối ──────────────────────────────────────────────────────────
 case "${1:-all}" in
     backend|be)  run_backend ;;
     frontend|fe) run_frontend ;;
-    all|"")      run_backend; sleep 2; run_frontend ;;
+    all|"")      run_backend; run_frontend ;;
     *)           echo "Dùng: ./run.sh [all|backend|frontend]" >&2; exit 2 ;;
 esac
 
@@ -150,6 +269,7 @@ echo ""
 echo "=================================================="
 [ -n "$BE_PID" ] && echo "    Backend  : http://localhost:$BACKEND_PORT/docs"
 [ -n "$FE_PID" ] && echo "    Frontend : http://localhost:$FRONTEND_PORT"
+echo "    Log      : backend.log / frontend.log"
 echo " 💡 Ctrl+C để dừng tất cả."
 echo "=================================================="
 echo ""

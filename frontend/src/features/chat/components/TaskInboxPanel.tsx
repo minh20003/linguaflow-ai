@@ -58,6 +58,62 @@ function orderProposals(items: ApiActionProposal[]): ApiActionProposal[] {
   });
 }
 
+/** What the approver may still decide at the moment they approve.
+ *
+ *  None of it can be extracted from the message: nobody writes how long
+ *  beforehand they want to be nudged, and a chat message rarely states a
+ *  duration either. `ConfirmProposalRequest` accepts all of it, but this panel
+ *  used to send an empty body — so every approval silently took the server
+ *  defaults of a thirty-minute event and a fifteen-minute reminder, even when
+ *  the person had said something different out loud.
+ */
+interface ApprovalOptions {
+  /** Event length in minutes. */
+  durationMinutes: number;
+  /** Minutes of warning, or null for "do not remind me". */
+  reminderMinutesBefore: number | null;
+}
+
+const DEFAULT_APPROVAL: ApprovalOptions = {
+  durationMinutes: 30,
+  reminderMinutesBefore: 15,
+};
+
+const DURATION_CHOICES = [15, 30, 45, 60, 90, 120];
+const REMINDER_CHOICES: Array<{ value: number | null; label: string }> = [
+  { value: 0, label: "Đúng giờ" },
+  { value: 5, label: "5 phút" },
+  { value: 15, label: "15 phút" },
+  { value: 30, label: "30 phút" },
+  { value: 60, label: "1 giờ" },
+  { value: 1440, label: "1 ngày" },
+  { value: null, label: "Không nhắc" },
+];
+
+/** Turn the approver's choices into a `ConfirmProposalRequest` body.
+ *
+ *  The timezone always travels, the way the clarify call already sends it: the
+ *  server stores UTC and has no other way to learn which wall clock the person
+ *  was reading. The end time is only sent for a proposal that has a start —
+ *  a task with a deadline and no start has no duration to speak of.
+ */
+function approvalCorrections(
+  proposal: ApiActionProposal,
+  chosen: ApprovalOptions,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    reminder_minutes_before: chosen.reminderMinutesBefore,
+    resolved_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  if (proposal.scheduled_start_at) {
+    const start = new Date(proposal.scheduled_start_at);
+    body.scheduled_end_at = new Date(
+      start.getTime() + chosen.durationMinutes * 60_000,
+    ).toISOString();
+  }
+  return body;
+}
+
 function formatWhen(proposal: ApiActionProposal): string {
   const at = proposal.scheduled_start_at || proposal.due_at;
   if (!at) return "Chưa có thời gian";
@@ -80,6 +136,18 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // What the approver chose for this proposal, keyed by id. Empty until they
+  // touch a control, so an untouched card still approves with the server's
+  // defaults and the extra fields are genuinely optional.
+  const [options, setOptions] = useState<Record<string, ApprovalOptions>>({});
+
+  const optionsFor = (id: string): ApprovalOptions => options[id] ?? DEFAULT_APPROVAL;
+
+  const setOption = (id: string, patch: Partial<ApprovalOptions>) =>
+    setOptions((current) => ({
+      ...current,
+      [id]: { ...(current[id] ?? DEFAULT_APPROVAL), ...patch },
+    }));
 
   const load = useCallback(async () => {
     try {
@@ -242,7 +310,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id), "Đã duyệt và thêm vào lịch")}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, approvalCorrections(proposal, optionsFor(proposal.id))), "Đã duyệt và thêm vào lịch")}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" /> Duyệt
@@ -256,6 +324,52 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     </div>
                   )}
                 </div>
+
+              {!decided && (
+                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-[#E4E7F0] bg-[#F7F8FC]/70 px-3 py-2.5 dark:border-[#3A3F50] dark:bg-[#232630]/60">
+                  {proposal.scheduled_start_at && (
+                    <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
+                      <span className="font-semibold">Thời lượng</span>
+                      <select
+                        value={optionsFor(proposal.id).durationMinutes}
+                        onChange={(event) =>
+                          setOption(proposal.id, {
+                            durationMinutes: Number(event.target.value),
+                          })
+                        }
+                        className="rounded-lg border border-[#D8DCE7] bg-white px-2 py-1 text-xs outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#1B1D25]"
+                      >
+                        {DURATION_CHOICES.map((minutes) => (
+                          <option key={minutes} value={minutes}>
+                            {minutes < 60 ? `${minutes} phút` : `${minutes / 60} giờ`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
+                    <span className="font-semibold">Nhắc trước</span>
+                    <select
+                      value={String(optionsFor(proposal.id).reminderMinutesBefore)}
+                      onChange={(event) =>
+                        setOption(proposal.id, {
+                          reminderMinutesBefore:
+                            event.target.value === "null"
+                              ? null
+                              : Number(event.target.value),
+                        })
+                      }
+                      className="rounded-lg border border-[#D8DCE7] bg-white px-2 py-1 text-xs outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#1B1D25]"
+                    >
+                      {REMINDER_CHOICES.map((choice) => (
+                        <option key={String(choice.value)} value={String(choice.value)}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
 
               {needsAnswer && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
@@ -309,7 +423,12 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     onClick={() =>
                       void act(
                         proposal,
-                        () => confirmActionProposal(token, proposal.id),
+                        () =>
+                          confirmActionProposal(
+                            token,
+                            proposal.id,
+                            approvalCorrections(proposal, optionsFor(proposal.id)),
+                          ),
                         "Đã duyệt và thêm vào lịch",
                       )
                     }
