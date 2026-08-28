@@ -34,7 +34,11 @@ from sqlalchemy.exc import OperationalError  # noqa: E402
 
 from src.config import configure_logging, get_settings  # noqa: E402
 from src.database import get_async_session_maker  # noqa: E402
-from src.services.metrics import AttemptSummary, summarize_attempts  # noqa: E402
+from src.services.metrics import (  # noqa: E402
+    AttemptSummary,
+    summarize_assistant_attempts,
+    summarize_attempts,
+)
 
 REPORT_PATH = Path("data/metrics_report.md")
 
@@ -202,6 +206,7 @@ async def main() -> int:
     try:
         async with session_maker() as session:
             summary = await summarize_attempts(session, since=since)
+            assistant = await summarize_assistant_attempts(session, since=since)
     except OperationalError:
         # `create_all` runs at application startup, so a database created before
         # this table existed simply has no such table (ADR-06). Reporting is
@@ -214,7 +219,9 @@ async def main() -> int:
         )
         return 1
 
-    report = render_report(summary, window)
+    report = render_report(summary, window) + render_assistant_report(
+        assistant, window
+    )
     print(report)
 
     if not args.no_write:
@@ -227,3 +234,112 @@ async def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(main()))
+
+
+def render_assistant_report(summary, window: str) -> str:
+    """Build the Assistant Agent's half of the report.
+
+    A separate section rather than more rows in the translation tables. The two
+    agents are measured on different things, and a single table carrying both
+    would be mostly blank whichever agent a reader came for.
+    """
+    settings = get_settings()
+    provider, model = settings.resolve_assistant_llm()
+
+    lines = [
+        "",
+        "---",
+        "",
+        "# BÁO CÁO VẬN HÀNH AGENT TRỢ LÝ",
+        "",
+        f"**Cửa sổ dữ liệu:** {window}",
+        f"**Model đang cấu hình:** {provider}/{model or 'mặc định của provider'}",
+        "",
+        "> Số liệu lấy từ bảng `assistant_attempts` — mỗi lượt chạy một dòng, **kể cả "
+        "những lượt không sinh ra gì**: bị từ chối vì thiếu quyền, hỏi ngược lại, hoặc "
+        "chạy hết mà không tìm thấy gì. Đó chính là mẫu số: tỉ lệ đề xuất được duyệt "
+        "tính riêng trên các lượt đã tới cổng duyệt thì không phải là một tỉ lệ.",
+        "",
+    ]
+
+    if summary.total == 0:
+        lines.append("Chưa có lượt chạy nào của agent trợ lý trong cửa sổ này.")
+        return "\n".join(lines)
+
+    lines += _counter_table("Kết cục", summary.outcomes, summary.total)
+
+    reached_gate = summary.outcomes.get("proposed", 0) + summary.outcomes.get(
+        "executed", 0
+    )
+    lines += [
+        "## Đề xuất và cổng duyệt",
+        "",
+        f"- Số lượt tới cổng duyệt: **{reached_gate}** / {summary.total} "
+        f"({_percent(reached_gate / summary.total)})",
+        f"- Đề xuất đã sinh: **{summary.proposals_created}**",
+        f"- Đề xuất được duyệt ngay trong lượt chạy: **{summary.proposals_executed}**",
+        "",
+        "> Đề xuất được duyệt sau đó qua endpoint REST **không** tính ở đây: nó thuộc về "
+        "request đó, không thuộc lượt chạy đã kết thúc (ADR-32). Chênh lệch giữa hai con "
+        "số trên là số đề xuất đang chờ người dùng, chứ không phải số bị bỏ qua.",
+        "",
+    ]
+
+    if summary.tool_calls:
+        failed_share = summary.tools_failed / summary.tool_calls
+        lines += [
+            "## Công cụ",
+            "",
+            f"- Tổng lời gọi: **{summary.tool_calls}**, hỏng **{summary.tools_failed}** "
+            f"({_percent(failed_share)})",
+            "",
+            "| Công cụ | Số lần gọi |",
+            "|---|---:|",
+        ]
+        lines += [
+            f"| `{name}` | {count} |"
+            for name, count in sorted(
+                summary.tool_counts.items(), key=lambda item: -item[1]
+            )
+        ]
+        lines.append("")
+
+    lines += [
+        "## Số vòng lập kế hoạch",
+        "",
+        "| Số vòng | Số lượt |",
+        "|---:|---:|",
+    ]
+    lines += [
+        f"| {rounds} | {count} |" for rounds, count in sorted(summary.replans.items())
+    ]
+    lines += [
+        "",
+        "> Tất cả dồn ở 1 nghĩa là vòng replan chưa đáng giá tiền của nó; tất cả dồn ở "
+        "trần nghĩa là các lượt chạy đang bị cắt giữa chừng.",
+        "",
+    ]
+
+    recall_share = (
+        summary.memory_recalled / summary.memory_lines if summary.memory_lines else 0.0
+    )
+    lines += [
+        "## Trí nhớ",
+        "",
+        f"- Số dòng ngữ cảnh đã nạp: **{summary.memory_lines}**",
+        f"- Trong đó do truy hồi ngữ nghĩa mang về: **{summary.memory_recalled}** "
+        f"({_percent(recall_share)})",
+        "",
+        "> Con số thứ hai bằng 0 ở mọi lượt nghĩa là `assistant_chunks` đang rỗng — "
+        "chạy `make assistant-backfill`. Không chỗ nào khác trong hệ thống báo điều này.",
+        "",
+        "## Độ trễ",
+        "",
+        f"- Trung bình **{summary.avg_ms:.0f}ms**, p95 **{summary.p95_ms:.0f}ms**",
+        "",
+    ]
+
+    if summary.errors:
+        lines += _counter_table("Nguyên nhân dừng", summary.errors, summary.total)
+
+    return "\n".join(lines)

@@ -100,6 +100,56 @@ def _build_client(provider: str, model: str, api_key: str) -> Any:
     return HuggingFaceEmbeddings(model_name=model)
 
 
+def with_embedding(
+    settings: Settings, provider: str, model: str = ""
+) -> Settings:
+    """A copy of ``settings`` that embeds with a different model.
+
+    Overriding the *settings* rather than threading `provider` and `model`
+    arguments through `embed`, `embed_with_model`, `embedding_model_name` and
+    `get_embedder` keeps one rule in one place: whichever model a Settings names
+    is the model every function reads. The quota fallback below already works
+    this way, and a second mechanism beside it would be one more thing to keep
+    in agreement.
+
+    It also replaces `object.__setattr__` on the cached singleton, which the
+    sweep script resorted to: that mutates the configuration every *other* caller
+    in the process is reading, so a measurement could change the behaviour of the
+    thing it was measuring.
+
+    Args:
+        settings: The configuration to base the copy on.
+        provider: Provider to embed with. Empty keeps the current one.
+        model: Model on that provider. Empty means the provider's default.
+    """
+    if not provider or provider == settings.embedding_provider:
+        if not model or model == settings.embedding_model:
+            return settings
+    return settings.model_copy(
+        update={
+            "embedding_provider": provider or settings.embedding_provider,
+            "embedding_model": model,
+        }
+    )
+
+
+def assistant_embedding_settings(settings: Settings | None = None) -> Settings:
+    """Configuration that embeds with the Assistant Agent's own model (ADR-39).
+
+    The assistant's retrieval accuracy requirement is far above what the
+    translation path needed, so it may run a different — usually larger and
+    slower — embedding model. Its vectors live in `assistant_chunks`, never in
+    `message_embeddings`, so the two never have to share a space.
+
+    Every caller that embeds for the assistant must go through this, including
+    the query side: a chunk stored by one model and a query embedded by another
+    produce a ranking that looks fine and is meaningless.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_embedding()
+    return with_embedding(settings, provider, model)
+
+
 def get_embedder(settings: Settings | None = None) -> Any:
     """Return the embedding client for the configured provider.
 

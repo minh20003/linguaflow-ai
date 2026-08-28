@@ -214,6 +214,7 @@ class CalendarService:
         proposal: ActionProposal,
         *,
         commit: bool = False,
+        reminder_lead: timedelta | None = DEFAULT_REMINDER_LEAD,
     ) -> ScheduledEvent | None:
         """Turn a just-confirmed proposal into a calendar entry.
 
@@ -224,6 +225,12 @@ class CalendarService:
 
         Called inside `confirm_proposal`'s transaction so that a confirmation
         cannot succeed while leaving the calendar empty.
+
+        Args:
+            reminder_lead: How far ahead to nudge. The person approving chooses
+                this, because the message the proposal came from never says it —
+                somebody writes "review at ten on Wednesday", not how much
+                warning they want. ``None`` creates no reminder.
         """
         starts_at = proposal.scheduled_start_at or proposal.scheduled_time or proposal.due_at
         if starts_at is None:
@@ -239,6 +246,7 @@ class CalendarService:
             timezone=proposal.resolved_timezone,
             source="assistant",
             action_proposal_id=proposal.id,
+            reminder_lead=reminder_lead,
             commit=commit,
         )
 

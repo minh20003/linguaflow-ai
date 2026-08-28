@@ -418,3 +418,101 @@ async def test_a_non_member_cannot_mark_a_conversation_read(
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_on_a_private_reply_is_downloadable_by_its_reader(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """The visibility filter has to let the one person it was written for through."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("rieng-tu.txt", b"chi minh doc", "text/plain")},
+    )
+    assert upload.status_code == 201
+    attachment_id = upload.json()["id"]
+
+    private = Message(
+        conversation_id=conversation.id,
+        client_message_id="private-attach-1",
+        sender_id=test_user.id,
+        original_text="Bao cao rieng cua ban",
+        source_language="vi",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == attachment_id)
+    )
+    attachment.message_id = private.id
+    await test_db.commit()
+
+    download = await client.get(
+        upload.json()["download_url"], headers=test_user_headers
+    )
+
+    assert download.status_code == 200
+    assert download.content == b"chi minh doc"
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_on_a_private_reply_is_hidden_from_the_other_member(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """Membership is not enough once a private message carries the file.
+
+    Written because the download query was widened to an OUTER join so that an
+    attachment uploaded but not yet sent stays reachable. That is the right fix
+    for the composer, and it must not become a way past ADR-31: a file carried by
+    a private assistant reply belongs to the one person it was written for, and
+    another member of the same conversation gets 404 — not 403, which would
+    confirm the attachment exists.
+    """
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("rieng-tu.txt", b"chi minh doc", "text/plain")},
+    )
+    assert upload.status_code == 201
+    attachment_id = upload.json()["id"]
+
+    private = Message(
+        conversation_id=conversation.id,
+        client_message_id="private-attach-2",
+        sender_id=test_user.id,
+        original_text="Bao cao rieng cua ban",
+        source_language="vi",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == attachment_id)
+    )
+    attachment.message_id = private.id
+    await test_db.commit()
+
+    download = await client.get(
+        upload.json()["download_url"],
+        headers=auth_headers_for_user(test_user_two),
+    )
+
+    assert download.status_code == 404

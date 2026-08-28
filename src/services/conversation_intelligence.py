@@ -69,7 +69,7 @@ class ConversationIntelligenceService:
         conversation_id: str,
         user_id: str,
         db: Any,
-        message_limit: int = 50,
+        message_limit: int = 200,
         target_language: str | None = None,
     ) -> Any:
         """Fetch authorized messages and generate grounded conversation summary (B-03)."""
@@ -77,7 +77,7 @@ class ConversationIntelligenceService:
 
         from src.agents.conversation_intelligence.summary import (
             format_transcript_line,
-            generate_conversation_summary,
+            generate_long_conversation_summary,
         )
         from src.database.models import User
         from src.schemas.intelligence import ConversationSummaryResponse
@@ -136,11 +136,16 @@ class ConversationIntelligenceService:
             )
             for m in usable_messages
         ]
-        transcript = "\n".join(transcript_lines)
-
         # 6. Generate summary
-        return await generate_conversation_summary(
-            transcript=transcript,
+        #
+        # Lines rather than a joined transcript: above LONG_CONVERSATION_THRESHOLD
+        # this splits into batches, and the batch boundaries have to fall between
+        # messages. Cutting a joined string by length would hand one batch a
+        # fragment whose speaker and timestamp are in the previous batch. Below
+        # the threshold it joins them again and takes the single-pass path, so
+        # there is one entry point rather than a choice the caller has to make.
+        return await generate_long_conversation_summary(
+            transcript_lines=transcript_lines,
             target_language=eff_target_lang,
             message_count=len(usable_messages),
             window_start_at=usable_messages[0].created_at,

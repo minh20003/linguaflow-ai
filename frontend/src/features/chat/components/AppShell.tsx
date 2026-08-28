@@ -671,7 +671,6 @@ export const AppShell: React.FC = () => {
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
         if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
-        if (eventType === "action_proposal_created") addToast("Đề xuất từ Trợ lý", "Trợ lý đã tạo đề xuất chờ bạn xác nhận trong Lịch cá nhân.", "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
           setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? {

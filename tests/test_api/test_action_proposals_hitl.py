@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.security import create_access_token, get_password_hash
@@ -430,3 +431,132 @@ async def test_concurrent_confirms_have_exactly_one_transition(test_db: AsyncSes
     proposal = await ActionProposalService(test_db).get_proposal(proposal_id)
     assert proposal.status == "confirmed"
     assert proposal.confirmed_by_user_id == owner_id
+
+
+@pytest.mark.asyncio
+async def test_confirming_uses_the_lead_time_the_approver_chose(
+    client: AsyncClient, test_db: AsyncSession, hitl_setup
+):
+    """Approval is where a person supplies what the message never contained.
+
+    Somebody writes "review thiết kế 10h sáng thứ Tư"; nobody writes how much
+    warning they want. So the lead time is asked for at the gate rather than
+    guessed from the text — which is also the only place a human is looking at
+    the proposal and able to answer.
+    """
+    from src.database.models import CalendarEvent, Reminder
+
+    owner = hitl_setup["owner"]
+    proposal_id = hitl_setup["p_pending_id"]
+
+    response = await client.post(
+        f"/api/v1/action-proposals/{proposal_id}/confirm",
+        json={
+            "scheduled_start_at": "2026-09-10T09:00:00Z",
+            "reminder_minutes_before": 120,
+        },
+        headers={"Authorization": f"Bearer {create_access_token(subject=owner.id)}"},
+    )
+    assert response.status_code == 200
+
+    test_db.expire_all()
+    event = await test_db.scalar(
+        select(CalendarEvent).where(CalendarEvent.action_proposal_id == proposal_id)
+    )
+    assert event is not None
+    reminder = await test_db.scalar(
+        select(Reminder).where(Reminder.calendar_event_id == event.id)
+    )
+    assert reminder is not None
+    assert event.starts_at - reminder.remind_at == timedelta(minutes=120)
+
+
+@pytest.mark.asyncio
+async def test_confirming_with_a_null_lead_time_creates_no_reminder(
+    client: AsyncClient, test_db: AsyncSession, hitl_setup
+):
+    """`null` is a real answer — "do not nudge me" — not a missing value.
+
+    Same meaning the field already has on `POST /me/calendar/events`, because a
+    product where the reminder field means one thing on one screen and another
+    on the next is one nobody can hold in their head.
+    """
+    from src.database.models import CalendarEvent, Reminder
+
+    owner = hitl_setup["owner"]
+    proposal_id = hitl_setup["p_pending_id"]
+
+    response = await client.post(
+        f"/api/v1/action-proposals/{proposal_id}/confirm",
+        json={
+            "scheduled_start_at": "2026-09-10T09:00:00Z",
+            "reminder_minutes_before": None,
+        },
+        headers={"Authorization": f"Bearer {create_access_token(subject=owner.id)}"},
+    )
+    assert response.status_code == 200
+
+    test_db.expire_all()
+    event = await test_db.scalar(
+        select(CalendarEvent).where(CalendarEvent.action_proposal_id == proposal_id)
+    )
+    assert event is not None
+    assert (
+        await test_db.scalar(
+            select(Reminder).where(Reminder.calendar_event_id == event.id)
+        )
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_confirming_without_naming_a_lead_time_keeps_the_default(
+    client: AsyncClient, test_db: AsyncSession, hitl_setup
+):
+    from src.database.models import CalendarEvent, Reminder
+    from src.services.calendar import DEFAULT_REMINDER_LEAD
+
+    owner = hitl_setup["owner"]
+    proposal_id = hitl_setup["p_pending_id"]
+
+    response = await client.post(
+        f"/api/v1/action-proposals/{proposal_id}/confirm",
+        json={"scheduled_start_at": "2026-09-10T09:00:00Z"},
+        headers={"Authorization": f"Bearer {create_access_token(subject=owner.id)}"},
+    )
+    assert response.status_code == 200
+
+    test_db.expire_all()
+    event = await test_db.scalar(
+        select(CalendarEvent).where(CalendarEvent.action_proposal_id == proposal_id)
+    )
+    reminder = await test_db.scalar(
+        select(Reminder).where(Reminder.calendar_event_id == event.id)
+    )
+    assert reminder is not None
+    assert event.starts_at - reminder.remind_at == DEFAULT_REMINDER_LEAD
+
+
+@pytest.mark.asyncio
+async def test_the_lead_time_is_not_written_onto_the_proposal_row(
+    client: AsyncClient, test_db: AsyncSession, hitl_setup
+):
+    """It shapes the calendar entry, not the proposal.
+
+    Left inside `corrections` it would be dropped by the allowlist in
+    `confirm_proposal` and the person's choice would vanish with no error — the
+    reason it travels as its own argument.
+    """
+    owner = hitl_setup["owner"]
+    proposal_id = hitl_setup["p_pending_id"]
+
+    response = await client.post(
+        f"/api/v1/action-proposals/{proposal_id}/confirm",
+        json={
+            "scheduled_start_at": "2026-09-10T09:00:00Z",
+            "reminder_minutes_before": 45,
+        },
+        headers={"Authorization": f"Bearer {create_access_token(subject=owner.id)}"},
+    )
+
+    assert response.status_code == 200
+    assert "reminder_minutes_before" not in response.json()

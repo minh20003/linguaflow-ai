@@ -2698,7 +2698,18 @@ async def confirm_action_proposal(
     """Explicitly confirm an action proposal by its assigned owner (B-05)."""
     service = ActionProposalService(db)
     try:
-        confirmed = await service.confirm_proposal(proposal_id=proposal_id, user_id=current_user.id, corrections=payload.model_dump(exclude_none=True))
+        # The lead time is not a correction to the proposal — it shapes the
+        # calendar entry that confirming creates — so it travels as its own
+        # argument. Left in `corrections` it would be filtered out silently by
+        # the allowlist there and the person's choice would vanish.
+        corrections = payload.model_dump(exclude_none=True)
+        corrections.pop("reminder_minutes_before", None)
+        confirmed = await service.confirm_proposal(
+            proposal_id=proposal_id,
+            user_id=current_user.id,
+            corrections=corrections,
+            reminder_minutes_before=payload.reminder_minutes_before,
+        )
         # Approving a proposal is the product's main way of putting something on
         # a calendar, so it gets the same immediate push a manual entry does.
         # The entry only exists when the proposal carried a time; one without is
@@ -3492,6 +3503,16 @@ async def download_conversation_attachment(
     except ConversationValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    # OUTER join, not inner. The visibility filter below is right and has to
+    # stay — an attachment carried by a private assistant reply belongs to its
+    # one reader (ADR-31) — but an inner join also drops every attachment whose
+    # `message_id` is still NULL, and that is every attachment between being
+    # uploaded and being sent. The product uploads first and attaches on send,
+    # so an inner join makes a file undownloadable during exactly the window the
+    # composer needs it.
+    #
+    # Membership is already enforced above, by `get_message_history`, which is
+    # what protects an attachment that no message carries yet.
     attachment = await db.scalar(
         select(Attachment)
         .outerjoin(Message, Message.id == Attachment.message_id)
@@ -3499,6 +3520,7 @@ async def download_conversation_attachment(
             Attachment.id == attachment_id,
             Attachment.conversation_id == conversation_id,
             or_(
+                # Uploaded, not yet sent: no message to judge visibility by.
                 Attachment.message_id.is_(None),
                 and_(
                     Message.conversation_id == conversation_id,
