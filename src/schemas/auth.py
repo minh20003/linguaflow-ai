@@ -1,6 +1,7 @@
 """Pydantic schemas for authentication endpoints."""
 
 from datetime import datetime
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -214,6 +215,7 @@ class UserResponse(BaseModel):
     email: str
     username: str | None = None
     display_name: str | None = None
+    avatar_url: str | None = None
     bio: str | None = None
     role: str
     preferred_language: str
@@ -297,6 +299,7 @@ class UserProfileUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_name: str | None = Field(default=None, max_length=100)
+    avatar_url: str | None = Field(default=None, max_length=700_000)
     bio: str | None = Field(default=None, max_length=500)
 
     @field_validator("display_name")
@@ -308,6 +311,15 @@ class UserProfileUpdate(BaseModel):
         if not cleaned:
             raise ValueError("display_name must not be blank")
         return cleaned
+
+    @field_validator("avatar_url")
+    @classmethod
+    def validate_avatar_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", value):
+            raise ValueError("avatar_url must be a PNG, JPEG, or WebP data URL")
+        return value
 
     @field_validator("bio")
     @classmethod

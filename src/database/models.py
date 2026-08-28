@@ -193,6 +193,9 @@ class User(Base):
         String(100),
         nullable=True,
     )
+    # Kept with the account so the same avatar is available on every device.
+    # Only validated image data URLs are accepted by the profile API.
+    avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     password_hash: Mapped[str | None] = mapped_column(
         String(255),
