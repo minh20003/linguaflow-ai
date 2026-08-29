@@ -5,6 +5,11 @@
 #   ./run.sh              # chạy cả hai
 #   ./run.sh backend      # chỉ backend
 #   ./run.sh frontend     # chỉ frontend
+#   ./run.sh stop         # dừng mọi thứ đang giữ cổng 8000/3000
+#
+# `stop` có mặt vì Ctrl+C không đáng tin trong Git Bash trên Windows: bash ở đó
+# không phải lúc nào cũng chuyển được tín hiệu tới tiến trình Windows thật, nên
+# cần một cách dừng không dựa vào tín hiệu nào cả.
 #
 #   SKIP_MIGRATE=1 ./run.sh    # bỏ qua alembic upgrade head
 #   NO_DB_AUTOSTART=1 ./run.sh # không tự bật Postgres trong WSL
@@ -76,7 +81,7 @@ free_port() {
     local port="$1" label="$2" pids pid
     pids="$(port_pids "$port")"
     [ -n "$pids" ] || return 0
-    echo "♻️  Cổng $port ($label) đang bị PID $(echo "$pids" | tr '\n' ' ')giữ — dọn trước khi chạy."
+    echo "♻️  Cổng $port ($label) đang bị PID $(echo "$pids" | tr '\n' ' ')giữ — đang dọn."
     for _ in $(seq 1 20); do
         pids="$(port_pids "$port")"
         [ -z "$pids" ] && return 0
@@ -98,6 +103,17 @@ cleanup() {
     [ -n "$BE_PID" ] && kill_tree "$(port_pid "$BACKEND_PORT")"
     kill_tree "$FE_PID"
     kill_tree "$BE_PID"
+
+    # Đợi cổng thật sự nhả. Một tiến trình đã nhận lệnh giết vẫn giữ socket
+    # thêm vài giây — backend nạp torch thì lâu hơn nữa — và trả prompt về sớm
+    # khiến lần chạy ngay sau đó gặp đúng cổng chưa nhả.
+    local waited=0 port
+    for port in "$FRONTEND_PORT" "$BACKEND_PORT"; do
+        while [ -n "$(port_pid "$port")" ] && [ "$waited" -lt 30 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+    done
     echo " ✅ Đã dừng xong."
 }
 trap cleanup INT TERM EXIT
@@ -106,7 +122,7 @@ trap cleanup INT TERM EXIT
 # trong khi backend cần ~15–20s để khởi động (nạp tracing, kiểm tra CSDL), nên
 # ai mở link ngay cũng gặp connection refused và tưởng là hỏng.
 wait_until_up() {
-    local label="$1" port="$2" url="${3:-}" limit="${4:-90}" i=0
+    local label="$1" port="$2" url="${3:-}" limit="${4:-180}" i=0
     printf "   ⏳ Đợi %s" "$label"
     while [ "$i" -lt "$limit" ]; do
         if [ -n "$url" ]; then
@@ -114,13 +130,33 @@ wait_until_up() {
         elif [ -n "$(port_pid "$port")" ]; then
             printf " — sẵn sàng sau %ss\n" "$i"; return 0
         fi
-        printf "."
+        # Đếm giây thay vì rắc dấu chấm: backend mất khoảng một phút để lên và
+        # một hàng chấm im lặng nhìn giống treo máy hơn là đang chạy.
+        [ $((i % 10)) -eq 0 ] && printf " %ss" "$i" || printf "."
         sleep 1
         i=$((i + 1))
     done
     printf " — quá %ss mà chưa lên.\n" "$limit"
     return 1
 }
+
+if [ "${1:-all}" = "stop" ]; then
+    # Không dựa vào tín hiệu, không cần biết lần chạy trước bắt đầu thế nào:
+    # tra PID từ chính cổng đang lắng nghe rồi hạ cả cây tiến trình. Chạy được
+    # cả khi terminal cũ đã đóng, hoặc backend được khởi động bằng `make run`.
+    trap - INT TERM EXIT
+    stopped=0
+    for target in "$FRONTEND_PORT:frontend" "$BACKEND_PORT:backend"; do
+        target_port="${target%%:*}"
+        target_name="${target##*:}"
+        if [ -n "$(port_pids "$target_port")" ]; then
+            free_port "$target_port" "$target_name"
+            stopped=1
+        fi
+    done
+    [ "$stopped" -eq 1 ] && echo " ✅ Đã dừng xong." || echo " ℹ️  Không có gì đang chạy trên $BACKEND_PORT/$FRONTEND_PORT."
+    exit 0
+fi
 
 echo "=================================================="
 echo " 🚀 LinguaFlow — môi trường phát triển"
@@ -207,15 +243,29 @@ run_backend() {
         }
     fi
 
-    echo "⚡ Backend: http://localhost:$BACKEND_PORT (docs: /docs)"
+    # Khoảng một phút là bình thường, không phải treo: tiến trình nạp
+    # sentence-transformers (keo theo torch) truoc moi import khac — xem đầu
+    # `src/main.py` — rồi mới đến kiểm tra tracing và CSDL. Đo trên máy dev:
+    # 74s khi có preload, 58s khi không. Đặt ASSISTANT_RERANK_ENABLED=false *và*
+    # EMBEDDING_FALLBACK_PROVIDER= (rỗng) nếu muốn bỏ hẳn phần nạp đó.
+    echo "⚡ Backend: http://localhost:$BACKEND_PORT (docs: /docs) — mất ~1 phút"
     # Một tiến trình duy nhất, không --workers: ConnectionManager giữ socket
     # trong bộ nhớ tiến trình (ADR-18).
     "$PYTHON" -m uvicorn src.main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
         > "$ROOT_DIR/backend.log" 2>&1 &
     BE_PID=$!
 
-    if ! wait_until_up "backend" "$BACKEND_PORT" "http://127.0.0.1:$BACKEND_PORT/health" 90; then
-        echo "❌ Backend không khởi động được. 20 dòng cuối của backend.log:" >&2
+    if ! wait_until_up "backend" "$BACKEND_PORT" "http://127.0.0.1:$BACKEND_PORT/health" 180; then
+        if [ -n "$(port_pid "$BACKEND_PORT")" ]; then
+            # Phân biệt hai thứ rất khác nhau: tiến trình chết, và tiến trình
+            # còn sống nhưng khởi động lâu hơn hạn chờ. Bản trước gộp cả hai
+            # thành "không khởi động được", nên một máy chậm bị báo là hỏng.
+            echo "⚠️  Backend vẫn đang chạy nhưng chưa trả lời sau 180s." >&2
+            echo "    Nó có thể lên muộn — theo dõi bằng: tail -f backend.log" >&2
+        else
+            echo "❌ Backend không khởi động được." >&2
+        fi
+        echo "    20 dòng cuối của backend.log:" >&2
         tail -20 "$ROOT_DIR/backend.log" >&2
         exit 1
     fi
@@ -262,7 +312,7 @@ case "${1:-all}" in
     backend|be)  run_backend ;;
     frontend|fe) run_frontend ;;
     all|"")      run_backend; run_frontend ;;
-    *)           echo "Dùng: ./run.sh [all|backend|frontend]" >&2; exit 2 ;;
+    *)           echo "Dùng: ./run.sh [all|backend|frontend|stop]" >&2; exit 2 ;;
 esac
 
 echo ""
@@ -270,7 +320,8 @@ echo "=================================================="
 [ -n "$BE_PID" ] && echo "    Backend  : http://localhost:$BACKEND_PORT/docs"
 [ -n "$FE_PID" ] && echo "    Frontend : http://localhost:$FRONTEND_PORT"
 echo "    Log      : backend.log / frontend.log"
-echo " 💡 Ctrl+C để dừng tất cả."
+echo " 💡 Ctrl+C để dừng. Nếu Ctrl+C không ăn (hay gặp trong Git Bash trên"
+echo "    Windows), mở terminal khác và chạy: ./run.sh stop"
 echo "=================================================="
 echo ""
 

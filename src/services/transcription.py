@@ -149,6 +149,7 @@ class TranscriptionProvider(Protocol):
         audio_bytes: bytes,
         filename: str,
         content_type: str,
+        language_hint: str | None = None,
     ) -> TranscriptionResult: ...
 
 
@@ -219,7 +220,19 @@ class GeminiTranscriptionProvider:
         audio_bytes: bytes,
         filename: str,
         content_type: str,
+        language_hint: str | None = None,
     ) -> TranscriptionResult:
+        """Transcribe one prepared audio buffer.
+
+        ``language_hint`` is a hint, not a constraint: the provider still
+        transcribes whatever language it hears. Measured on a Vietnamese sample,
+        an empty list — pure auto-detection — misheard the opening clause
+        outright ("Chào Bob, chiều mai" came back as "Chị ơi, khi nào bao giờ"),
+        and naming the language fixed it. Naming the *wrong* language costs
+        almost nothing: the same English sample transcribed word-for-word under
+        a `vi` hint, differing from auto-detection only in writing "3:00" where
+        it had written "three".
+        """
         started = time.perf_counter()
         client: Any | None = None
         uploaded_file_name: str | None = None
@@ -251,7 +264,7 @@ class GeminiTranscriptionProvider:
                 ],
                 generation_config={
                     "transcription_config": {
-                        "language_codes": [],
+                        "language_codes": [language_hint] if language_hint else [],
                         "mode": {"type": "verbatim"},
                     }
                 },
@@ -277,8 +290,10 @@ class GeminiTranscriptionProvider:
 
         return TranscriptionResult(
             text=text,
-            # Interactions output_text currently has no reliable language field.
-            # Auto-detection remains enabled in the request; do not infer a code.
+            # Interactions output_text currently has no reliable language field,
+            # and the hint sent with the request is the sender's setting rather
+            # than anything observed in the audio — so there is still nothing
+            # here worth reporting as a detected language. Do not infer a code.
             detected_language=None,
             model=self._model,
             latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
@@ -303,8 +318,16 @@ class TranscriptionService:
         self._max_audio_size_bytes = max_audio_size_bytes
         self._converter = converter
 
-    async def transcribe_attachment(self, attachment: Attachment) -> TranscriptionResult:
-        """Read and fully transcribe a stored audio attachment without side effects."""
+    async def transcribe_attachment(
+        self, attachment: Attachment, language_hint: str | None = None
+    ) -> TranscriptionResult:
+        """Read and fully transcribe a stored audio attachment without side effects.
+
+        ``language_hint`` is the sender's `preferred_language`, passed through to
+        the provider. People rarely record a voice message in a language other
+        than the one they have set, and the hint is not binding, so the rare
+        mismatch costs far less than leaving the provider to guess.
+        """
         stored = await self._storage.read(attachment)
         normalized_content_type = validate_audio_attachment(
             filename=stored.filename,
@@ -332,6 +355,7 @@ class TranscriptionService:
             provider_audio.data,
             provider_audio.filename,
             provider_audio.content_type,
+            language_hint,
         )
         text = result.text.strip()
         if not text:

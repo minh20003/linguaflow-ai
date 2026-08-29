@@ -16,7 +16,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_async_session_maker
-from src.database.models import Attachment, ConversationMember, Message
+from src.database.models import Attachment, ConversationMember, Message, User
 from src.schemas.chat import (
     VoiceTranscriptionCompletedEvent,
     VoiceTranscriptionFailedEvent,
@@ -118,6 +118,11 @@ async def transcribe_voice_message(
                 Attachment.conversation_id == conversation_id,
             )
         )
+        # Read inside this session: the transcription below runs outside it, and
+        # the ORM instances above must not be touched from there.
+        language_hint = await session.scalar(
+            select(User.preferred_language).where(User.id == message.sender_id)
+        )
 
     if attachment is None:
         await _transition_to_failed(
@@ -131,7 +136,7 @@ async def transcribe_voice_message(
 
     try:
         service = transcription_service_factory()
-        transcription = await service.transcribe_attachment(attachment)
+        transcription = await service.transcribe_attachment(attachment, language_hint)
         transcript = transcription.text.strip()
         if not transcript:
             raise BlankTranscriptError("STT provider returned a blank transcript")
