@@ -14,7 +14,10 @@ from src.services.transcription import (
     TranscriptionResult,
     TranscriptionTimeoutError,
 )
-from src.services.voice_transcription import transcribe_voice_message
+from src.services.voice_transcription import (
+    _run_voice_transcription_guarded,
+    transcribe_voice_message,
+)
 from tests import conftest as test_support
 
 FULL_TRANSCRIPT = (
@@ -210,6 +213,10 @@ async def test_controlled_stt_failure_is_durable_non_destructive_and_retry_safe(
     }
     assert durable_state == ("failed", "")
     assert "raw provider timeout detail" not in caplog.text
+    assert "voice_stt_failed" in caplog.text
+    assert "failure_code=provider_timeout" in caplog.text
+    assert "stage=provider" in caplog.text
+    assert "retryable=True" in caplog.text
     assert postprocessor.calls == []
     async with factory() as session:
         stored_attachment = await session.get(Attachment, attachment.id)
@@ -247,6 +254,80 @@ async def test_provider_failure_event_does_not_expose_provider_or_audio_content(
     assert "transcript-words" not in serialized
     assert "raw-provider-body" not in caplog.text
     assert postprocessor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_permanent_provider_failure_is_not_marked_retryable(
+    test_db,
+    test_user,
+    test_user_two,
+    conversation_factory,
+    caplog,
+):
+    conversation, _, message = await _pending_voice(
+        test_db, test_user, test_user_two, conversation_factory
+    )
+    factory = test_support.test_async_session_maker
+    publisher = DurablePublisher(factory)
+    transcription = FakeTranscriptionService(
+        error=TranscriptionProviderError(
+            "secret provider body",
+            failure_code="provider_authentication_failed",
+            retryable=False,
+            stage="upload",
+            http_status=403,
+        )
+    )
+
+    await transcribe_voice_message(
+        message_id=message.id,
+        conversation_id=conversation.id,
+        publisher=publisher,
+        session_factory=factory,
+        transcription_service_factory=lambda: transcription,
+        postprocessing_scheduler=RecordingPostprocessor(publisher),
+    )
+
+    assert publisher.deliveries[0][1]["retryable"] is False
+    assert "failure_code=provider_authentication_failed" in caplog.text
+    assert "http_status=403" in caplog.text
+    assert "secret provider body" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_guarded_task_turns_unexpected_error_into_safe_retryable_failure(
+    test_db,
+    test_user,
+    test_user_two,
+    conversation_factory,
+    caplog,
+):
+    conversation, _, message = await _pending_voice(
+        test_db, test_user, test_user_two, conversation_factory
+    )
+    factory = test_support.test_async_session_maker
+    publisher = DurablePublisher(factory)
+    transcription = FakeTranscriptionService(
+        error=RuntimeError("secret unexpected audio/provider details")
+    )
+
+    await _run_voice_transcription_guarded(
+        message_id=message.id,
+        conversation_id=conversation.id,
+        publisher=publisher,
+        session_factory=factory,
+        transcription_service_factory=lambda: transcription,
+        postprocessing_scheduler=RecordingPostprocessor(publisher),
+    )
+
+    assert publisher.deliveries[0][1]["retryable"] is True
+    async with factory() as session:
+        stored = await session.get(Message, message.id)
+        assert stored.transcription_status == "failed"
+        assert stored.original_text == ""
+    assert "failure_code=unexpected_error" in caplog.text
+    assert "exception_type=RuntimeError" in caplog.text
+    assert "secret unexpected" not in caplog.text
 
 
 @pytest.mark.asyncio

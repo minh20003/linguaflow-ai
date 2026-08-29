@@ -104,7 +104,7 @@ async def test_converter_failure_is_controlled_without_raw_details():
 
 
 @pytest.mark.asyncio
-async def test_real_ffmpeg_converts_browser_webm_to_temporary_flac_when_available():
+async def test_real_ffmpeg_conversion_does_not_require_async_subprocess_support(monkeypatch):
     executable = get_ffmpeg_exe()
     source = await asyncio.create_subprocess_exec(
         executable,
@@ -126,6 +126,11 @@ async def test_real_ffmpeg_converts_browser_webm_to_temporary_flac_when_availabl
     )
     webm_bytes, _ = await source.communicate()
     assert source.returncode == 0
+
+    async def unsupported_async_subprocess(*_args, **_kwargs):
+        raise NotImplementedError("selector event loop does not support subprocesses")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unsupported_async_subprocess)
 
     result = await FFmpegAudioConverter(
         timeout_seconds=10,

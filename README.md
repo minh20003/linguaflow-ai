@@ -127,8 +127,13 @@ complete original-language transcript in
 STT_PROVIDER=gemini
 STT_MODEL=gemini-3.5-transcribe
 STT_TIMEOUT_SECONDS=60
+STT_RETRY_ATTEMPTS=3
 GOOGLE_API_KEY=your-gemini-key
 ```
+
+Files and Interactions use one bounded retry policy for transient 408, 429 and
+5xx responses. Permanent 4xx responses, invalid audio and blank transcripts
+fail without retry and are logged with safe machine-readable metadata only.
 
 The recorder selects by `MediaRecorder.isTypeSupported()` rather than browser
 name. It accepts browser-native WebM/Opus, OGG/Opus or Vorbis, and MP4/AAC or

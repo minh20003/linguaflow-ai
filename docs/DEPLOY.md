@@ -288,6 +288,8 @@ Chỉ **`JWT_SECRET`** là bắt buộc — thiếu nó tiến trình dừng nga
 | `STT_PROVIDER` | `gemini` | Provider chuyển giọng nói thành văn bản; độc lập với `LLM_PROVIDER` |
 | `STT_MODEL` | `gemini-3.5-transcribe` | Model file transcription non-live cho voice message |
 | `STT_TIMEOUT_SECONDS` | `60` | Giới hạn 1..300 giây cho một yêu cầu STT |
+| `STT_RETRY_ATTEMPTS` | `3` | Tổng số lượt HTTP, gồm lượt đầu; chỉ retry 408, 429 và 5xx với exponential backoff |
+| `DATABASE_ECHO` | `false` | Chỉ bật khi chẩn đoán SQL bằng dữ liệu không nhạy cảm; bound values có thể chứa message/transcript |
 | `JWT_EXPIRE_MINUTES` | 1440 | Access token **không thu hồi được** trước khi hết hạn |
 | `REFRESH_EXPIRE_DAYS` | 30 | |
 | `PASSWORD_RESET_EXPIRE_MINUTES` | 30 | |

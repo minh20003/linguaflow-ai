@@ -39,7 +39,7 @@ def _get_engine():
     )
     return create_async_engine(
         settings.database_url,
-        echo=settings.app_env == "development",
+        echo=settings.database_echo,
         pool_pre_ping=True,
         **pool_options,
     )
