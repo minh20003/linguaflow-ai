@@ -234,12 +234,31 @@ def _reminder_lead(minutes: int | None) -> timedelta | None:
     return None if minutes is None else timedelta(minutes=minutes)
 
 
+# The extractor and the time normalizer grew separate names for the same gap.
+# `ActionCandidateDTO` reports a missing start as `scheduled_time`; everything
+# that resolves one -- `normalize_action_time`, and the clarification and
+# confirmation paths that read its output -- speaks of `time`. Nothing ever
+# translated between them, so a proposal the extractor marked `scheduled_time`
+# could never be completed: clarification did not recognise it as temporal and
+# so never cleared it, and confirmation then refused with "still has unresolved
+# required fields". Answering the question and pressing approve returned an
+# error every time, with no way forward.
+#
+# Both names are normalised on the way in, here, so existing rows are fixed as
+# they are read rather than needing a data migration.
+_MISSING_FIELD_ALIASES = {"scheduled_time": "time", "scheduled_start_at": "time"}
+
+
 def _load_missing(value: str | None) -> list[str]:
     try:
         parsed = json.loads(value or "[]")
     except json.JSONDecodeError:
         return ["manual_correction_required"]
-    return [item for item in parsed if isinstance(item, str)]
+    return [
+        _MISSING_FIELD_ALIASES.get(item, item)
+        for item in parsed
+        if isinstance(item, str)
+    ]
 
 
 def _dump_missing(values: list[str] | tuple[str, ...] | set[str]) -> str:

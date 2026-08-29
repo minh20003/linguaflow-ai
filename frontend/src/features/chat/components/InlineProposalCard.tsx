@@ -1,17 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { CalendarPlus, Check, Clock3, X } from "lucide-react";
+import { CalendarPlus, Check, X } from "lucide-react";
 import type { ApiActionProposal } from "../api/chat-api";
 import {
   ApprovalOptions,
   DEFAULT_APPROVAL,
-  DURATION_CHOICES,
-  REMINDER_CHOICES,
-  approvalCorrections,
-  durationLabel,
-  formatProposalWhen,
+  ProposalDraft,
+  canApprove,
+  decisionCorrections,
+  draftFromProposal,
 } from "../proposal-approval";
+import { ProposalDecisionForm } from "./ProposalDecisionForm";
 
 interface InlineProposalCardProps {
   proposal: ApiActionProposal;
@@ -40,7 +40,8 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
   onReject,
 }) => {
   const [chosen, setChosen] = useState<ApprovalOptions>(DEFAULT_APPROVAL);
-  const needsAnswer = proposal.status === "needs_clarification";
+  const [draft, setDraft] = useState<ProposalDraft>(() => draftFromProposal(proposal));
+  const ready = canApprove(proposal, draft);
 
   return (
     <div className="mx-auto my-3 w-full max-w-md rounded-2xl border border-violet-200 bg-violet-50/70 p-4 dark:border-violet-400/25 dark:bg-violet-500/10">
@@ -49,65 +50,21 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
         Trợ lý đề xuất thêm vào lịch
       </p>
 
-      <p className="mt-2 text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">{proposal.title}</p>
-      <p className="mt-1 flex items-center gap-1.5 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-        <Clock3 className="h-3.5 w-3.5 flex-none" />
-        {formatProposalWhen(proposal)}
-      </p>
-      {proposal.details && (
-        <p className="mt-2 text-xs leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">{proposal.details}</p>
-      )}
-
-      {needsAnswer && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
-          {proposal.clarification_question ||
-            proposal.clarification_prompt ||
-            "Trợ lý cần thêm thông tin. Bạn có thể trả lời trong Hộp nhiệm vụ."}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        {proposal.scheduled_start_at && (
-          <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-            <span className="font-semibold">Thời lượng</span>
-            <select
-              value={chosen.durationMinutes}
-              onChange={(event) =>
-                setChosen((current) => ({ ...current, durationMinutes: Number(event.target.value) }))
-              }
-              className="rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs outline-none focus:border-violet-500 dark:border-violet-400/30 dark:bg-[#1B1D25]"
-            >
-              {DURATION_CHOICES.map((minutes) => (
-                <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-          <span className="font-semibold">Nhắc trước</span>
-          <select
-            value={String(chosen.reminderMinutesBefore)}
-            onChange={(event) =>
-              setChosen((current) => ({
-                ...current,
-                reminderMinutesBefore:
-                  event.target.value === "null" ? null : Number(event.target.value),
-              }))
-            }
-            className="rounded-lg border border-violet-200 bg-white px-2 py-1 text-xs outline-none focus:border-violet-500 dark:border-violet-400/30 dark:bg-[#1B1D25]"
-          >
-            {REMINDER_CHOICES.map((choice) => (
-              <option key={String(choice.value)} value={String(choice.value)}>{choice.label}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <ProposalDecisionForm
+        proposal={proposal}
+        draft={draft}
+        chosen={chosen}
+        compact
+        onDraftChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+        onOptionsChange={(patch) => setChosen((current) => ({ ...current, ...patch }))}
+      />
 
       <div className="mt-3 flex items-center gap-2">
         <button
           type="button"
-          disabled={busy}
-          onClick={() => onApprove(proposal, approvalCorrections(proposal, chosen))}
+          disabled={busy || !ready}
+          title={ready ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+          onClick={() => onApprove(proposal, decisionCorrections(proposal, draft, chosen))}
           className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
         >
           <Check className="h-3.5 w-3.5" /> Duyệt và thêm vào lịch

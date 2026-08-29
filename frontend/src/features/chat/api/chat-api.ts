@@ -644,6 +644,10 @@ export interface ApiActionProposal {
   confidence_score: number;
   source_mode: "on_demand" | "proactive";
   created_at: string;
+  /** JSON array of the required fields the extractor could not fill. The
+   *  server refuses to confirm while any remain, so the approval form uses it
+   *  to know what it must collect. */
+  missing_fields: string;
 }
 
 export interface ApiCalendarSyncResult {

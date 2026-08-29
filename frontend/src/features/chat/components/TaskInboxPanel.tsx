@@ -6,12 +6,13 @@ import type { ApiActionProposal } from "../api/chat-api";
 import {
   ApprovalOptions,
   DEFAULT_APPROVAL,
-  DURATION_CHOICES,
-  REMINDER_CHOICES,
-  approvalCorrections,
-  durationLabel,
+  ProposalDraft,
+  canApprove,
+  decisionCorrections,
+  draftFromProposal,
   formatProposalWhen,
 } from "../proposal-approval";
+import { ProposalDecisionForm } from "./ProposalDecisionForm";
 import {
   clarifyActionProposal,
   confirmActionProposal,
@@ -91,7 +92,19 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   // defaults and the extra fields are genuinely optional.
   const [options, setOptions] = useState<Record<string, ApprovalOptions>>({});
 
+  const [drafts, setDrafts] = useState<Record<string, ProposalDraft>>({});
+  const [tab, setTab] = useState<"awaiting" | "decided">("awaiting");
+
   const optionsFor = (id: string): ApprovalOptions => options[id] ?? DEFAULT_APPROVAL;
+
+  const draftFor = (proposal: ApiActionProposal): ProposalDraft =>
+    drafts[proposal.id] ?? draftFromProposal(proposal);
+
+  const setDraft = (proposal: ApiActionProposal, patch: Partial<ProposalDraft>) =>
+    setDrafts((current) => ({
+      ...current,
+      [proposal.id]: { ...(current[proposal.id] ?? draftFromProposal(proposal)), ...patch },
+    }));
 
   const setOption = (id: string, patch: Partial<ApprovalOptions>) =>
     setOptions((current) => ({
@@ -267,8 +280,9 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
-                        disabled={busy}
-                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, approvalCorrections(proposal, optionsFor(proposal.id))), "Đã duyệt và thêm vào lịch")}
+                        disabled={busy || !canApprove(proposal, draftFor(proposal))}
+                        title={canApprove(proposal, draftFor(proposal)) ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id))), "Đã duyệt và thêm vào lịch")}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" /> Duyệt
@@ -298,47 +312,13 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                 </div>
 
               {!decided && (
-                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-[#E4E7F0] bg-[#F7F8FC]/70 px-3 py-2.5 dark:border-[#3A3F50] dark:bg-[#232630]/60">
-                  {proposal.scheduled_start_at && (
-                    <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-                      <span className="font-semibold">Thời lượng</span>
-                      <select
-                        value={optionsFor(proposal.id).durationMinutes}
-                        onChange={(event) =>
-                          setOption(proposal.id, {
-                            durationMinutes: Number(event.target.value),
-                          })
-                        }
-                        className="rounded-lg border border-[#D8DCE7] bg-white px-2 py-1 text-xs outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#1B1D25]"
-                      >
-                        {DURATION_CHOICES.map((minutes) => (
-                          <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-                    <span className="font-semibold">Nhắc trước</span>
-                    <select
-                      value={String(optionsFor(proposal.id).reminderMinutesBefore)}
-                      onChange={(event) =>
-                        setOption(proposal.id, {
-                          reminderMinutesBefore:
-                            event.target.value === "null"
-                              ? null
-                              : Number(event.target.value),
-                        })
-                      }
-                      className="rounded-lg border border-[#D8DCE7] bg-white px-2 py-1 text-xs outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#1B1D25]"
-                    >
-                      {REMINDER_CHOICES.map((choice) => (
-                        <option key={String(choice.value)} value={String(choice.value)}>
-                          {choice.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <ProposalDecisionForm
+                  proposal={proposal}
+                  draft={draftFor(proposal)}
+                  chosen={optionsFor(proposal.id)}
+                  onDraftChange={(patch) => setDraft(proposal, patch)}
+                  onOptionsChange={(patch) => setOption(proposal.id, patch)}
+                />
               )}
 
               {needsAnswer && (
@@ -397,7 +377,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                           confirmActionProposal(
                             token,
                             proposal.id,
-                            approvalCorrections(proposal, optionsFor(proposal.id)),
+                            decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id)),
                           ),
                         "Đã duyệt và thêm vào lịch",
                       )
@@ -473,18 +453,31 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
           </div>
         )}
 
-        {awaiting.length > 0 && (
-          <h3 className="px-1 pt-1 text-xs font-bold uppercase tracking-wide text-[#74798C] dark:text-[#9DA3B4]">
-            Cần duyệt ({awaiting.length})
-          </h3>
-        )}
-        {awaiting.map(renderProposal)}
+        {/* Two tabs, not one long list. They answer different questions —
+            "what needs me" against "what already happened" — and the second
+            grows without bound, so merged it buries the first. */}
+        <div className="flex items-center gap-1 rounded-xl bg-white p-1 dark:bg-[#1C1F27]">
+          {([
+            ["awaiting", "Cần duyệt", awaiting.length],
+            ["decided", "Đã duyệt", decidedList.length],
+          ] as const).map(([key, caption, count]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                tab === key
+                  ? "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
+                  : "text-[#74798C] hover:bg-[#F7F8FC] dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
+              }`}
+            >
+              {caption} ({count})
+            </button>
+          ))}
+        </div>
 
-        {decidedList.length > 0 && (
-          <div className="flex items-center justify-between gap-3 px-1 pt-4">
-            <h3 className="text-xs font-bold uppercase tracking-wide text-[#74798C] dark:text-[#9DA3B4]">
-              Đã duyệt ({decidedList.length})
-            </h3>
+        {tab === "decided" && decidedList.length > 0 && (
+          <div className="flex justify-end px-1">
             <button
               type="button"
               onClick={() => void dismissAllDecided()}
@@ -495,7 +488,14 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             </button>
           </div>
         )}
-        {decidedList.map(renderProposal)}
+
+        {(tab === "awaiting" ? awaiting : decidedList).map(renderProposal)}
+
+        {!isLoading && (tab === "awaiting" ? awaiting : decidedList).length === 0 && (
+          <p className="px-1 py-10 text-center text-xs text-[#74798C] dark:text-[#9DA3B4]">
+            {tab === "awaiting" ? "Không có việc nào chờ bạn duyệt." : "Chưa có việc nào đã duyệt."}
+          </p>
+        )}
         </div>
       </div>
     </section>

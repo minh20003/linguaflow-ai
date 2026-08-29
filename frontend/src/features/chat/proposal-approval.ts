@@ -81,3 +81,103 @@ export function formatProposalWhen(proposal: ApiActionProposal): string {
     minute: "2-digit",
   });
 }
+
+/** The fields a person may correct before approving.
+ *
+ *  Human-in-the-loop is not only a confirm button: the assistant reads a
+ *  sentence someone typed in a hurry, and the title it lifts, the time it
+ *  resolves and the place it guesses are all things the owner can see are wrong
+ *  at a glance. Letting them fix it here is faster than rejecting and asking
+ *  again, and it is the only way to approve a proposal the extractor left
+ *  incomplete: `confirm_proposal` clears a field out of `missing_fields` when a
+ *  correction supplies it, so a proposal stuck on `needs_clarification` becomes
+ *  confirmable the moment the missing value is typed in.
+ */
+export interface ProposalDraft {
+  title: string;
+  /** `datetime-local` value, empty when the proposal carries no start. */
+  startsAtLocal: string;
+  location: string;
+}
+
+/** Seed the form from what the assistant proposed. */
+export function draftFromProposal(proposal: ApiActionProposal): ProposalDraft {
+  return {
+    title: proposal.title ?? "",
+    startsAtLocal: toLocalInputValue(proposal.scheduled_start_at),
+    location: proposal.location ?? "",
+  };
+}
+
+/** ISO instant -> the `YYYY-MM-DDTHH:mm` a `datetime-local` input wants.
+ *
+ *  Built from the local parts rather than by slicing `toISOString()`, which
+ *  would render the UTC clock and silently shift the time the person sees.
+ */
+export function toLocalInputValue(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "";
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
+/** Which required fields the extractor could not fill.
+ *
+ *  `scheduled_time` and `time` are the same gap under two names — the extractor
+ *  writes the first, everything that resolves one speaks of the second — so
+ *  they are folded together here the way the server folds them.
+ */
+const MISSING_ALIASES: Record<string, string> = {
+  scheduled_time: "time",
+  scheduled_start_at: "time",
+};
+
+export function missingFields(proposal: ApiActionProposal): string[] {
+  try {
+    const parsed = JSON.parse(proposal.missing_fields || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => MISSING_ALIASES[item] ?? item);
+  } catch {
+    return [];
+  }
+}
+
+/** Whether this proposal can be approved as it stands.
+ *
+ *  The interface used to offer "Duyệt" on anything undecided, including
+ *  proposals the server would refuse with "still has unresolved required
+ *  fields" — the button looked available and answered with an error.
+ */
+export function canApprove(proposal: ApiActionProposal, draft: ProposalDraft): boolean {
+  const missing = missingFields(proposal);
+  if (missing.includes("time") && !draft.startsAtLocal) return false;
+  if (missing.includes("location") && !draft.location.trim()) return false;
+  if (missing.includes("title") && !draft.title.trim()) return false;
+  return Boolean(draft.title.trim());
+}
+
+/** The full `ConfirmProposalRequest` body: the approver's edits and their choices. */
+export function decisionCorrections(
+  proposal: ApiActionProposal,
+  draft: ProposalDraft,
+  chosen: ApprovalOptions,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    reminder_minutes_before: chosen.reminderMinutesBefore,
+    resolved_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+  if (draft.title.trim()) body.title = draft.title.trim();
+  if (draft.location.trim()) body.location = draft.location.trim();
+
+  const start = draft.startsAtLocal ? new Date(draft.startsAtLocal) : null;
+  if (start && !Number.isNaN(start.getTime())) {
+    body.scheduled_start_at = start.toISOString();
+    body.scheduled_end_at = new Date(
+      start.getTime() + chosen.durationMinutes * 60_000,
+    ).toISOString();
+  }
+  return body;
+}
