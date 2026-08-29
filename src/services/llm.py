@@ -271,7 +271,15 @@ def get_assistant_llm(settings: Settings | None = None) -> BaseChatModel:
     """
     settings = settings or get_settings()
     provider, model = settings.resolve_assistant_llm()
-    return get_llm(settings=settings, provider=provider, model=model)
+    # Its own token ceiling, not the translator's. See the comment on
+    # `assistant_llm_max_tokens`.
+    return get_llm(
+        settings=settings.model_copy(
+            update={"llm_max_tokens": settings.assistant_llm_max_tokens}
+        ),
+        provider=provider,
+        model=model,
+    )
 
 
 def get_assistant_judge_llm(settings: Settings | None = None) -> BaseChatModel:

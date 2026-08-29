@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { Conversation, Message, User, MessageMention, MessageReply, MessageAttachment } from '../types';
 import { ChatHeader } from './ChatHeader';
 import { MessageList } from './MessageList';
+import { InlineProposalCard } from './InlineProposalCard';
 import { MessageComposer } from './MessageComposer';
 import { ConversationDetailsDrawer } from './ConversationDetailsDrawer';
 import { MessageSearchPanel, type ConversationSearchResult } from './MessageSearchPanel';
 import { MessageSquare, Sparkles, Plus, Globe } from 'lucide-react';
 import { emptyChatText } from '../i18n';
 import type { VoiceRecorderStage } from '../voice-recorder';
+import type { ApiActionProposal } from '../api/chat-api';
 
 interface ChatViewProps {
   conversation: Conversation | null;
@@ -38,6 +40,11 @@ interface ChatViewProps {
   onBlockContact: (conversationId: string) => void;
   onSearchMessages: (query: string) => Promise<ConversationSearchResult[]>;
   onOpenNewChat: () => void;
+  /** Proposals raised in this conversation that nobody has decided on yet. */
+  pendingProposals?: ApiActionProposal[];
+  proposalBusyId?: string | null;
+  onApproveProposal?: (proposal: ApiActionProposal, corrections: Record<string, unknown>) => void;
+  onRejectProposal?: (proposal: ApiActionProposal) => void;
   onStartCall: (type: 'voice' | 'video') => void;
   language: User['nativeLanguage'];
   attachments: MessageAttachment[];
@@ -81,6 +88,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onBlockContact,
   onSearchMessages,
   onOpenNewChat,
+  pendingProposals = [],
+  proposalBusyId = null,
+  onApproveProposal,
+  onRejectProposal,
   onStartCall,
   language,
   attachments,
@@ -194,6 +205,18 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onStartDirectChat={onStartDirectChat}
           language={language}
         />
+
+        {/* Deciding on a proposal belongs next to the message that prompted it,
+            not behind a trip to the task inbox. */}
+        {onApproveProposal && onRejectProposal && pendingProposals.map((proposal) => (
+          <InlineProposalCard
+            key={proposal.id}
+            proposal={proposal}
+            busy={proposalBusyId === proposal.id}
+            onApprove={onApproveProposal}
+            onReject={onRejectProposal}
+          />
+        ))}
 
         {/* Full-width Composer */}
         <MessageComposer

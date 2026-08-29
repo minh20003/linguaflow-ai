@@ -2686,6 +2686,51 @@ async def list_conversation_proposals(
 
 
 @router.post(
+    "/action-proposals/{proposal_id}/dismiss",
+    response_model=ActionProposalResponse,
+)
+async def dismiss_action_proposal(
+    proposal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ActionProposalResponse:
+    """Clear one proposal out of the caller's task inbox.
+
+    Hides the row. It does not cancel anything: a proposal that was approved has
+    already put an event on the calendar, and that event and its reminders are
+    untouched.
+    """
+    try:
+        dismissed = await ActionProposalService(db).dismiss(
+            proposal_id=proposal_id, user_id=current_user.id
+        )
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Action proposal was not found"
+        ) from exc
+    except ActionProposalOwnershipError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action proposal belongs to someone else",
+        ) from exc
+    return ActionProposalResponse.model_validate(dismissed)
+
+
+@router.post("/me/action-proposals/dismiss-decided")
+async def dismiss_decided_action_proposals(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Clear every already-decided proposal at once ("xoá tất cả").
+
+    Deliberately leaves anything still awaiting a decision: sweeping those away
+    would drop a question the assistant is waiting on, and nobody would learn it
+    had been asked. Calendars are untouched, as with a single dismissal.
+    """
+    return {"dismissed": await ActionProposalService(db).dismiss_all_decided(user_id=current_user.id)}
+
+
+@router.post(
     "/action-proposals/{proposal_id}/confirm",
     response_model=ActionProposalResponse,
 )

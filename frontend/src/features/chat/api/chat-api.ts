@@ -731,6 +731,20 @@ export function confirmActionProposal(
   });
 }
 
+/** Clear one proposal out of the task inbox. Calendars are untouched. */
+export function dismissActionProposal(token: string, proposalId: string) {
+  return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/dismiss`, token, {
+    method: "POST",
+  });
+}
+
+/** Clear every already-decided proposal. Anything still awaiting a decision stays. */
+export function dismissDecidedActionProposals(token: string) {
+  return request<{ dismissed: number }>(`/api/v1/me/action-proposals/dismiss-decided`, token, {
+    method: "POST",
+  });
+}
+
 export function rejectActionProposal(token: string, proposalId: string) {
   return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/reject`, token, {
     method: "POST",
