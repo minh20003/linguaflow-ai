@@ -98,6 +98,17 @@ cleanup() {
     [ -n "$BE_PID" ] && kill_tree "$(port_pid "$BACKEND_PORT")"
     kill_tree "$FE_PID"
     kill_tree "$BE_PID"
+
+    # Đợi cổng thật sự nhả. Một tiến trình đã nhận lệnh giết vẫn giữ socket
+    # thêm vài giây — backend nạp torch thì lâu hơn nữa — và trả prompt về sớm
+    # khiến lần chạy ngay sau đó gặp đúng cổng chưa nhả.
+    local waited=0 port
+    for port in "$FRONTEND_PORT" "$BACKEND_PORT"; do
+        while [ -n "$(port_pid "$port")" ] && [ "$waited" -lt 30 ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+    done
     echo " ✅ Đã dừng xong."
 }
 trap cleanup INT TERM EXIT
@@ -106,7 +117,7 @@ trap cleanup INT TERM EXIT
 # trong khi backend cần ~15–20s để khởi động (nạp tracing, kiểm tra CSDL), nên
 # ai mở link ngay cũng gặp connection refused và tưởng là hỏng.
 wait_until_up() {
-    local label="$1" port="$2" url="${3:-}" limit="${4:-90}" i=0
+    local label="$1" port="$2" url="${3:-}" limit="${4:-180}" i=0
     printf "   ⏳ Đợi %s" "$label"
     while [ "$i" -lt "$limit" ]; do
         if [ -n "$url" ]; then
@@ -114,7 +125,9 @@ wait_until_up() {
         elif [ -n "$(port_pid "$port")" ]; then
             printf " — sẵn sàng sau %ss\n" "$i"; return 0
         fi
-        printf "."
+        # Đếm giây thay vì rắc dấu chấm: backend mất khoảng một phút để lên và
+        # một hàng chấm im lặng nhìn giống treo máy hơn là đang chạy.
+        [ $((i % 10)) -eq 0 ] && printf " %ss" "$i" || printf "."
         sleep 1
         i=$((i + 1))
     done
@@ -207,15 +220,29 @@ run_backend() {
         }
     fi
 
-    echo "⚡ Backend: http://localhost:$BACKEND_PORT (docs: /docs)"
+    # Khoảng một phút là bình thường, không phải treo: tiến trình nạp
+    # sentence-transformers (keo theo torch) truoc moi import khac — xem đầu
+    # `src/main.py` — rồi mới đến kiểm tra tracing và CSDL. Đo trên máy dev:
+    # 74s khi có preload, 58s khi không. Đặt ASSISTANT_RERANK_ENABLED=false *và*
+    # EMBEDDING_FALLBACK_PROVIDER= (rỗng) nếu muốn bỏ hẳn phần nạp đó.
+    echo "⚡ Backend: http://localhost:$BACKEND_PORT (docs: /docs) — mất ~1 phút"
     # Một tiến trình duy nhất, không --workers: ConnectionManager giữ socket
     # trong bộ nhớ tiến trình (ADR-18).
     "$PYTHON" -m uvicorn src.main:app --host 0.0.0.0 --port "$BACKEND_PORT" \
         > "$ROOT_DIR/backend.log" 2>&1 &
     BE_PID=$!
 
-    if ! wait_until_up "backend" "$BACKEND_PORT" "http://127.0.0.1:$BACKEND_PORT/health" 90; then
-        echo "❌ Backend không khởi động được. 20 dòng cuối của backend.log:" >&2
+    if ! wait_until_up "backend" "$BACKEND_PORT" "http://127.0.0.1:$BACKEND_PORT/health" 180; then
+        if [ -n "$(port_pid "$BACKEND_PORT")" ]; then
+            # Phân biệt hai thứ rất khác nhau: tiến trình chết, và tiến trình
+            # còn sống nhưng khởi động lâu hơn hạn chờ. Bản trước gộp cả hai
+            # thành "không khởi động được", nên một máy chậm bị báo là hỏng.
+            echo "⚠️  Backend vẫn đang chạy nhưng chưa trả lời sau 180s." >&2
+            echo "    Nó có thể lên muộn — theo dõi bằng: tail -f backend.log" >&2
+        else
+            echo "❌ Backend không khởi động được." >&2
+        fi
+        echo "    20 dòng cuối của backend.log:" >&2
         tail -20 "$ROOT_DIR/backend.log" >&2
         exit 1
     fi
