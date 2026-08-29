@@ -4,9 +4,20 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Clock3, ListTodo, MessageSquareQuote, Trash2, X } from "lucide-react";
 import type { ApiActionProposal } from "../api/chat-api";
 import {
+  ApprovalOptions,
+  DEFAULT_APPROVAL,
+  ProposalDraft,
+  canApprove,
+  decisionCorrections,
+  draftFromProposal,
+  formatProposalWhen,
+} from "../proposal-approval";
+import { ProposalDecisionForm } from "./ProposalDecisionForm";
+import {
   clarifyActionProposal,
   confirmActionProposal,
-  deleteTerminalActionProposal,
+  dismissActionProposal,
+  dismissDecidedActionProposals,
   listActionProposals,
   rejectActionProposal,
 } from "../api/chat-api";
@@ -16,6 +27,12 @@ interface TaskInboxPanelProps {
   /** Proposals arriving live over the socket, newest first. */
   incoming?: ApiActionProposal[];
   onCountChange?: (pending: number) => void;
+  /** Report a decision back, so the card for it in the chat stops asking.
+   *
+   *  Without this the sync ran one way only: approving in the chat updated this
+   *  list through `incoming`, but approving here left the in-chat card offering
+   *  the same choice for a proposal that had already been decided. */
+  onProposalChanged?: (proposal: ApiActionProposal, removed?: boolean) => void;
   onNotify?: (title: string, detail?: string, tone?: "success" | "warning") => void;
 }
 
@@ -59,36 +76,41 @@ function orderProposals(items: ApiActionProposal[]): ApiActionProposal[] {
   });
 }
 
-function formatWhen(proposal: ApiActionProposal): string {
-  const at = proposal.scheduled_start_at || proposal.due_at;
-  if (!at) return "Chưa có thời gian";
-  return new Date(at).toLocaleString("vi-VN", {
-    weekday: "short",
-    day: "numeric",
-    month: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function toDateTimeLocal(value: string | null): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-}
-
 export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   token,
   incoming,
   onCountChange,
   onNotify,
+  onProposalChanged,
 }) => {
   const [proposals, setProposals] = useState<ApiActionProposal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [editingProposal, setEditingProposal] = useState<ApiActionProposal | null>(null);
+  // What the approver chose for this proposal, keyed by id. Empty until they
+  // touch a control, so an untouched card still approves with the server's
+  // defaults and the extra fields are genuinely optional.
+  const [options, setOptions] = useState<Record<string, ApprovalOptions>>({});
+
+  const [drafts, setDrafts] = useState<Record<string, ProposalDraft>>({});
+  const [tab, setTab] = useState<"awaiting" | "decided">("awaiting");
+
+  const optionsFor = (id: string): ApprovalOptions => options[id] ?? DEFAULT_APPROVAL;
+
+  const draftFor = (proposal: ApiActionProposal): ProposalDraft =>
+    drafts[proposal.id] ?? draftFromProposal(proposal);
+
+  const setDraft = (proposal: ApiActionProposal, patch: Partial<ProposalDraft>) =>
+    setDrafts((current) => ({
+      ...current,
+      [proposal.id]: { ...(current[proposal.id] ?? draftFromProposal(proposal)), ...patch },
+    }));
+
+  const setOption = (id: string, patch: Partial<ApprovalOptions>) =>
+    setOptions((current) => ({
+      ...current,
+      [id]: { ...(current[id] ?? DEFAULT_APPROVAL), ...patch },
+    }));
 
   const load = useCallback(async () => {
     try {
@@ -121,6 +143,49 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   }, [incoming]);
 
   const ordered = useMemo(() => orderProposals(proposals), [proposals]);
+  // Two lists, because they answer different questions. "Cần duyệt" is work
+  // waiting on the person; "Đã duyệt" is a record of what already happened, and
+  // mixing them buries the first under the second as the second grows.
+  const awaiting = useMemo(
+    () => ordered.filter((item) =>
+      item.status === "pending_confirmation" || item.status === "needs_clarification"),
+    [ordered],
+  );
+  const decidedList = useMemo(
+    () => ordered.filter((item) =>
+      item.status !== "pending_confirmation" && item.status !== "needs_clarification"),
+    [ordered],
+  );
+
+  /** Remove a decided proposal from this list only.
+   *
+   *  Nothing is cancelled. An approved proposal already put an event on the
+   *  calendar, and that event still fires its reminder — clearing a finished
+   *  list is not a request to un-book a meeting.
+   */
+  const dismissOne = async (proposal: ApiActionProposal) => {
+    setBusyId(proposal.id);
+    try {
+      await dismissActionProposal(token, proposal.id);
+      setProposals((current) => current.filter((item) => item.id !== proposal.id));
+      onProposalChanged?.(proposal, true);
+    } catch (error) {
+      onNotify?.("Không xoá được", error instanceof Error ? error.message : undefined, "warning");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const dismissAllDecided = async () => {
+    try {
+      await dismissDecidedActionProposals(token);
+      setProposals((current) => current.filter(
+        (item) => item.status === "pending_confirmation" || item.status === "needs_clarification"));
+      onNotify?.("Đã xoá khỏi danh sách", "Lịch và nhắc hẹn giữ nguyên", "success");
+    } catch (error) {
+      onNotify?.("Không xoá được", error instanceof Error ? error.message : undefined, "warning");
+    }
+  };
   const pendingCount = useMemo(
     () =>
       proposals.filter(
@@ -133,8 +198,10 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
     onCountChange?.(pendingCount);
   }, [pendingCount, onCountChange]);
 
-  const replace = (updated: ApiActionProposal) =>
+  const replace = (updated: ApiActionProposal) => {
     setProposals((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    onProposalChanged?.(updated);
+  };
 
   const remove = (proposalId: string) =>
     setProposals((current) => current.filter((item) => item.id !== proposalId));
@@ -159,41 +226,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
     }
   };
 
-  return (
-    <section className="flex h-full w-full flex-col bg-[#F7F8FC] dark:bg-[#14161C]">
-      <header className="flex min-h-16 items-center border-b border-[#E8EAF0] bg-white px-5 dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-7">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
-            <ListTodo className="h-5 w-5" />
-          </span>
-          <div>
-            <h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
-            <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">Các đề xuất của trợ lý đang chờ bạn xử lý</p>
-          </div>
-        </div>
-        {pendingCount > 0 && (
-          <span className="ml-auto shrink-0 rounded-full bg-[#EFF6FF] px-3 py-1 text-xs font-bold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
-            {pendingCount} cần xử lý
-          </span>
-        )}
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7">
-        <div className="mx-auto max-w-5xl space-y-3">
-        {isLoading && (
-          <p className="px-1 py-6 text-center text-xs text-[#74798C]">Đang tải…</p>
-        )}
-
-        {!isLoading && ordered.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-3 py-14 text-center dark:border-[#3A3F50] dark:bg-[#1C1F27]">
-            <ListTodo className="mx-auto h-8 w-8 text-[#CED2DE] dark:text-[#3A3F50]" />
-            <p className="mt-3 text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
-              Chưa có việc nào chờ bạn
-            </p>
-          </div>
-        )}
-
-        {ordered.map((proposal) => {
+  const renderProposal = (proposal: ApiActionProposal) => {
           const busy = busyId === proposal.id;
           const needsAnswer = proposal.status === "needs_clarification";
           const decided = proposal.status !== "pending_confirmation" && !needsAnswer;
@@ -240,7 +273,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       </span>
                     </div>
                     <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
-                      <span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5 flex-none" />{formatWhen(proposal)}</span>
+                      <span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5 flex-none" />{formatProposalWhen(proposal)}</span>
                       {proposal.source_mode === "proactive" && (
                         <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">tự phát hiện</span>
                       )}
@@ -259,8 +292,9 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
-                        disabled={busy}
-                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id), "Đã duyệt và thêm vào lịch")}
+                        disabled={busy || !canApprove(proposal, draftFor(proposal))}
+                        title={canApprove(proposal, draftFor(proposal)) ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id))), "Đã duyệt và thêm vào lịch")}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" /> Duyệt
@@ -273,26 +307,31 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       >Từ chối</button>
                     </div>
                   )}
-                  {(proposal.status === "rejected" || proposal.status === "stale") && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setBusyId(proposal.id);
-                        void deleteTerminalActionProposal(token, proposal.id)
-                          .then(() => {
-                            remove(proposal.id);
-                            onNotify?.("Đã xóa đề xuất", proposal.title, "success");
-                          })
-                          .catch((error) => onNotify?.("Không thể xóa đề xuất", error instanceof Error ? error.message : undefined, "warning"))
-                          .finally(() => setBusyId(null));
-                      }}
-                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-400/25 dark:text-rose-300 dark:hover:bg-rose-500/10"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Xóa
-                    </button>
+
+                  {decided && (
+                    <div className="flex shrink-0 items-center">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void dismissOne(proposal)}
+                        title="Chỉ ẩn khỏi danh sách. Lịch và nhắc hẹn giữ nguyên."
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#74798C] hover:bg-[#F7F8FC] hover:text-[#1E2230] disabled:opacity-50 dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Xoá
+                      </button>
+                    </div>
                   )}
                 </div>
+
+              {!decided && (
+                <ProposalDecisionForm
+                  proposal={proposal}
+                  draft={draftFor(proposal)}
+                  chosen={optionsFor(proposal.id)}
+                  onDraftChange={(patch) => setDraft(proposal, patch)}
+                  onOptionsChange={(patch) => setOption(proposal.id, patch)}
+                />
+              )}
 
               {needsAnswer && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
@@ -346,7 +385,12 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     onClick={() =>
                       void act(
                         proposal,
-                        () => confirmActionProposal(token, proposal.id),
+                        () =>
+                          confirmActionProposal(
+                            token,
+                            proposal.id,
+                            decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id)),
+                          ),
                         "Đã duyệt và thêm vào lịch",
                       )
                     }
@@ -382,7 +426,88 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
               </div>
             </article>
           );
-        })}
+  };
+
+  return (
+    <section className="flex h-full w-full flex-col bg-[#F7F8FC] dark:bg-[#14161C]">
+      <header className="flex min-h-16 items-center border-b border-[#E8EAF0] bg-white px-5 dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-7">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+            <ListTodo className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
+            <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">Các đề xuất của trợ lý đang chờ bạn xử lý</p>
+          </div>
+        </div>
+        {pendingCount > 0 && (
+          <span className="ml-auto shrink-0 rounded-full bg-[#EFF6FF] px-3 py-1 text-xs font-bold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+            {pendingCount} cần xử lý
+          </span>
+        )}
+      </header>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7">
+        <div className="mx-auto max-w-5xl space-y-3">
+        {isLoading && (
+          <p className="px-1 py-6 text-center text-xs text-[#74798C]">Đang tải…</p>
+        )}
+
+        {!isLoading && ordered.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-3 py-14 text-center dark:border-[#3A3F50] dark:bg-[#1C1F27]">
+            <ListTodo className="mx-auto h-8 w-8 text-[#CED2DE] dark:text-[#3A3F50]" />
+            <p className="mt-3 text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
+              Chưa có việc nào chờ bạn
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
+              Khi bạn hứa làm gì đó trong hội thoại, trợ lý sẽ đề xuất ở đây để bạn duyệt.
+            </p>
+          </div>
+        )}
+
+        {/* Two tabs, not one long list. They answer different questions —
+            "what needs me" against "what already happened" — and the second
+            grows without bound, so merged it buries the first. */}
+        <div className="flex items-center gap-1 rounded-xl bg-white p-1 dark:bg-[#1C1F27]">
+          {([
+            ["awaiting", "Cần duyệt", awaiting.length],
+            ["decided", "Đã duyệt", decidedList.length],
+          ] as const).map(([key, caption, count]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                tab === key
+                  ? "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
+                  : "text-[#74798C] hover:bg-[#F7F8FC] dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
+              }`}
+            >
+              {caption} ({count})
+            </button>
+          ))}
+        </div>
+
+        {tab === "decided" && decidedList.length > 0 && (
+          <div className="flex justify-end px-1">
+            <button
+              type="button"
+              onClick={() => void dismissAllDecided()}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#74798C] hover:bg-white hover:text-[#1E2230] dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
+              title="Chỉ ẩn khỏi danh sách. Lịch và nhắc hẹn giữ nguyên."
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Xoá tất cả
+            </button>
+          </div>
+        )}
+
+        {(tab === "awaiting" ? awaiting : decidedList).map(renderProposal)}
+
+        {!isLoading && (tab === "awaiting" ? awaiting : decidedList).length === 0 && (
+          <p className="px-1 py-10 text-center text-xs text-[#74798C] dark:text-[#9DA3B4]">
+            {tab === "awaiting" ? "Không có việc nào chờ bạn duyệt." : "Chưa có việc nào đã duyệt."}
+          </p>
+        )}
         </div>
       </div>
       {editingProposal && (

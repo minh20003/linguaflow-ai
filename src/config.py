@@ -10,6 +10,7 @@ harness can run without a `.env` file.
 """
 
 import logging
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -77,6 +78,54 @@ class Settings(BaseSettings):
     llm_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
     judge_model: str = ""  # Empty = the judge provider's default model
 
+    # The Assistant Agent picks its own models, independently of translation.
+    # Not a convenience: the two agents are judged on different things. A
+    # translation is scored against a reference sentence and must answer inside
+    # NFR-01, while the assistant reads long threads, plans several steps and is
+    # scored on whether it invented anything — so the model that is right for one
+    # is routinely wrong for the other, and the retrieval accuracy this agent
+    # needs is far higher than the translation path ever required (ADR-37).
+    #
+    # Empty means "inherit the translation setting", so a deployment that has
+    # configured nothing behaves exactly as it does today. Same arrangement as
+    # `stt_provider` / `stt_model` below: an independent role whose configuration
+    # never mutates another role's.
+    assistant_llm_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    assistant_llm_model: str = ""
+    assistant_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    assistant_judge_model: str = ""
+    assistant_embedding_provider: Literal["", "gemini", "openai", "local"] = ""
+    assistant_embedding_model: str = ""
+
+    # Assistant retrieval is always on — there is deliberately no flag to turn it
+    # off. `RAG_CONTEXT_ENABLED` governs the *translation* agent's semantic
+    # context and stays off (ADR-27); the assistant cannot answer "what did we
+    # decide about the deadline" without reaching past the recent window, so for
+    # it retrieval is the feature rather than an optimisation. What still gates
+    # it is the user's `store_memory` consent, which is a permission, not a
+    # configuration switch.
+    #
+    # Two numbers because retrieval runs in two stages: `top_k` is how many
+    # candidates the hybrid search hands to the reranker, `top_n` how many
+    # survive into the prompt. Widening the first costs a cheap vector scan;
+    # widening the second costs context and invites the model to pad the answer
+    # with near-misses.
+    assistant_retrieval_top_k: int = Field(default=8, ge=1, le=50)
+    assistant_rerank_top_n: int = Field(default=4, ge=1, le=20)
+    # The assistant writes longer than the translator does, and needs its own
+    # ceiling for it. `LLM_MAX_TOKENS` is sized for one translated chat message
+    # -- the comment on it says so -- and sharing it truncated summaries and
+    # task lists in the middle of a sentence, which reads as the assistant
+    # trailing off rather than as a limit being hit.
+    assistant_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
+    # The reranker is the one part of this stack that runs a local model, so it
+    # is also the one part an operator may need to switch off without editing
+    # code: `sentence-transformers` pulls torch into the process, and a host
+    # that cannot load it took the whole server down rather than degrading.
+    # False keeps the fused hybrid ranking, which is the same fallback a
+    # deployment without the package already gets.
+    assistant_rerank_enabled: bool = True
+
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
     deepseek_api_key: str = ""
@@ -98,6 +147,7 @@ class Settings(BaseSettings):
     stt_provider: Literal["gemini"] = "gemini"
     stt_model: str = "gemini-3.5-transcribe"
     stt_timeout_seconds: int = Field(default=60, ge=1, le=300)
+    stt_retry_attempts: int = Field(default=3, ge=1, le=5)
 
     # Google Identity Services authentication, and Google Calendar (ADR-35).
     #
@@ -253,6 +303,10 @@ class Settings(BaseSettings):
     # than making an API request wait indefinitely.
     database_pool_recycle_seconds: int = Field(default=900, ge=60, le=86_400)
     database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # SQLAlchemy echo includes bound parameters. Leaving it implicitly on in
+    # development therefore writes message text and completed voice transcripts
+    # to the console. Keep it opt-in in every environment.
+    database_echo: bool = False
     # The first managed-PostgreSQL connection can take longer than a pooled
     # request during a cold start. Keep readiness strict, but avoid reporting a
     # healthy database as unavailable before its TLS/pooler handshake finishes.
@@ -426,6 +480,120 @@ class Settings(BaseSettings):
                     )
         return self
 
+    @model_validator(mode="after")
+    def _warn_assistant_judges_itself(self) -> "Settings":
+        """Say so when the assistant's judge is the model it is judging.
+
+        Not an error, for the reason ADR-17 already gives about the translation
+        judge: a self-scored run is still a run, and refusing to start would make
+        a quick local measurement impossible. But a model asked to grade its own
+        output scores it generously and consistently, so a number produced this
+        way is not comparable with one produced any other way — and the whole
+        point of the assistant eval harness is comparing runs.
+        """
+        provider, model = self.resolve_assistant_llm()
+        judge_provider, judge_model = self.resolve_assistant_judge()
+        if (provider, model) == (judge_provider, judge_model):
+            logging.getLogger(__name__).warning(
+                "The Assistant Agent's judge is the same model that generates "
+                "(%s/%s). Scores from this configuration are self-judged and are "
+                "not comparable with other runs. Set ASSISTANT_JUDGE_PROVIDER.",
+                judge_provider,
+                judge_model or "<provider default>",
+            )
+        return self
+
+    def resolve_assistant_llm(self) -> tuple[str, str]:
+        """Which provider and model the Assistant Agent generates with.
+
+        Empty assistant settings inherit the translation ones, so a deployment
+        that configured nothing keeps working. The pair is resolved here rather
+        than at each call site because "empty means inherit" is exactly the kind
+        of rule that gets applied in three places and forgotten in a fourth —
+        and the fourth then silently runs the wrong model while the report says
+        otherwise.
+
+        Returns:
+            ``(provider, model)``. The model may be empty, which every caller
+            passes to `get_llm` as "use that provider's default".
+        """
+        provider = self.assistant_llm_provider or self.llm_provider
+        # The model only carries over when the provider did. `LLM_MODEL` names a
+        # model *on the translation provider*, so inheriting it onto a different
+        # provider would ask, say, Mistral for a Gemini model and fail at the
+        # first call.
+        if self.assistant_llm_model:
+            return provider, self.assistant_llm_model
+        return provider, (self.llm_model if provider == self.llm_provider else "")
+
+    def resolve_assistant_judge(self) -> tuple[str, str]:
+        """Which provider and model score the Assistant Agent's output.
+
+        Falls back to the generating model rather than to the translation judge:
+        a judge chosen for scoring sentence-level translation has no standing to
+        grade a multi-step plan, so inheriting it would look configured while
+        measuring something else. Falling back to the generator is at least an
+        honest self-judge, which `_warn_assistant_judges_itself` then reports.
+        """
+        if self.assistant_judge_provider:
+            return self.assistant_judge_provider, self.assistant_judge_model
+        return self.resolve_assistant_llm()
+
+    def resolve_assistant_embedding(self) -> tuple[str, str]:
+        """Which provider and model embed the assistant's chunks and queries.
+
+        Both halves must travel together to every caller. Vectors from two models
+        occupy different spaces, so `assistant_chunks.embedding_model` records
+        which one produced each row and retrieval filters on it — a query
+        embedded by one model and compared against another's rows returns a
+        confidently wrong ranking rather than an error.
+        """
+        provider = self.assistant_embedding_provider or self.embedding_provider
+        if self.assistant_embedding_model:
+            return provider, self.assistant_embedding_model
+        return provider, (
+            self.embedding_model if provider == self.embedding_provider else ""
+        )
+
+
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr able to carry every language the agent translates.
+
+    On Windows the console defaults to the cp1252 code page, which can encode
+    only Western European text. A single Vietnamese, Chinese, Japanese, Korean,
+    Thai, Arabic, Hindi, Russian, Greek, Turkish or Polish character in a log
+    record — a translated message quoted back in an exception, a `%r` of the
+    detected text — then raises ``UnicodeEncodeError`` inside the logging
+    handler instead of being written. Since that happens while reporting an
+    earlier failure, the original error is lost as well.
+
+    Both halves are needed: ``reconfigure`` makes Python emit UTF-8 bytes, and
+    ``SetConsoleOutputCP(65001)`` makes the console read them as UTF-8 rather
+    than as mojibake. ``errors="backslashreplace"`` is the last line of defence
+    for a stream that cannot be switched at all (a pipe opened by another tool),
+    so an unencodable character degrades to an escape rather than to a crash.
+
+    Everything here is best-effort: a redirected or already-wrapped stream may
+    expose neither method, and no logging setup is worth failing a process over.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:  # noqa: BLE001 - console code page is cosmetic
+            pass
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:  # noqa: BLE001 - a detached stream cannot be fixed
+            pass
+
 
 def configure_logging(settings: Settings | None = None) -> None:
     """Apply LOG_LEVEL to the root logger.
@@ -439,6 +607,10 @@ def configure_logging(settings: Settings | None = None) -> None:
     emits one request line per LLM call, which would bury the evaluation
     harness's own progress output.
 
+    Also switches stdout/stderr to UTF-8, so a log line carrying non-Western
+    text cannot raise ``UnicodeEncodeError`` on a Windows console — see
+    `_force_utf8_streams`.
+
     Safe to call more than once: the handler is replaced rather than stacked, so
     repeated calls cannot duplicate every line.
 
@@ -446,6 +618,10 @@ def configure_logging(settings: Settings | None = None) -> None:
         settings: Configuration to read. Defaults to the process settings.
     """
     settings = settings or get_settings()
+
+    # Before any handler is attached: a cp1252 console turns a Vietnamese log
+    # line into UnicodeEncodeError rather than into output.
+    _force_utf8_streams()
 
     handler = logging.StreamHandler()
     handler.setFormatter(

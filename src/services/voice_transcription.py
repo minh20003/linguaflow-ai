@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.database import get_async_session_maker
-from src.database.models import Attachment, ConversationMember, Message
+from src.database.models import Attachment, ConversationMember, Message, User
 from src.schemas.chat import (
     VoiceTranscriptionCompletedEvent,
     VoiceTranscriptionFailedEvent,
@@ -28,12 +30,8 @@ from src.services.attachment_storage import (
 from src.services.message_postprocessing import schedule_text_dependent_work
 from src.services.transcription import (
     BlankTranscriptError,
-    InvalidAudioError,
-    TranscriptionConfigurationError,
     TranscriptionError,
-    TranscriptionProviderError,
     TranscriptionService,
-    TranscriptionTimeoutError,
     get_transcription_service,
 )
 
@@ -68,15 +66,17 @@ def schedule_voice_transcription(
     postprocessing_scheduler: PostprocessingScheduler | None = None,
 ) -> None:
     """Launch STT with primitive IDs and sessions independent of the socket."""
+    resolved_session_factory = session_factory or get_async_session_maker()
     task = asyncio.create_task(
-        transcribe_voice_message(
+        _run_voice_transcription_guarded(
             message_id=message_id,
             conversation_id=conversation_id,
             publisher=publisher,
-            session_factory=session_factory or get_async_session_maker(),
+            session_factory=resolved_session_factory,
             transcription_service_factory=(transcription_service_factory or get_transcription_service),
             postprocessing_scheduler=postprocessing_scheduler,
-        )
+        ),
+        name=f"voice-stt:{message_id}",
     )
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
@@ -85,8 +85,64 @@ def schedule_voice_transcription(
 
 def _log_task_failure(task: asyncio.Task) -> None:
     """Surface an unexpected task escape without logging sensitive payloads."""
-    if not task.cancelled() and task.exception() is not None:
-        logger.error("Background voice transcription task failed")
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error(
+            "voice_stt_task_escaped task=%s exception_type=%s",
+            task.get_name(),
+            type(error).__name__,
+        )
+
+
+async def _run_voice_transcription_guarded(
+    *,
+    message_id: str,
+    conversation_id: str,
+    publisher: EventPublisher,
+    session_factory: Callable[[], AsyncSession],
+    transcription_service_factory: Callable[[], TranscriptionService],
+    postprocessing_scheduler: PostprocessingScheduler | None = None,
+) -> None:
+    """Keep an unexpected detached-task error from stranding a pending row."""
+    try:
+        await transcribe_voice_message(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            publisher=publisher,
+            session_factory=session_factory,
+            transcription_service_factory=transcription_service_factory,
+            postprocessing_scheduler=postprocessing_scheduler,
+        )
+    except Exception as exc:  # noqa: BLE001 - never log raw provider/user content
+        settings = get_settings()
+        logger.error(
+            "voice_stt_task_error message_id=%s conversation_id=%s provider=%s "
+            "model=%s stage=orchestration failure_code=unexpected_error "
+            "http_status=None retryable=True exception_type=%s",
+            message_id,
+            conversation_id,
+            settings.stt_provider,
+            settings.stt_model,
+            type(exc).__name__,
+        )
+        try:
+            await _transition_to_failed(
+                message_id=message_id,
+                conversation_id=conversation_id,
+                retryable=True,
+                publisher=publisher,
+                session_factory=session_factory,
+            )
+        except Exception as transition_error:  # noqa: BLE001 - best effort only
+            logger.error(
+                "voice_stt_failure_transition_error message_id=%s conversation_id=%s "
+                "exception_type=%s",
+                message_id,
+                conversation_id,
+                type(transition_error).__name__,
+            )
 
 
 async def transcribe_voice_message(
@@ -99,6 +155,15 @@ async def transcribe_voice_message(
     postprocessing_scheduler: PostprocessingScheduler | None = None,
 ) -> None:
     """Transcribe one authoritative pending voice message and transition it once."""
+    started = time.perf_counter()
+    settings = get_settings()
+    logger.info(
+        "voice_stt_started message_id=%s conversation_id=%s provider=%s model=%s",
+        message_id,
+        conversation_id,
+        settings.stt_provider,
+        settings.stt_model,
+    )
     attachment: Attachment | None = None
     async with session_factory() as session:
         message = await session.scalar(
@@ -118,8 +183,22 @@ async def transcribe_voice_message(
                 Attachment.conversation_id == conversation_id,
             )
         )
+        # Read inside this session: the transcription below runs outside it, and
+        # the ORM instances above must not be touched from there.
+        language_hint = await session.scalar(
+            select(User.preferred_language).where(User.id == message.sender_id)
+        )
 
     if attachment is None:
+        _log_voice_failure(
+            message_id=message_id,
+            conversation_id=conversation_id,
+            failure_code="attachment_missing",
+            stage="storage",
+            http_status=None,
+            retryable=False,
+            latency_ms=_elapsed_ms(started),
+        )
         await _transition_to_failed(
             message_id=message_id,
             conversation_id=conversation_id,
@@ -131,31 +210,31 @@ async def transcribe_voice_message(
 
     try:
         service = transcription_service_factory()
-        transcription = await service.transcribe_attachment(attachment)
+        transcription = await service.transcribe_attachment(attachment, language_hint)
         transcript = transcription.text.strip()
         if not transcript:
             raise BlankTranscriptError("STT provider returned a blank transcript")
     except (AttachmentStorageError, TranscriptionError) as exc:
-        await _transition_to_failed(
+        failure_code, stage, http_status, retryable = _failure_metadata(exc)
+        _log_voice_failure(
             message_id=message_id,
             conversation_id=conversation_id,
-            retryable=_failure_is_retryable(exc),
-            publisher=publisher,
-            session_factory=session_factory,
+            failure_code=failure_code,
+            stage=stage,
+            http_status=http_status,
+            retryable=retryable,
+            latency_ms=_elapsed_ms(started),
         )
-        return
-    except Exception:  # noqa: BLE001 - provider details must never reach logs/events
-        logger.error("Voice transcription failed unexpectedly")
         await _transition_to_failed(
             message_id=message_id,
             conversation_id=conversation_id,
-            retryable=False,
+            retryable=retryable,
             publisher=publisher,
             session_factory=session_factory,
         )
         return
 
-    await _transition_to_completed(
+    completed = await _transition_to_completed(
         message_id=message_id,
         conversation_id=conversation_id,
         transcript=transcript,
@@ -163,27 +242,57 @@ async def transcribe_voice_message(
         session_factory=session_factory,
         postprocessing_scheduler=(postprocessing_scheduler or schedule_text_dependent_work),
     )
+    if completed:
+        logger.info(
+            "voice_stt_completed message_id=%s conversation_id=%s provider=%s "
+            "model=%s provider_latency_ms=%s total_ms=%s",
+            message_id,
+            conversation_id,
+            settings.stt_provider,
+            transcription.model,
+            transcription.latency_ms,
+            _elapsed_ms(started),
+        )
 
 
-def _failure_is_retryable(exc: Exception) -> bool:
-    """Return a conservative client retry hint without exposing provider detail."""
-    if isinstance(
-        exc,
-        (
-            AttachmentStorageNotFoundError,
-            InvalidAudioError,
-            BlankTranscriptError,
-            TranscriptionConfigurationError,
-        ),
-    ):
-        return False
-    return isinstance(
-        exc,
-        (
-            AttachmentStorageError,
-            TranscriptionTimeoutError,
-            TranscriptionProviderError,
-        ),
+def _elapsed_ms(started: float) -> int:
+    return max(0, round((time.perf_counter() - started) * 1000))
+
+
+def _failure_metadata(exc: Exception) -> tuple[str, str, int | None, bool]:
+    """Return safe fields only; raw provider and audio details stay discarded."""
+    if isinstance(exc, TranscriptionError):
+        return exc.failure_code, exc.stage, exc.http_status, exc.retryable
+    if isinstance(exc, AttachmentStorageNotFoundError):
+        return "attachment_missing", "storage", None, False
+    if isinstance(exc, AttachmentStorageError):
+        return "storage_unavailable", "storage", None, True
+    return "unexpected_error", "orchestration", None, True
+
+
+def _log_voice_failure(
+    *,
+    message_id: str,
+    conversation_id: str,
+    failure_code: str,
+    stage: str,
+    http_status: int | None,
+    retryable: bool,
+    latency_ms: int,
+) -> None:
+    settings = get_settings()
+    logger.warning(
+        "voice_stt_failed message_id=%s conversation_id=%s provider=%s model=%s "
+        "stage=%s failure_code=%s http_status=%s retryable=%s latency_ms=%s",
+        message_id,
+        conversation_id,
+        settings.stt_provider,
+        settings.stt_model,
+        stage,
+        failure_code,
+        http_status,
+        retryable,
+        latency_ms,
     )
 
 
@@ -208,7 +317,7 @@ async def _transition_to_completed(
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
     postprocessing_scheduler: PostprocessingScheduler,
-) -> None:
+) -> bool:
     """Commit completion, publish it, then schedule existing post-text work."""
     async with session_factory() as session:
         row = (
@@ -230,7 +339,7 @@ async def _transition_to_completed(
         ).one_or_none()
         if row is None:
             await session.rollback()
-            return
+            return False
         member_ids = await _current_member_ids(session, conversation_id)
         source_language = row.source_language
         await session.commit()
@@ -260,8 +369,9 @@ async def _transition_to_completed(
             )
         )
     if completed_message is None:
-        return
+        return True
     postprocessing_scheduler(message=completed_message, publisher=publisher)
+    return True
 
 
 async def _transition_to_failed(
@@ -271,7 +381,7 @@ async def _transition_to_failed(
     retryable: bool,
     publisher: EventPublisher,
     session_factory: Callable[[], AsyncSession],
-) -> None:
+) -> bool:
     """Atomically claim the pending state, commit, then publish safe failure."""
     async with session_factory() as session:
         transitioned = (
@@ -290,7 +400,7 @@ async def _transition_to_failed(
         ).one_or_none()
         if transitioned is None:
             await session.rollback()
-            return
+            return False
         member_ids = await _current_member_ids(session, conversation_id)
         await session.commit()
 
@@ -302,3 +412,4 @@ async def _transition_to_failed(
             retryable=retryable,
         ).model_dump(mode="json"),
     )
+    return True

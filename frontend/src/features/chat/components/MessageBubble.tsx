@@ -318,6 +318,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               </div>
             )}
 
+            {!isDeleted && isVoice && message.transcriptionStatus === 'failed' && (
+              <div className="flex flex-wrap items-center gap-2 py-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span>{interactionText(language, 'Transcription unavailable')}</span>
+                <button
+                  type="button"
+                  onClick={() => onRetryTranscription(message.id)}
+                  disabled={isRetryingTranscription}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:cursor-not-allowed disabled:opacity-50 dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"
+                >
+                  <RotateCw className={`h-3 w-3 ${isRetryingTranscription ? 'animate-spin' : ''}`} />
+                  {interactionText(
+                    language,
+                    isRetryingTranscription ? 'Retrying transcription…' : 'Retry transcription',
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Translating Pending State */}
             {isTranslating && (
               <div className="flex items-center gap-1.5 py-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">

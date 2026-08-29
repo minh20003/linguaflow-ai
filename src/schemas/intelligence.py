@@ -29,7 +29,11 @@ class ConversationSummaryRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    message_limit: int = Field(default=50, ge=1, le=100)
+    # Raised from 50/100 when summarisation gained a map-reduce stage
+    # (ADR-38). The old ceiling was set by what one prompt could hold; above
+    # LONG_CONVERSATION_THRESHOLD the work is now split into batches, so the
+    # limit is about cost and latency rather than about the context window.
+    message_limit: int = Field(default=200, ge=1, le=2000)
     target_language: str | None = Field(
         default=None,
         description="Target ISO 639-1 language code (e.g. 'vi', 'en'). Defaults to user's preferred language.",
@@ -172,6 +176,16 @@ class ClarifyProposalRequest(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
 
 class ConfirmProposalRequest(BaseModel):
+    # Approving is where a person adds the detail the message never contained.
+    # The extractor reads what was said — "review thiết kế 10h sáng thứ Tư" — and
+    # nobody says how long beforehand they want to be nudged, so this is asked
+    # at approval rather than guessed from the text.
+    #
+    # Same name and same semantics as `CalendarEventCreateRequest`: omitted
+    # means fifteen minutes, `null` means no reminder at all. Deliberately not a
+    # second convention — a product where the reminder field means one thing on
+    # one screen and another on the next is one nobody can hold in their head.
+    reminder_minutes_before: int | None = Field(default=15, ge=0, le=10080)
     title: str | None = Field(default=None, max_length=255)
     details: str | None = None
     location: str | None = None

@@ -8,6 +8,8 @@ no user-controlled path or converter diagnostics cross the service boundary.
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -114,66 +116,93 @@ class FFmpegAudioConverter:
         )
 
     async def _run_ffmpeg(self, audio_bytes: bytes) -> bytes:
-        process: asyncio.subprocess.Process | None = None
-        feed_task: asyncio.Task[None] | None = None
         async with _FFMPEG_CONCURRENCY:
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *self.command(),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                if process.stdin is None or process.stdout is None:
-                    raise AudioConversionError("Audio preprocessing failed")
-                feed_task = asyncio.create_task(self._write_input(process.stdin, audio_bytes))
-                async with asyncio.timeout(self._timeout_seconds):
-                    output = await self._read_limited(process.stdout)
-                    await feed_task
-                    return_code = await process.wait()
-                if return_code != 0:
-                    raise AudioConversionError("Audio preprocessing failed")
-                return output
-            except TimeoutError:
-                await self._stop_process(process)
-                raise AudioConversionTimeoutError("Audio preprocessing timed out") from None
-            except AudioConversionError:
-                await self._stop_process(process)
-                raise
-            except Exception:  # noqa: BLE001 - FFmpeg details stay private
-                await self._stop_process(process)
-                raise AudioConversionError("Audio preprocessing failed") from None
-            finally:
-                if feed_task is not None and not feed_task.done():
-                    feed_task.cancel()
+            return await asyncio.to_thread(self._run_ffmpeg_sync, audio_bytes)
 
-    async def _read_limited(self, stream: asyncio.StreamReader) -> bytes:
+    def _run_ffmpeg_sync(self, audio_bytes: bytes) -> bytes:
+        """Run FFmpeg outside the event loop while retaining hard byte limits.
+
+        Uvicorn's Windows selector loop does not implement async subprocesses.
+        A worker thread keeps the command shell-free and works identically on
+        Windows and Linux, while the watchdog and chunked reader retain the
+        timeout/output bounds of the previous async implementation.
+        """
+        process: subprocess.Popen[bytes] | None = None
+        writer: threading.Thread | None = None
+        writer_failed = threading.Event()
+        timed_out = threading.Event()
+
+        try:
+            process = subprocess.Popen(  # noqa: S603 - fixed audited command
+                self.command(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if process.stdin is None or process.stdout is None:
+                raise AudioConversionError("Audio preprocessing failed")
+
+            def feed() -> None:
+                try:
+                    process.stdin.write(audio_bytes)
+                    process.stdin.close()
+                except (BrokenPipeError, OSError):
+                    writer_failed.set()
+
+            writer = threading.Thread(target=feed, name="voice-ffmpeg-input", daemon=True)
+            writer.start()
+
+            def expire() -> None:
+                timed_out.set()
+                if process is not None and process.poll() is None:
+                    process.kill()
+
+            timer = threading.Timer(self._timeout_seconds, expire)
+            timer.daemon = True
+            timer.start()
+            try:
+                output = self._read_limited_sync(process.stdout, process)
+                return_code = process.wait()
+            finally:
+                timer.cancel()
+
+            if timed_out.is_set():
+                raise AudioConversionTimeoutError("Audio preprocessing timed out")
+            if writer_failed.is_set() or return_code != 0:
+                raise AudioConversionError("Audio preprocessing failed")
+            return output
+        except AudioConversionError:
+            self._stop_process_sync(process)
+            raise
+        except Exception:  # noqa: BLE001 - FFmpeg details stay private
+            self._stop_process_sync(process)
+            raise AudioConversionError("Audio preprocessing failed") from None
+        finally:
+            if writer is not None:
+                writer.join(timeout=1)
+
+    def _read_limited_sync(
+        self,
+        stream,
+        process: subprocess.Popen[bytes],
+    ) -> bytes:
         chunks: list[bytes] = []
         total = 0
         while True:
             remaining = self._max_output_bytes - total
-            chunk = await stream.read(min(_READ_CHUNK_BYTES, remaining + 1))
+            chunk = stream.read(min(_READ_CHUNK_BYTES, remaining + 1))
             if not chunk:
                 break
             total += len(chunk)
             if total > self._max_output_bytes:
+                self._stop_process_sync(process)
                 raise AudioConversionError("Audio preprocessing failed")
             chunks.append(chunk)
         return b"".join(chunks)
 
     @staticmethod
-    async def _write_input(
-        stream: asyncio.StreamWriter,
-        audio_bytes: bytes,
-    ) -> None:
-        stream.write(audio_bytes)
-        await stream.drain()
-        stream.close()
-        await stream.wait_closed()
-
-    @staticmethod
-    async def _stop_process(process: asyncio.subprocess.Process | None) -> None:
-        if process is None or process.returncode is not None:
+    def _stop_process_sync(process: subprocess.Popen[bytes] | None) -> None:
+        if process is None or process.poll() is not None:
             return
         process.kill()
-        await process.wait()
+        process.wait()

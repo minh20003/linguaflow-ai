@@ -11,9 +11,15 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.config import Settings, get_settings
 
-# Model used when LLM_MODEL is left empty
+# Model used when LLM_MODEL is left empty.
+#
+# These go stale without warning. `llama-3.3-70b-versatile` sat here until Groq
+# withdrew it, and because a failed LLM call is a fallback by design (NFR-02)
+# the symptom was not an error but every message quietly arriving untranslated.
+# Verified against each provider's own model listing on 28/08; when a whole run
+# reports `is_fallback`, check these names before reading any other code.
 DEFAULT_MODELS: dict[str, str] = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "deepseek": "deepseek-chat",
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o-mini",
@@ -250,3 +256,42 @@ def get_llm(
         settings.llm_max_tokens,
         api_key,
     )
+
+
+def get_assistant_llm(settings: Settings | None = None) -> BaseChatModel:
+    """The chat model the Assistant Agent generates with (ADR-39).
+
+    A thin wrapper over `get_llm`, and worth having: resolving the pair and
+    unpacking it at every call site is how one of them ends up passing only the
+    provider, which then silently runs that provider's default model while the
+    evaluation report claims otherwise.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_llm()
+    # Its own token ceiling, not the translator's. See the comment on
+    # `assistant_llm_max_tokens`.
+    return get_llm(
+        settings=settings.model_copy(
+            update={"llm_max_tokens": settings.assistant_llm_max_tokens}
+        ),
+        provider=provider,
+        model=model,
+    )
+
+
+def get_assistant_judge_llm(settings: Settings | None = None) -> BaseChatModel:
+    """The model that scores the Assistant Agent's output in evaluation runs.
+
+    Never used on a request path — a judge is an evaluation instrument, and one
+    that ran in production would double the cost of every reply to produce a
+    number nobody reads.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_judge()
+    return get_llm(settings=settings, provider=provider, model=model)

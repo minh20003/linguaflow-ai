@@ -9,6 +9,8 @@ interface NewConversationModalProps {
   onSelectUser: (user: User) => void;
   onCreateGroupClick: () => void;
   users: User[];
+  /** Máy chủ trả về cho truy vấn hiện tại; null nghĩa là chưa tìm kiếm. */
+  searchResults: User[] | null;
   onSearchUsers: (query: string) => void;
   language: LanguageCode;
 }
@@ -19,6 +21,7 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
   onSelectUser,
   onCreateGroupClick,
   users,
+  searchResults,
   onSearchUsers,
   language,
 }) => {
@@ -26,7 +29,10 @@ export const NewConversationModal: React.FC<NewConversationModalProps> = ({
 
   if (!isOpen) return null;
 
-  const filteredUsers = users.filter(
+  // Khi máy chủ đã trả kết quả thì hiển thị đúng kết quả đó, không lọc lại ở
+  // máy khách: máy chủ có thể khớp trên trường mà bộ lọc dưới đây không đọc
+  // (email chẳng hạn), và lọc thêm một lần nữa sẽ giấu mất người vừa tìm thấy.
+  const filteredUsers = searchResults ?? users.filter(
     (u) =>
       u.name.toLowerCase().includes(search.toLowerCase()) ||
       u.username.toLowerCase().includes(search.toLowerCase()) ||

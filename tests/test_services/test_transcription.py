@@ -7,16 +7,22 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import tenacity
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
+from google.genai._api_client import retry_args
 from pydantic import ValidationError
 
 from src.config import Settings
 from src.database.models import Attachment
 from src.services.attachment_storage import StoredAttachment
 from src.services.audio_conversion import (
+    AudioConversionError,
     AudioConversionTimeoutError,
     PreparedAudio,
 )
 from src.services.transcription import (
+    AudioPreprocessingError,
     BlankTranscriptError,
     GeminiTranscriptionProvider,
     InvalidAudioError,
@@ -24,6 +30,8 @@ from src.services.transcription import (
     TranscriptionResult,
     TranscriptionService,
     TranscriptionTimeoutError,
+    _gemini_interactions_retry_options,
+    _gemini_retry_options,
     get_transcription_service,
     requires_audio_conversion,
     validate_audio_attachment,
@@ -58,14 +66,17 @@ class _FakeProvider:
     def __init__(self, result: TranscriptionResult) -> None:
         self.result = result
         self.calls: list[tuple[bytes, str, str]] = []
+        self.language_hints: list[str | None] = []
 
     async def transcribe(
         self,
         audio_bytes: bytes,
         filename: str,
         content_type: str,
+        language_hint: str | None = None,
     ) -> TranscriptionResult:
         self.calls.append((audio_bytes, filename, content_type))
+        self.language_hints.append(language_hint)
         return self.result
 
 
@@ -380,6 +391,24 @@ async def test_conversion_timeout_is_controlled_and_provider_is_not_called():
 
 
 @pytest.mark.asyncio
+async def test_conversion_failure_is_non_retryable_and_provider_is_not_called():
+    converter = _FakeConverter(error=AudioConversionError("private ffmpeg diagnostics"))
+    service, provider = _service(
+        filename="recording.webm",
+        content_type="audio/webm; codecs=opus",
+        converter=converter,
+    )
+
+    with pytest.raises(AudioPreprocessingError) as exc_info:
+        await service.transcribe_attachment(_attachment())
+
+    assert exc_info.value.failure_code == "audio_preprocessing_failed"
+    assert exc_info.value.retryable is False
+    assert "private ffmpeg" not in str(exc_info.value)
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
 async def test_gemini_uploads_file_and_requests_verbatim_auto_detect_transcription():
     client = _FakeClient(interactions=_FakeInteractions(output_text=f"  {FULL_TRANSCRIPT}\n"))
     result = await _gemini_provider(client).transcribe(
@@ -391,16 +420,13 @@ async def test_gemini_uploads_file_and_requests_verbatim_auto_detect_transcripti
     assert result.detected_language is None
     assert result.model == "gemini-3.5-transcribe"
     assert result.latency_ms >= 0
-    assert client.aio.files.upload_calls == [
-        {
-            "bytes": b"audio-bytes",
-            "filename": "recording.ogg",
-            "config": {
-                "mime_type": "audio/ogg",
-                "display_name": "voice-message-audio",
-            },
-        }
-    ]
+    assert len(client.aio.files.upload_calls) == 1
+    upload_call = client.aio.files.upload_calls[0]
+    assert upload_call["bytes"] == b"audio-bytes"
+    assert upload_call["filename"] == "recording.ogg"
+    assert upload_call["config"]["mime_type"] == "audio/ogg"
+    assert upload_call["config"]["display_name"] == "voice-message-audio"
+    assert upload_call["config"]["http_options"].retry_options.attempts == 3
     assert client.aio.interactions.calls == [
         {
             "model": "gemini-3.5-transcribe",
@@ -426,6 +452,45 @@ async def test_gemini_uploads_file_and_requests_verbatim_auto_detect_transcripti
     assert "live" not in request
     assert client.aio.files.delete_calls == ["files/provider-private-id"]
     assert client.aio.closed is True
+
+
+@pytest.mark.asyncio
+async def test_gemini_request_names_the_language_when_the_sender_has_one():
+    """The sender's preferred_language travels as a hint, not a constraint.
+
+    Pure auto-detection misheard a Vietnamese sample outright — "Chào Bob,
+    chiều mai" came back as "Chị ơi, khi nào bao giờ" — and naming the language
+    fixed it, so the hint has to actually reach the request.
+    """
+    client = _FakeClient()
+    provider = _gemini_provider(client)
+
+    await provider.transcribe(b"audio-bytes", "recording.ogg", "audio/ogg", "vi")
+
+    config = client.aio.interactions.calls[0]["generation_config"]
+    assert config["transcription_config"]["language_codes"] == ["vi"]
+    # Still verbatim: the hint must not quietly change the transcription mode.
+    assert config["transcription_config"]["mode"] == {"type": "verbatim"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_request_falls_back_to_auto_detection_without_a_hint():
+    client = _FakeClient()
+    provider = _gemini_provider(client)
+
+    await provider.transcribe(b"audio-bytes", "recording.ogg", "audio/ogg")
+
+    config = client.aio.interactions.calls[0]["generation_config"]
+    assert config["transcription_config"]["language_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_service_passes_the_language_hint_through_to_the_provider():
+    service, provider = _service()
+
+    await service.transcribe_attachment(_attachment(), "ja")
+
+    assert provider.language_hints == ["ja"]
 
 
 @pytest.mark.asyncio
@@ -502,6 +567,158 @@ async def test_provider_errors_are_controlled_and_cleanup_when_possible(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "failures",
+    [
+        [
+            genai_errors.ServerError(503, {"error": {"status": "UNAVAILABLE"}}),
+            genai_errors.ServerError(503, {"error": {"status": "UNAVAILABLE"}}),
+        ],
+        [genai_errors.ClientError(429, {"error": {"status": "RESOURCE_EXHAUSTED"}})],
+        [httpx.ReadTimeout("private timeout")],
+        [httpx.ConnectError("private network error")],
+    ],
+)
+async def test_configured_sdk_retry_policy_recovers_transient_failures(failures):
+    calls = 0
+    pending = list(failures)
+
+    async def operation():
+        nonlocal calls
+        calls += 1
+        if pending:
+            raise pending.pop(0)
+        return "ok"
+
+    policy = _gemini_retry_options(3)
+    retry = tenacity.AsyncRetrying(**retry_args(policy))
+
+    assert await retry(operation) == "ok"
+    assert calls == len(failures) + 1
+
+
+@pytest.mark.parametrize(("total_attempts", "retries"), [(1, 0), (3, 2)])
+def test_interactions_retry_bridge_keeps_configured_total_attempts(
+    total_attempts,
+    retries,
+):
+    options = genai_types.HttpOptions(
+        retry_options=_gemini_interactions_retry_options(total_attempts)
+    )
+    assert options.retry_options.attempts == retries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("total_attempts", "retries"), [(1, 0), (3, 2)])
+async def test_real_interactions_client_receives_configured_retry_count(
+    total_attempts,
+    retries,
+):
+    provider = GeminiTranscriptionProvider(
+        api_key="provider-secret-key",
+        model="gemini-3.5-transcribe",
+        timeout_seconds=30,
+        retry_attempts=total_attempts,
+    )
+    client = provider._create_client()
+    try:
+        retry_config = client.aio.interactions.sdk_configuration.retry_config
+        assert retry_config.max_retries == retries
+        assert retry_config.status_codes_override == [
+            "408",
+            "429",
+            "500",
+            "502",
+            "503",
+            "504",
+        ]
+    finally:
+        await client.aio.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+async def test_configured_sdk_retry_policy_does_not_retry_permanent_4xx(status):
+    calls = 0
+
+    async def operation():
+        nonlocal calls
+        calls += 1
+        raise genai_errors.ClientError(status, {"error": {"status": "CLIENT_ERROR"}})
+
+    retry = tenacity.AsyncRetrying(**retry_args(_gemini_retry_options(3)))
+
+    with pytest.raises(genai_errors.ClientError):
+        await retry(operation)
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "failure_code", "retryable"),
+    [
+        (400, "provider_invalid_request", False),
+        (401, "provider_authentication_failed", False),
+        (403, "provider_authentication_failed", False),
+        (404, "provider_not_found", False),
+        (429, "rate_limited", True),
+        (500, "provider_unavailable", True),
+        (502, "provider_unavailable", True),
+        (503, "provider_unavailable", True),
+    ],
+)
+async def test_provider_http_errors_expose_only_safe_failure_metadata(
+    status,
+    failure_code,
+    retryable,
+):
+    raw = genai_errors.APIError(
+        status,
+        {"error": {"status": "PRIVATE_STATUS", "message": "secret provider body"}},
+    )
+    client = _FakeClient(files=_FakeFiles(upload_error=raw))
+
+    with pytest.raises(TranscriptionProviderError) as exc_info:
+        await _gemini_provider(client).transcribe(
+            b"secret-audio-bytes",
+            "recording.ogg",
+            "audio/ogg",
+        )
+
+    error = exc_info.value
+    assert error.failure_code == failure_code
+    assert error.stage == "upload"
+    assert error.http_status == status
+    assert error.retryable is retryable
+    assert "secret provider body" not in str(error)
+    assert "secret-audio-bytes" not in str(error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [408, 504])
+async def test_provider_timeout_statuses_keep_safe_retryable_metadata(status):
+    raw = genai_errors.APIError(
+        status,
+        {"error": {"status": "PRIVATE_TIMEOUT", "message": "secret timeout body"}},
+    )
+    client = _FakeClient(interactions=_FakeInteractions(error=raw))
+
+    with pytest.raises(TranscriptionTimeoutError) as exc_info:
+        await _gemini_provider(client).transcribe(
+            b"secret-audio-bytes",
+            "recording.ogg",
+            "audio/ogg",
+        )
+
+    error = exc_info.value
+    assert error.failure_code == "provider_timeout"
+    assert error.stage == "interaction"
+    assert error.http_status == status
+    assert error.retryable is True
+    assert "secret timeout body" not in str(error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("files", "interactions"),
     [
         (_FakeFiles(uploaded_uri=None), _FakeInteractions()),
@@ -569,7 +786,16 @@ async def test_gemini_stt_uses_existing_key_and_is_independent_from_llm_provider
     assert result.text == FULL_TRANSCRIPT
     assert result.model == "gemini-3.5-transcribe"
     assert constructed["api_key"] == "gemini-stt-key"
-    assert constructed["http_options"].timeout == 60_000
+    http_options = constructed["http_options"]
+    assert http_options.timeout == 60_000
+    # The pinned Interactions bridge interprets this field as retry count, not
+    # total attempts; 2 retries plus the initial call preserves the public 3.
+    assert http_options.retry_options.attempts == 2
+    assert http_options.retry_options.initial_delay == 1.0
+    assert http_options.retry_options.max_delay == 8.0
+    assert http_options.retry_options.exp_base == 2.0
+    assert http_options.retry_options.jitter == 1.0
+    assert http_options.retry_options.http_status_codes == [408, 429, 500, 502, 503, 504]
     assert settings.llm_provider == "openai"
     assert settings.openai_api_key == "translation-role-key"
     assert settings.groq_api_key == ""
@@ -595,7 +821,12 @@ def test_stt_defaults_and_timeout_bound_are_configuration_contracts():
     assert Settings.model_fields["stt_provider"].default == "gemini"
     assert Settings.model_fields["stt_model"].default == "gemini-3.5-transcribe"
     assert Settings.model_fields["stt_timeout_seconds"].default == 60
+    assert Settings.model_fields["stt_retry_attempts"].default == 3
     with pytest.raises(ValidationError):
         Settings(jwt_secret=VALID_SECRET, stt_timeout_seconds=0)
     with pytest.raises(ValidationError):
         Settings(jwt_secret=VALID_SECRET, stt_timeout_seconds=301)
+    with pytest.raises(ValidationError):
+        Settings(jwt_secret=VALID_SECRET, stt_retry_attempts=0)
+    with pytest.raises(ValidationError):
+        Settings(jwt_secret=VALID_SECRET, stt_retry_attempts=6)

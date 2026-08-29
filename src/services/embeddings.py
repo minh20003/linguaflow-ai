@@ -26,6 +26,60 @@ from src.database.models import EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
 
+# Set by `preload_local_models()`, and false until it has run. Everything that
+# would reach for a local model consults it first, so a process that never
+# preloaded degrades to the remote providers instead of importing torch under a
+# running event loop.
+_LOCAL_MODELS_READY = False
+
+
+class LocalModelsUnavailableError(RuntimeError):
+    """Raised instead of importing torch on a thread that must not."""
+
+
+def preload_local_models() -> bool:
+    """Import `sentence-transformers` while there is no event loop running.
+
+    Both local-model paths in this project — the assistant's cross-encoder and
+    this module's `local` embedding fallback — used to import it lazily on first
+    use, from inside a request. On Windows that killed the process outright: the
+    import pulls torch, whose extension modules abort with an access violation
+    when first loaded under a running asyncio loop. An access violation is not a
+    Python exception, so the `try`/`except` guarding those imports never saw it;
+    the server simply vanished mid-request, taking every open WebSocket with it.
+
+    Call this at import time from the application entry point, before uvicorn
+    starts its loop. Returns whether the package is actually there: a deployment
+    that has not installed it (ADR-18) gets False and skips both features, which
+    is the behaviour it already had.
+
+    Never inside a test run, for the reason the fallback below already gives: by
+    the time `conftest.py` imports the application the session has loaded plenty
+    else, which is the ordering that makes the torch import abort. Tests that
+    mean to exercise a local model construct it explicitly.
+    """
+    global _LOCAL_MODELS_READY
+    if "pytest" in sys.modules:
+        _LOCAL_MODELS_READY = False
+        return False
+    try:
+        import sentence_transformers  # noqa: F401
+
+        _LOCAL_MODELS_READY = True
+    except Exception:
+        logger.info(
+            "sentence-transformers is not installed; assistant reranking and "
+            "the local embedding fallback are unavailable and will be skipped."
+        )
+        _LOCAL_MODELS_READY = False
+    return _LOCAL_MODELS_READY
+
+
+def local_models_ready() -> bool:
+    """Whether a local model may be constructed on this process."""
+    return _LOCAL_MODELS_READY
+
+
 # Model used when EMBEDDING_MODEL is left empty. All three are multilingual;
 # the widths differ, which is exactly why the width is pinned in the schema and
 # checked below rather than trusted.
@@ -95,9 +149,71 @@ def _build_client(provider: str, model: str, api_key: str) -> Any:
 
         return OpenAIEmbeddings(model=model, api_key=api_key, dimensions=EMBEDDING_DIM)
 
+    # `HuggingFaceEmbeddings` imports sentence-transformers, and therefore torch,
+    # which aborts the process outright when it is first imported from inside a
+    # running event loop. `preload_local_models()` does that import at startup;
+    # if it has not run, this provider is unavailable rather than fatal — a
+    # missing local fallback costs semantic glossary matching, while the crash
+    # cost every open WebSocket on the server.
+    if not local_models_ready():
+        raise LocalModelsUnavailableError(
+            "The local embedding provider needs sentence-transformers imported "
+            "before the event loop starts; see preload_local_models()."
+        )
+
     from langchain_huggingface import HuggingFaceEmbeddings
 
     return HuggingFaceEmbeddings(model_name=model)
+
+
+def with_embedding(
+    settings: Settings, provider: str, model: str = ""
+) -> Settings:
+    """A copy of ``settings`` that embeds with a different model.
+
+    Overriding the *settings* rather than threading `provider` and `model`
+    arguments through `embed`, `embed_with_model`, `embedding_model_name` and
+    `get_embedder` keeps one rule in one place: whichever model a Settings names
+    is the model every function reads. The quota fallback below already works
+    this way, and a second mechanism beside it would be one more thing to keep
+    in agreement.
+
+    It also replaces `object.__setattr__` on the cached singleton, which the
+    sweep script resorted to: that mutates the configuration every *other* caller
+    in the process is reading, so a measurement could change the behaviour of the
+    thing it was measuring.
+
+    Args:
+        settings: The configuration to base the copy on.
+        provider: Provider to embed with. Empty keeps the current one.
+        model: Model on that provider. Empty means the provider's default.
+    """
+    if not provider or provider == settings.embedding_provider:
+        if not model or model == settings.embedding_model:
+            return settings
+    return settings.model_copy(
+        update={
+            "embedding_provider": provider or settings.embedding_provider,
+            "embedding_model": model,
+        }
+    )
+
+
+def assistant_embedding_settings(settings: Settings | None = None) -> Settings:
+    """Configuration that embeds with the Assistant Agent's own model (ADR-39).
+
+    The assistant's retrieval accuracy requirement is far above what the
+    translation path needed, so it may run a different — usually larger and
+    slower — embedding model. Its vectors live in `assistant_chunks`, never in
+    `message_embeddings`, so the two never have to share a space.
+
+    Every caller that embeds for the assistant must go through this, including
+    the query side: a chunk stored by one model and a query embedded by another
+    produce a ranking that looks fine and is meaningless.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_embedding()
+    return with_embedding(settings, provider, model)
 
 
 def get_embedder(settings: Settings | None = None) -> Any:

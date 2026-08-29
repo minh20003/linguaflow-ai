@@ -498,9 +498,12 @@ async def websocket_endpoint(
                             sender_id=user_id,
                         ).model_dump(mode="json"),
                     )
-                if any(
-                    mention.get("type") == "assistant" for mention in realtime_message.mentions
-                ) and await has_consent(db, user_id, "read_conversations"):
+                # Same predicate `ChatService` used when it decided to keep this
+                # message private. The two must agree: a message hidden from the
+                # conversation but not answered would simply disappear.
+                if result.for_assistant and await has_consent(
+                    db, user_id, "read_conversations"
+                ):
                     # The reply itself reads recent conversation content and
                     # sends it to an LLM, so it needs the same permission the
                     # extraction path does. Without it the tag is simply an

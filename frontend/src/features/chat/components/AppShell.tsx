@@ -32,6 +32,8 @@ import {
   listAttachments,
   listConversations,
   listUsers,
+  confirmActionProposal,
+  rejectActionProposal,
   markRead,
   rejectCall,
   removeGroupMember,
@@ -80,6 +82,7 @@ import {
   type VoiceTranscriptionFailedPayload,
 } from "../message-events";
 import { VoiceRecorderError, type VoiceRecorderStage } from "../voice-recorder";
+import { VoiceStatusRefreshScheduler } from "../voice-status-refresh";
 import { interactionText } from "../i18n";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -87,6 +90,7 @@ import { ContactsPanel } from "./ContactsPanel";
 import { GroupsPanel } from "./GroupsPanel";
 import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
+import { isAwaitingDecision } from "../proposal-approval";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
 import { TaskInboxPanel } from "./TaskInboxPanel";
@@ -211,10 +215,13 @@ export const AppShell: React.FC = () => {
   const soundEnabledRef = useRef(true);
   const [pendingTaskCount, setPendingTaskCount] = useState(0);
   const [incomingProposals, setIncomingProposals] = useState<ApiActionProposal[]>([]);
+  const [proposalBusyId, setProposalBusyId] = useState<string | null>(null);
   // A counter rather than a boolean: two calendar changes in a row must
   // both trigger a reload, and a boolean flipped twice reads as unchanged.
   const [calendarRefreshCount, setCalendarRefreshCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
+  // null = chưa tìm kiếm, hiển thị danh bạ. Mảng = kết quả tìm kiếm của máy chủ.
+  const [userSearchResults, setUserSearchResults] = useState<User[] | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [attachmentsMap, setAttachmentsMap] = useState<Record<string, MessageAttachment[]>>({});
@@ -234,19 +241,17 @@ export const AppShell: React.FC = () => {
     () => new Set(),
   );
   const retryingTranscriptionIdsRef = useRef<Set<string>>(new Set());
-  const retryHistoryRefreshTimersRef = useRef<Set<number>>(new Set());
+  const voiceStatusRefreshSchedulerRef = useRef<VoiceStatusRefreshScheduler | null>(null);
+  if (voiceStatusRefreshSchedulerRef.current === null) {
+    voiceStatusRefreshSchedulerRef.current = new VoiceStatusRefreshScheduler();
+  }
   const selectedConversationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
 
-  useEffect(() => () => {
-    for (const timer of retryHistoryRefreshTimersRef.current) {
-      window.clearTimeout(timer);
-    }
-    retryHistoryRefreshTimersRef.current.clear();
-  }, []);
+  useEffect(() => () => voiceStatusRefreshSchedulerRef.current?.clear(), []);
 
   const addToast = useCallback((title: string, message?: string, type: ToastItem["type"] = "info") => {
     const id = `toast_${Date.now()}`;
@@ -280,6 +285,13 @@ export const AppShell: React.FC = () => {
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const activeConversation = isAssistantChatOpen ? assistantConversation : selectedConversation;
   const activeConversationId = activeConversation?.id ?? null;
+  // Only the undecided ones, and only for the thread on screen. A proposal
+  // already approved from the inbox must not reappear here asking again.
+  const currentProposals = activeConversationId
+    ? incomingProposals.filter(
+        (proposal) => proposal.conversation_id === activeConversationId && isAwaitingDecision(proposal),
+      )
+    : [];
   const currentMessages = activeConversationId ? messagesMap[activeConversationId] ?? [] : [];
   const currentAttachments = activeConversationId ? attachmentsMap[activeConversationId] ?? [] : [];
   const usersById = useMemo(() => new Map([currentUser, ...users].filter((user) => user.id).map((user) => [user.id, user])), [currentUser, users]);
@@ -378,23 +390,21 @@ export const AppShell: React.FC = () => {
     setUsers((previous) => JSON.stringify(previous) === JSON.stringify(nextUsers) ? previous : nextUsers);
   }, [currentUser.id, settings.interfaceLanguage]);
 
-  const scheduleVoiceRetryHistoryRefresh = useCallback((conversationId: string) => {
-    // The retry endpoint returns after it has durably set `pending`, while the
-    // detached STT task can finish later. Rehydrate a few bounded times so a
-    // missed WebSocket terminal event cannot leave this bubble pending forever.
-    for (const delayMilliseconds of [2_000, 8_000, 20_000]) {
-      const timer = window.setTimeout(() => {
-        retryHistoryRefreshTimersRef.current.delete(timer);
-        void Promise.all([
-          loadConversationMessages(conversationId),
+  const cancelVoiceStatusRefresh = useCallback((messageId: string) => {
+    voiceStatusRefreshSchedulerRef.current?.cancel(messageId);
+  }, []);
+
+  const scheduleVoiceStatusRefresh = useCallback((messageId: string, conversationId: string) => {
+    voiceStatusRefreshSchedulerRef.current?.schedule(
+      messageId,
+      conversationId,
+      async (targetConversationId) => {
+        await Promise.all([
+          loadConversationMessages(targetConversationId),
           refreshConversations(),
-        ]).catch(() => {
-          // Reconnect/history hydration remains available if this transient
-          // refresh fails; do not replace the durable retry result with a toast.
-        });
-      }, delayMilliseconds);
-      retryHistoryRefreshTimersRef.current.add(timer);
-    }
+        ]);
+      },
+    );
   }, [loadConversationMessages, refreshConversations]);
 
   useEffect(() => {
@@ -529,6 +539,9 @@ export const AppShell: React.FC = () => {
                 : { ...previous, [mapped.conversationId]: [mappedAttachment, ...existing] };
             });
           }
+          if (mapped.messageType === "voice" && mapped.transcriptionStatus === "pending") {
+            scheduleVoiceStatusRefresh(mapped.id, mapped.conversationId);
+          }
           void refreshConversations();
         }
         // The assistant found something the user may want on their calendar.
@@ -571,6 +584,7 @@ export const AppShell: React.FC = () => {
             original_text: String(payload.original_text),
             transcription_status: "completed",
           };
+          cancelVoiceStatusRefresh(transcriptionEvent.message_id);
           setMessagesMap((previous) => ({
             ...previous,
             [transcriptionEvent.conversation_id]: applyVoiceTranscriptionCompleted(
@@ -593,6 +607,7 @@ export const AppShell: React.FC = () => {
             transcription_status: "failed",
             retryable: Boolean(payload.retryable),
           };
+          cancelVoiceStatusRefresh(transcriptionEvent.message_id);
           setMessagesMap((previous) => ({
             ...previous,
             [transcriptionEvent.conversation_id]: applyVoiceTranscriptionFailed(
@@ -671,9 +686,9 @@ export const AppShell: React.FC = () => {
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
         if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
-        if (eventType === "action_proposal_created") addToast("Đề xuất từ Trợ lý", "Trợ lý đã tạo đề xuất chờ bạn xác nhận trong Lịch cá nhân.", "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
+          if (eventType === "message_deleted") cancelVoiceStatusRefresh(messageId);
           setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? {
             ...item,
             content: eventType === "message_deleted" ? "This message was deleted" : payload.original_text as string,
@@ -707,7 +722,7 @@ export const AppShell: React.FC = () => {
     };
     connect();
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
-  }, [addToast, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
+  }, [addToast, cancelVoiceStatusRefresh, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, scheduleVoiceStatusRefresh, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   useEffect(() => { soundEnabledRef.current = settings.soundEnabled; }, [settings.soundEnabled]);
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
@@ -811,9 +826,54 @@ export const AppShell: React.FC = () => {
     });
   };
 
+  // Results go to their own state, never into `users`.
+  //
+  // `users` is the contact list derived from existing conversations, and
+  // `refreshConversations` rewrites it on every socket event — a message, a
+  // translation finishing, someone typing. While the picker was open that
+  // rewrite landed on top of whatever the search had just returned, so the list
+  // flickered between two different sets and a row moved out from under the
+  // pointer before the click landed. Keeping the two apart is the fix: an
+  // arriving translation can no longer disturb a search in progress.
+  /** Decide on a proposal without leaving the conversation.
+   *
+   *  The row is dropped from the in-chat list on success rather than left
+   *  showing a decided state: the card exists to ask a question, and once it is
+   *  answered the answer belongs on the calendar, not in the transcript. The
+   *  task inbox reloads from the server and shows the outcome there.
+   */
+  const decideProposal = async (
+    proposal: ApiActionProposal,
+    run: () => Promise<ApiActionProposal>,
+    success: string,
+  ) => {
+    if (!token.current) return;
+    setProposalBusyId(proposal.id);
+    try {
+      const decided = await run();
+      setIncomingProposals((current) =>
+        current.map((item) => (item.id === decided.id ? decided : item)),
+      );
+      addToast(success, proposal.title, "success");
+    } catch (error) {
+      addToast(
+        "Không thực hiện được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      setProposalBusyId(null);
+    }
+  };
+
   const searchUsers = async (query: string) => {
-    if (!token.current || query.trim().length < 2) return;
-    try { setUsers((await listUsers(token.current, query.trim())).map(toChatUser)); }
+    if (!token.current) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setUserSearchResults(null);
+      return;
+    }
+    try { setUserSearchResults((await listUsers(token.current, trimmed)).map(toChatUser)); }
     catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
@@ -1024,7 +1084,7 @@ export const AppShell: React.FC = () => {
         // can still recover its persisted terminal state after a transient
         // history request failure.
       }
-      scheduleVoiceRetryHistoryRefresh(result.conversation_id);
+      scheduleVoiceStatusRefresh(result.message_id, result.conversation_id);
       void refreshConversations();
     } catch {
       addToast(
@@ -1240,6 +1300,10 @@ export const AppShell: React.FC = () => {
         <TaskInboxPanel
           token={accessToken}
           incoming={incomingProposals}
+          onProposalChanged={(proposal, removed) =>
+            setIncomingProposals((current) => removed
+              ? current.filter((item) => item.id !== proposal.id)
+              : current.map((item) => (item.id === proposal.id ? proposal : item)))}
           onCountChange={setPendingTaskCount}
           onNotify={addToast}
         />
@@ -1273,6 +1337,18 @@ export const AppShell: React.FC = () => {
         onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
         onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
+        pendingProposals={currentProposals}
+        proposalBusyId={proposalBusyId}
+        onApproveProposal={(proposal, corrections) => void decideProposal(
+          proposal,
+          () => confirmActionProposal(token.current!, proposal.id, corrections),
+          "Đã duyệt và thêm vào lịch",
+        )}
+        onRejectProposal={(proposal) => void decideProposal(
+          proposal,
+          () => rejectActionProposal(token.current!, proposal.id),
+          "Đã từ chối",
+        )}
         onStartCall={(type) => void initiateCall(type)}
         language={settings.interfaceLanguage}
         attachments={currentAttachments}
@@ -1291,7 +1367,7 @@ export const AppShell: React.FC = () => {
         assistantMode={isAssistantChatOpen}
       />}
     </div>
-    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
+    <NewConversationModal isOpen={isNewChatOpen} onClose={() => { setIsNewChatOpen(false); setUserSearchResults(null); }} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} searchResults={userSearchResults} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} agentConsents={agentConsents} agentConsentsAnswered={agentConsentsAnswered} onUpdateAgentConsents={handleUpdateAgentConsents} />
     <CallModal

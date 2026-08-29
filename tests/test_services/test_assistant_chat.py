@@ -132,14 +132,21 @@ async def test_assistant_reply_uses_safe_fallback_when_provider_fails(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_assistant_reply_is_private_while_request_remains_public(
+async def test_tagging_the_assistant_hides_the_request_from_everyone_else(
     conversation_factory,
     monkeypatch,
     test_db,
     test_user,
     test_user_two,
 ):
-    """The request is shared; only the assistant's generated reply is private."""
+    """Both halves of an exchange with the assistant are private, not just the reply.
+
+    This reverses an earlier rule under which the request stayed public. Hiding
+    only the answer showed the rest of the conversation one half of an exchange
+    it was not part of: everyone could read what somebody had asked the
+    assistant, and nothing of what came back. The people around you should not
+    learn that you consulted it at all.
+    """
     conversation = await conversation_factory(test_user, [test_user_two])
     service = ChatService(test_db)
     result = await service.send_message(
@@ -150,14 +157,16 @@ async def test_assistant_reply_is_private_while_request_remains_public(
         mentions=[{"type": "assistant"}],
     )
 
-    assert result.recipient_ids == (test_user_two.id,)
-    assert result.message.visible_to_user_id is None
+    assert result.for_assistant is True
+    assert result.recipient_ids == ()
+    assert result.message.visibility == "private"
+    assert result.message.visible_to_user_id == test_user.id
     assert [message.id for message in await service.get_message_history(
         user_id=test_user.id, conversation_id=conversation.id
     )] == [result.message.id]
-    assert [message.id for message in await service.get_message_history(
+    assert await service.get_message_history(
         user_id=test_user_two.id, conversation_id=conversation.id
-    )] == [result.message.id]
+    ) == []
 
     monkeypatch.setattr(
         service,
@@ -169,9 +178,78 @@ async def test_assistant_reply_is_private_while_request_remains_public(
     assert reply.recipient_ids == (test_user.id,)
     assert reply.message.visible_to_user_id == test_user.id
     assert reply.message.assistant_generated is True
+    # Requester sees both halves; the other member sees neither.
     assert len(await service.get_message_history(
         user_id=test_user.id, conversation_id=conversation.id
     )) == 2
+    assert await service.get_message_history(
+        user_id=test_user_two.id, conversation_id=conversation.id
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_replying_to_an_assistant_message_is_also_addressed_to_it(
+    conversation_factory,
+    test_db,
+    test_user,
+    test_user_two,
+):
+    """A follow-up needs no second tag, and is hidden the same way.
+
+    Once the assistant has answered, hitting reply on that answer is the natural
+    next turn; requiring `@assistant` again on every turn makes talking to it
+    feel like operating a machine.
+    """
+    conversation = await conversation_factory(test_user, [test_user_two])
+    service = ChatService(test_db)
+    tagged = await service.send_message(
+        sender_id=test_user.id,
+        conversation_id=conversation.id,
+        client_message_id="assistant-thread-1",
+        text="@assistant Tóm tắt cuộc trao đổi này",
+        mentions=[{"type": "assistant"}],
+    )
+    reply = await service.create_assistant_reply(trigger_message=tagged.message)
+
+    follow_up = await service.send_message(
+        sender_id=test_user.id,
+        conversation_id=conversation.id,
+        client_message_id="assistant-thread-2",
+        text="Chi tiết hơn phần deadline giúp mình",
+        reply_to_message_id=reply.message.id,
+    )
+
+    assert follow_up.for_assistant is True
+    assert follow_up.recipient_ids == ()
+    assert follow_up.message.visible_to_user_id == test_user.id
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_group_message_is_not_treated_as_talking_to_the_assistant(
+    conversation_factory,
+    test_db,
+    test_user,
+    test_user_two,
+):
+    """The guard that keeps the previous two rules from swallowing normal chat.
+
+    A message that neither tags the assistant nor answers it belongs to the
+    people in the conversation. Getting this wrong would hide someone's message
+    from their colleagues and answer it as though it had been a question.
+    """
+    conversation = await conversation_factory(test_user, [test_user_two])
+    service = ChatService(test_db)
+    plain = await service.send_message(
+        sender_id=test_user.id,
+        conversation_id=conversation.id,
+        client_message_id="ordinary-1",
+        text="Chiều nay mình họp lúc 3 giờ nhé",
+    )
+
+    assert plain.for_assistant is False
+    assert plain.recipient_ids == (test_user_two.id,)
+    assert plain.message.visibility == "public"
     assert [message.id for message in await service.get_message_history(
         user_id=test_user_two.id, conversation_id=conversation.id
-    )] == [result.message.id]
+    )] == [plain.message.id]
+

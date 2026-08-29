@@ -5,6 +5,90 @@ Wires the CORS middleware, the REST router and the WebSocket router — both und
 reached through the chat flow, not from here; see `src/agents/graph.py`.
 """
 
+# ruff: noqa: E402 - the guarded `sentence_transformers` import below has to
+# run before every other import in this file. See the comment on it.
+
+import os
+import sys
+from pathlib import Path
+
+# Same file `Settings` reads (`src/config.py` anchors it the same way). Resolved
+# from this module rather than the working directory: a service started with a
+# cwd other than the repo root would otherwise read no `.env` here while
+# `Settings` read the real one, and the two would disagree about what is on.
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+# Before every other import in this file, deliberately, and before anything
+# under `src.` in particular.
+#
+# `sentence-transformers` pulls torch, and on Windows torch's extension modules
+# abort the process with an access violation — not a Python exception, so no
+# `try`/`except` anywhere can catch it — if any part of this application's
+# import graph is already loaded when they initialise. Measured: importing
+# `sentence_transformers` before `src.main` succeeds, after it aborts, and the
+# usual `KMP_DUPLICATE_LIB_OK` workaround does not help.
+#
+# The reranker and the local embedding fallback both used to import it lazily,
+# from inside a request. That is how a second question to the assistant killed
+# the server outright, taking every open WebSocket with it.
+#
+# The setting is read from the raw environment here rather than through
+# `Settings`, because importing `src.config` is already too late.
+def _setting_before_config_is_importable(name: str, default: str) -> str:
+    """Read one setting without importing anything from `src`."""
+    raw = os.environ.get(name)
+    if raw is None:
+        try:
+            with open(_ENV_FILE, encoding="utf-8") as handle:
+                for line in handle:
+                    key, _, value = line.partition("=")
+                    if key.strip() == name:
+                        raw = value
+                        break
+        except OSError:
+            raw = None
+    return (raw if raw is not None else default).strip().strip('"').strip("'")
+
+
+def _local_models_wanted() -> bool:
+    """Whether anything in this deployment may need a local model.
+
+    Two features want one, not just the reranker: the assistant's cross-encoder,
+    and the `local` embedding provider — used either directly or as the quota
+    fallback ADR-25 added, which is the whole point of that safety net. Gating
+    the import on the reranker alone meant `ASSISTANT_RERANK_ENABLED=false`
+    silently took the embedding fallback down with it, so a deployment that
+    turned off reranking lost semantic glossary matching the next time the
+    embedding provider hit its quota — with nothing in the logs naming the flag
+    that caused it.
+
+    Always false under pytest, for the reason `embeddings.py` already gives
+    about its own fallback: by the time `conftest.py` imports this module the
+    test session has loaded plenty else, which is exactly the ordering that
+    makes the torch import abort — and a suite that quietly pulls half a
+    gigabyte is one nobody will run twice. Tests that mean to exercise a local
+    model construct it explicitly.
+    """
+    if "pytest" in sys.modules:
+        return False
+    off = {"0", "false", "no", "off"}
+    if _setting_before_config_is_importable("ASSISTANT_RERANK_ENABLED", "true").lower() not in off:
+        return True
+    return "local" in {
+        _setting_before_config_is_importable("EMBEDDING_PROVIDER", "gemini").lower(),
+        _setting_before_config_is_importable("EMBEDDING_FALLBACK_PROVIDER", "local").lower(),
+    }
+
+
+if _local_models_wanted():
+    try:
+        import sentence_transformers  # noqa: F401
+    except Exception:  # pragma: no cover - depends on what is installed
+        # Absent is fine and expected on an image built without it (ADR-18):
+        # `preload_local_models()` reports it and both features stay off.
+        pass
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -28,9 +112,26 @@ from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
 from src.database import get_db
 from src.services.agent_consent import ConsentRequiredError
+from src.services.embeddings import preload_local_models
 from src.services.reminder_scheduler import start_reminder_scheduler
 
 logger = logging.getLogger(__name__)
+
+# Records whether the guarded import at the top of this file succeeded, so the
+# reranker and the local embedding fallback both know whether they may build a
+# model. Cheap here: the module is already in `sys.modules` or already known to
+# be absent.
+#
+# The condition must stay in step with `_local_models_wanted()` above. Setting
+# the flag for a feature whose import was skipped would send that feature back
+# to importing torch itself, from inside a request — the crash this whole
+# arrangement exists to prevent.
+_settings = get_settings()
+if _settings.assistant_rerank_enabled or "local" in {
+    _settings.embedding_provider,
+    _settings.embedding_fallback_provider,
+}:
+    preload_local_models()
 
 
 @asynccontextmanager
