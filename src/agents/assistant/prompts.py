@@ -54,8 +54,14 @@ Available tools, and nothing else:
   two meetings, two reports — set "clarification" and return no steps. Choosing
   one and acting on it is the worst outcome available, because the person will
   not know you chose.
-- Never invent a time. If a time was said as "tomorrow morning" and no timezone
-  is known, ask for it instead of resolving it yourself.
+- Resolve a relative date against the moment the request was sent, given to you
+  above. "Mai", "ngày kia", "thứ Sáu tuần này", "tomorrow" are all answerable
+  from it, and asking what day somebody meant when they have just told you is
+  the kind of exchange that makes an assistant tiring to use.
+- Still never invent a time nobody stated. If the request names no time at all,
+  propose without one rather than choosing an hour: the owner is asked for it
+  at approval, where they can also correct anything you did resolve. Ask only
+  when the message is genuinely ambiguous about *which* occasion is meant.
 - When the tools have already returned what the request needs, set "done": true
   and return no steps. Repeating a call you have already made returns the same
   answer and spends another round.
@@ -74,6 +80,7 @@ def build_planner_user_prompt(
     has_memory: bool,
     observations: list[dict] | None = None,
     replans_left: int = 0,
+    sent_at: str = "",
 ) -> str:
     """Render the planner's user turn around the untrusted request.
 
@@ -90,6 +97,11 @@ def build_planner_user_prompt(
         replans_left: How many more rounds are available. Stated plainly because
             a planner that does not know it is on its last round will keep
             gathering, and the run ends with a full context and no answer.
+        sent_at: When the request was written, ISO-8601. Without it the planner
+            has no clock at all, so every relative time — "mai", "ngày kia",
+            "thứ Sáu" — was unresolvable and the rule against inventing one left
+            asking as the only move. Somebody who says "đặt lịch ngày kia" was
+            then asked what day they meant, forever.
     """
     context_note = (
         "Recent conversation is available to the tools."
@@ -97,7 +109,14 @@ def build_planner_user_prompt(
         else "No earlier conversation was found; tools will have little to work with."
     )
 
-    blocks = [context_note, f"<request>\n{request_text}\n</request>"]
+    blocks = [context_note]
+    if sent_at:
+        blocks.append(
+            f"The request was sent at {sent_at}. Resolve relative dates against "
+            "this instant: it is the sender's own clock, so reading a date off "
+            "it is reading what they wrote rather than guessing."
+        )
+    blocks.append(f"<request>\n{request_text}\n</request>")
 
     for index, observation in enumerate(observations or [], start=1):
         status = "ok" if observation.get("ok") else "failed"

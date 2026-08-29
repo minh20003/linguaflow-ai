@@ -66,6 +66,10 @@ class AssistantState(TypedDict, total=False):
     conversation_id: str
     user_id: str
     request_text: str
+    # When the request was written, ISO-8601. The planner's only clock: without
+    # it every relative date was unresolvable, so "đặt lịch ngày kia" could only
+    # ever be answered by asking which day was meant.
+    sent_at: str
     # IANA name from the client. Needed before a relative time like "sáng mai"
     # can be resolved at all, and never guessed: `normalize_action_time` refuses
     # rather than inventing an offset.

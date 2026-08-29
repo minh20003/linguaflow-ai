@@ -35,11 +35,31 @@ async def detect_self_commitments(
     clean_text = message_text.strip()
     if not clean_text:
         return []
-    # Deterministic safety gate: do not let a model promote questions,
-    # third-person statements, conditionals, hedges, or completed actions.
+    # Deterministic gate, ahead of the model. Two jobs: keep questions,
+    # conditionals and finished actions out, and keep the cost of scanning every
+    # message down by not calling a model on the great majority that commit to
+    # nothing.
+    #
+    # The positive list covers appointments as well as first-person promises.
+    # Restricted to "sẽ"/"I will" it rejected the commonest way a time actually
+    # gets settled in chat -- "Ok chốt nhé, 3h chiều thứ Sáu họp ở phòng A"
+    # contains no "sẽ" at all -- so nothing in a real conversation was ever
+    # examined. The list stays a cheap pre-filter, not the decision: the model
+    # still judges every message that gets past it, and rule 2 of its prompt is
+    # what actually rejects a request aimed at somebody else.
     lowered = clean_text.casefold()
-    negatives = ("maybe", "if i ", "i sent", "john will", "bạn gửi", "you send", "nếu tôi", "đã gửi")
-    positives = ("i'll", "i will", "i am going to", "tôi sẽ", "mình sẽ", "em sẽ", "anh sẽ", "tối nay mình")
+    negatives = (
+        "maybe", "if i ", "i sent", "john will", "bạn gửi", "you send", "nếu tôi", "đã gửi",
+        "hôm qua", "vừa xong", "yesterday", "đã họp",
+    )
+    positives = (
+        # A promise the sender makes.
+        "i'll", "i will", "i am going to", "let me ",
+        "tôi sẽ", "mình sẽ", "em sẽ", "anh sẽ", "tớ sẽ", "để tôi", "để mình", "mình nhận",
+        # A time being settled. These carry the appointments the old list missed.
+        "chốt", "hẹn", "họp", "gặp", "lịch", "meeting", "let's meet", "see you",
+        "appointment", "schedule",
+    )
     if any(token in lowered for token in negatives) or not any(token in lowered for token in positives):
         return []
 

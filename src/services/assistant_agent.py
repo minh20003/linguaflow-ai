@@ -26,13 +26,16 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.assistant import build_assistant_graph
+from src.database.models import Message
 from src.services.assistant_telemetry import record_attempt
 
 logger = logging.getLogger(__name__)
@@ -115,6 +118,17 @@ class AssistantAgentService:
             to resume — `None` when the run completed.
         """
         thread_id = str(uuid.uuid4())
+        # When the request was written, so the planner can resolve "mai" and
+        # "ngày kia" instead of asking what day was meant. Read from the source
+        # message where there is one, because a message may be planned for
+        # slightly after it was sent; otherwise now.
+        sent_at = datetime.now(UTC)
+        if source_message_id:
+            written = await self._db.scalar(
+                select(Message.created_at).where(Message.id == source_message_id)
+            )
+            if written is not None:
+                sent_at = written
         graph = build_assistant_graph(db=self._db, checkpointer=_CHECKPOINTER)
         started = time.perf_counter()
         state = await graph.ainvoke(
@@ -122,6 +136,7 @@ class AssistantAgentService:
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "request_text": request_text,
+                "sent_at": sent_at.isoformat(),
                 "telemetry": {"source_message_id": source_message_id},
             },
             # The thread id and the trace callback travel in the same config.

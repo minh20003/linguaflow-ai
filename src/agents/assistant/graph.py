@@ -284,6 +284,7 @@ def make_plan(
             has_memory=bool(state.get("memory")),
             observations=observations,
             replans_left=max(MAX_REPLANS - replan_count - 1, 0),
+            sent_at=str(state.get("sent_at", "")),
         )
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
