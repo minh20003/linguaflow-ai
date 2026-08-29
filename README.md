@@ -6,8 +6,8 @@ Realtime multilingual chat with context-aware AI translation. Users chat in thei
 
 | | |
 |---|---|
-| App | https://linguaflow-4-u3.vercel.app |
-| API health | https://linguaflow-api-production.up.railway.app/health |
+| App | https://c3-lingua-flow-217.dquangminh2003.id.vn |
+| API health | https://api-c3-lingua-flow-217.dquangminh2003.id.vn/health |
 
 Sign up with your own email — registration sends a one-time code — or use the
 seeded demo accounts in [Development Accounts](#development-accounts) below.
@@ -264,9 +264,9 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment instructions.
 
 Summary:
-- **Frontend**: Vercel (root directory: `frontend-v1/`)
-- **Backend**: Railway with Docker
-- **Database**: Railway PostgreSQL
+- **Runtime**: Ubuntu VPS with Docker Compose and Caddy
+- **Frontend + Backend**: immutable GHCR images in the production Compose contract (CD-1; publication/deployment workflow comes later)
+- **Database**: local PostgreSQL + pgvector durable volume
 - **Observability**: Braintrust (optional, default) or Langfuse
 
 ## Security Note
