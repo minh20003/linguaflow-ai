@@ -215,6 +215,8 @@ export const AppShell: React.FC = () => {
   // both trigger a reload, and a boolean flipped twice reads as unchanged.
   const [calendarRefreshCount, setCalendarRefreshCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
+  // null = chưa tìm kiếm, hiển thị danh bạ. Mảng = kết quả tìm kiếm của máy chủ.
+  const [userSearchResults, setUserSearchResults] = useState<User[] | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [attachmentsMap, setAttachmentsMap] = useState<Record<string, MessageAttachment[]>>({});
@@ -810,9 +812,23 @@ export const AppShell: React.FC = () => {
     });
   };
 
+  // Results go to their own state, never into `users`.
+  //
+  // `users` is the contact list derived from existing conversations, and
+  // `refreshConversations` rewrites it on every socket event — a message, a
+  // translation finishing, someone typing. While the picker was open that
+  // rewrite landed on top of whatever the search had just returned, so the list
+  // flickered between two different sets and a row moved out from under the
+  // pointer before the click landed. Keeping the two apart is the fix: an
+  // arriving translation can no longer disturb a search in progress.
   const searchUsers = async (query: string) => {
-    if (!token.current || query.trim().length < 2) return;
-    try { setUsers((await listUsers(token.current, query.trim())).map(toChatUser)); }
+    if (!token.current) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setUserSearchResults(null);
+      return;
+    }
+    try { setUserSearchResults((await listUsers(token.current, trimmed)).map(toChatUser)); }
     catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
@@ -1290,7 +1306,7 @@ export const AppShell: React.FC = () => {
         assistantMode={isAssistantChatOpen}
       />}
     </div>
-    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
+    <NewConversationModal isOpen={isNewChatOpen} onClose={() => { setIsNewChatOpen(false); setUserSearchResults(null); }} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} searchResults={userSearchResults} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} agentConsents={agentConsents} agentConsentsAnswered={agentConsentsAnswered} onUpdateAgentConsents={handleUpdateAgentConsents} />
     <CallModal
