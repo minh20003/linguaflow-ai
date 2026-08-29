@@ -125,7 +125,7 @@ async def test_extract_actions_task_success(client: AsyncClient, test_db: AsyncS
         )
     )
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_task.id}/extract-actions",
             headers={"Authorization": f"Bearer {token}"},
@@ -176,7 +176,7 @@ async def test_extract_actions_appointment_success(client: AsyncClient, extracti
         )
     )
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_appt.id}/extract-actions",
             headers={"Authorization": f"Bearer {token}"},
@@ -205,7 +205,7 @@ async def test_extract_actions_non_actionable_returns_empty(client: AsyncClient,
         )
     )
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_casual.id}/extract-actions",
             headers={"Authorization": f"Bearer {token}"},
@@ -227,7 +227,7 @@ async def test_extract_actions_deleted_message_returns_empty_without_llm(client:
 
     token = create_access_token(subject=alice.id)
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm") as mock_get_llm:
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm") as mock_get_llm:
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_task.id}/extract-actions",
             headers={"Authorization": f"Bearer {token}"},
@@ -275,7 +275,7 @@ async def test_extract_actions_idempotent_reinvocation(client: AsyncClient, test
         )
     )
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=mock_llm):
         # Call 1
         res1 = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_task.id}/extract-actions",
@@ -310,7 +310,7 @@ async def test_extract_actions_provider_error_503(client: AsyncClient, extractio
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=RuntimeError("Provider 500 error"))
 
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{m_task.id}/extract-actions",
             headers={"Authorization": f"Bearer {token}"},
@@ -342,7 +342,7 @@ async def test_other_members_self_commitment_never_becomes_requester_task(
             content='{"candidates":[{"action_type":"task","title":"Send report","relationship":"other_participant_self_commitment"}]}'
         )
     )
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/messages/{message.id}/extract-actions",
             headers={"Authorization": f"Bearer {create_access_token(subject=alice.id)}"},
@@ -378,7 +378,7 @@ async def test_requester_assignment_and_self_commitment_are_eligible(client: Asy
             content='{"candidates":[{"action_type":"task","title":"Send report","relationship":"requester_assigned_action"}]}'
         )
     )
-    with patch("src.agents.conversation_intelligence.action_graph.get_llm", return_value=llm):
+    with patch("src.agents.conversation_intelligence.action_graph.get_intelligence_llm", return_value=llm):
         for message in (assigned, self_commitment):
             response = await client.post(
                 f"/api/v1/conversations/{conv.id}/messages/{message.id}/extract-actions",

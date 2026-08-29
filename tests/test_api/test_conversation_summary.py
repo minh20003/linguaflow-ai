@@ -118,7 +118,7 @@ async def test_member_can_summarize_success(client: AsyncClient, summary_setup):
         )
     )
 
-    with patch("src.agents.conversation_intelligence.summary.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.summary.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/summary",
             headers={"Authorization": f"Bearer {token}"},
@@ -236,7 +236,7 @@ async def test_deleted_messages_excluded_from_summary(client: AsyncClient, test_
         )
     )
 
-    with patch("src.agents.conversation_intelligence.summary.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.summary.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/summary",
             headers={"Authorization": f"Bearer {token}"},
@@ -266,7 +266,7 @@ async def test_target_language_defaults_to_user_preference(client: AsyncClient, 
         )
     )
 
-    with patch("src.agents.conversation_intelligence.summary.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.summary.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/summary",
             headers={"Authorization": f"Bearer {token}"},
@@ -301,7 +301,7 @@ async def test_provider_failure_returns_503(client: AsyncClient, summary_setup):
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=RuntimeError("Provider 500 downstream error"))
 
-    with patch("src.agents.conversation_intelligence.summary.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.summary.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/summary",
             headers={"Authorization": f"Bearer {token}"},
@@ -348,7 +348,7 @@ async def test_prompt_injection_in_transcript_passed_safely(client: AsyncClient,
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=mock_invoke)
 
-    with patch("src.agents.conversation_intelligence.summary.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.summary.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv.id}/summary",
             headers={"Authorization": f"Bearer {token}"},

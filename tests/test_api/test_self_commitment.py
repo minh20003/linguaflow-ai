@@ -124,7 +124,7 @@ async def test_detect_self_commitments_vietnamese_success_200(client: AsyncClien
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -173,7 +173,7 @@ async def test_detect_self_commitments_english_success_200(client: AsyncClient, 
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_en_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -204,7 +204,7 @@ async def test_detect_self_commitments_no_commitments_empty_list(client: AsyncCl
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_casual_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -241,7 +241,7 @@ async def test_detect_self_commitments_idempotency(client: AsyncClient, test_db:
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         res1 = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -313,7 +313,7 @@ async def test_manual_detection_cannot_expose_another_members_private_proposal(c
     ],
 )
 async def test_semantic_negatives_never_invoke_detector_provider(text):
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm") as get_llm:
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm") as get_llm:
         proposals = await detect_self_commitments(
             message_text=text,
             sender_id="sender-1",

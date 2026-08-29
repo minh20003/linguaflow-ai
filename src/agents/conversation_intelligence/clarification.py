@@ -18,7 +18,7 @@ from src.schemas.intelligence import (
     ClarificationAnalysisPayload,
     ClarificationAnalysisResponse,
 )
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 
 async def analyze_message_ambiguity(
@@ -57,7 +57,7 @@ async def analyze_message_ambiguity(
         HumanMessage(content=user_prompt),
     ]
 
-    llm = get_llm(settings=settings, provider=provider)
+    llm = get_intelligence_llm(settings=settings, provider=provider)
     timeout = float(settings.llm_timeout_seconds)
 
     runnable_config = build_runnable_config(

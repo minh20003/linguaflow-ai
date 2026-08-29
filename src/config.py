@@ -118,6 +118,16 @@ class Settings(BaseSettings):
     # task lists in the middle of a sentence, which reads as the assistant
     # trailing off rather than as a limit being hit.
     assistant_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
+    # The conversation-intelligence extractors need the same room, for a sharper
+    # reason: their prompts embed a JSON schema and they must emit structured
+    # JSON, so hitting the cap does not shorten the answer, it truncates the
+    # JSON mid-string and the parse fails. Measured on one ordinary commitment
+    # ("Mình sẽ gửi bản thiết kế... trước 5 giờ chiều mai"): at 1024 the reply
+    # stopped with finish_reason=MAX_TOKENS after 1020 tokens and was
+    # unparseable, so the repair attempt failed too and no proposal was ever
+    # created. At 4096 the same call finished cleanly. That is why nothing was
+    # ever detected in a conversation.
+    intelligence_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
     # The reranker is the one part of this stack that runs a local model, so it
     # is also the one part an operator may need to switch off without editing
     # code: `sentence-transformers` pulls torch into the process, and a host

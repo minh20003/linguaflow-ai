@@ -30,7 +30,7 @@ from src.schemas.intelligence import (
     ConversationSummaryPayload,
     ConversationSummaryResponse,
 )
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ async def generate_conversation_summary(
         HumanMessage(content=user_prompt),
     ]
 
-    llm = get_llm(settings=settings, provider=provider)
+    llm = get_intelligence_llm(settings=settings, provider=provider)
     timeout = float(settings.llm_timeout_seconds)
 
     runnable_config = build_runnable_config(
@@ -276,7 +276,7 @@ async def generate_long_conversation_summary(
     ]
 
     payload = await invoke_with_repair(
-        llm=get_llm(settings=settings, provider=provider),
+        llm=get_intelligence_llm(settings=settings, provider=provider),
         messages=messages,
         schema=ConversationSummaryPayload,
         operation="conversation_summary_reduce",

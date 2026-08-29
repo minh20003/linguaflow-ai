@@ -15,7 +15,7 @@ from src.agents.conversation_intelligence.prompts import (
 )
 from src.config import Settings, get_settings
 from src.schemas.intelligence import ActionCandidateDTO, ActionExtractionPayload
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 
 async def extract_action_candidates(
@@ -62,7 +62,7 @@ async def extract_action_candidates(
         HumanMessage(content=user_prompt),
     ]
 
-    llm = get_llm(settings=settings, provider=provider)
+    llm = get_intelligence_llm(settings=settings, provider=provider)
     timeout = float(settings.llm_timeout_seconds)
 
     runnable_config = build_runnable_config(

@@ -81,7 +81,7 @@ async def test_assistant_reply_supplies_relevant_context_and_returns_model_answe
                 for index, text in enumerate(history)]
     trigger = _message(user_request)
     llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=model_answer)))
-    monkeypatch.setattr(chat_module, "get_llm", lambda: llm)
+    monkeypatch.setattr(chat_module, "get_assistant_llm", lambda: llm)
 
     result = await chat_module.ChatService(_RecentMessagesDb(messages))._assistant_reply_text(trigger)
 
@@ -97,7 +97,7 @@ async def test_assistant_reply_supplies_relevant_context_and_returns_model_answe
 @pytest.mark.asyncio
 async def test_assistant_reply_strips_tag_case_insensitively(monkeypatch):
     llm = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content="Đã hiểu.")))
-    monkeypatch.setattr(chat_module, "get_llm", lambda: llm)
+    monkeypatch.setattr(chat_module, "get_assistant_llm", lambda: llm)
     trigger = _message("  @ASSISTANT   Hãy hỗ trợ tôi  ")
 
     result = await chat_module.ChatService(_RecentMessagesDb([trigger]))._assistant_reply_text(trigger)
@@ -109,7 +109,7 @@ async def test_assistant_reply_strips_tag_case_insensitively(monkeypatch):
 @pytest.mark.asyncio
 async def test_assistant_reply_without_request_does_not_call_model(monkeypatch):
     llm = SimpleNamespace(ainvoke=AsyncMock())
-    monkeypatch.setattr(chat_module, "get_llm", lambda: llm)
+    monkeypatch.setattr(chat_module, "get_assistant_llm", lambda: llm)
 
     result = await chat_module.ChatService(_RecentMessagesDb([]))._assistant_reply_text(
         _message("@assistant")
@@ -122,7 +122,7 @@ async def test_assistant_reply_without_request_does_not_call_model(monkeypatch):
 @pytest.mark.asyncio
 async def test_assistant_reply_uses_safe_fallback_when_provider_fails(monkeypatch):
     llm = SimpleNamespace(ainvoke=AsyncMock(side_effect=RuntimeError("provider unavailable")))
-    monkeypatch.setattr(chat_module, "get_llm", lambda: llm)
+    monkeypatch.setattr(chat_module, "get_assistant_llm", lambda: llm)
 
     result = await chat_module.ChatService(_RecentMessagesDb([]))._assistant_reply_text(
         _message("@assistant Tóm tắt giúp tôi")

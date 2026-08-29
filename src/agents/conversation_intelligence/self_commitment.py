@@ -18,7 +18,7 @@ from src.schemas.intelligence import (
     ActionCandidateDTO,
     ActionExtractionPayload,
 )
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 
 async def detect_self_commitments(
@@ -65,7 +65,7 @@ async def detect_self_commitments(
         HumanMessage(content=user_prompt),
     ]
 
-    llm = get_llm(settings=settings, provider=provider)
+    llm = get_intelligence_llm(settings=settings, provider=provider)
     timeout = float(settings.llm_timeout_seconds)
 
     runnable_config = build_runnable_config(

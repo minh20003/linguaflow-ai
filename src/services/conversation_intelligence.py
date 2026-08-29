@@ -12,7 +12,7 @@ from src.agents.conversation_intelligence.parsing import invoke_with_repair
 from src.config import Settings, get_settings
 from src.schemas.intelligence import ActionProposalResponse
 from src.services.agent_consent import require_consent
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -25,7 +25,7 @@ class ConversationIntelligenceService:
 
     def get_model(self, provider: str | None = None) -> Any:
         """Get configured ChatModel instance."""
-        return get_llm(settings=self.settings, provider=provider)
+        return get_intelligence_llm(settings=self.settings, provider=provider)
 
     async def invoke_structured(
         self,
