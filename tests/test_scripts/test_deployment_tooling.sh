@@ -46,7 +46,9 @@ cp "$ROOT/tests/test_scripts/fake_docker.sh" "$tmp_dir/bin/docker"
 cp "$ROOT/tests/test_scripts/fake_curl.sh" "$tmp_dir/bin/curl"
 chmod +x "$tmp_dir/bin/docker" "$tmp_dir/bin/curl"
 
-for script in backup_postgres.sh verify_production.sh finalize_release.sh deploy_release.sh; do
+for script in \
+  backup_postgres.sh verify_production.sh finalize_release.sh deploy_release.sh \
+  run_remote_release.sh production_release_wrapper.sh; do
   "$SHELL_BIN" -n "$ROOT/scripts/$script" || fail "shell syntax failed: $script"
 done
 
@@ -260,7 +262,9 @@ for prohibited in 'down -v' 'volume rm' 'system prune' 'image prune' 'pg_restore
   if grep -Fq -- "$prohibited" \
     "$ROOT/scripts/backup_postgres.sh" \
     "$ROOT/scripts/deploy_release.sh" \
-    "$ROOT/scripts/finalize_release.sh"; then
+    "$ROOT/scripts/finalize_release.sh" \
+    "$ROOT/scripts/run_remote_release.sh" \
+    "$ROOT/scripts/production_release_wrapper.sh"; then
     fail "prohibited destructive operation found: $prohibited"
   fi
 done
@@ -268,7 +272,8 @@ done
 if grep -Eq '(^|[[:space:];])(source|\.)([[:space:]]+).*production\.env|cat[[:space:]]+.*production\.env' \
   "$ROOT/scripts/backup_postgres.sh" \
   "$ROOT/scripts/deploy_release.sh" \
-  "$ROOT/scripts/finalize_release.sh"; then
+  "$ROOT/scripts/finalize_release.sh" \
+  "$ROOT/scripts/production_release_wrapper.sh"; then
   fail 'a deployment helper reads the runtime environment file directly'
 fi
 
