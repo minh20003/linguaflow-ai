@@ -1694,6 +1694,16 @@ class ActionProposal(Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # When the owner cleared this out of their task inbox. It hides the row from
+    # that list and nothing else: an approved proposal has already produced a
+    # calendar event, and that event and its reminders are unaffected. Deleting
+    # the row instead would take the calendar entry with it through the
+    # `action_proposal_id` link, which is the opposite of what somebody tidying
+    # a finished list expects to happen.
+    dismissed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     def __repr__(self) -> str:
         return f"<ActionProposal(id={self.id}, type={self.action_type}, status={self.status}, title={self.title})>"

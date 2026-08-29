@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # with near-misses.
     assistant_retrieval_top_k: int = Field(default=8, ge=1, le=50)
     assistant_rerank_top_n: int = Field(default=4, ge=1, le=20)
+    # The assistant writes longer than the translator does, and needs its own
+    # ceiling for it. `LLM_MAX_TOKENS` is sized for one translated chat message
+    # -- the comment on it says so -- and sharing it truncated summaries and
+    # task lists in the middle of a sentence, which reads as the assistant
+    # trailing off rather than as a limit being hit.
+    assistant_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
     # The reranker is the one part of this stack that runs a local model, so it
     # is also the one part an operator may need to switch off without editing
     # code: `sentence-transformers` pulls torch into the process, and a host

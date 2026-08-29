@@ -43,6 +43,59 @@ logger = logging.getLogger(__name__)
 DEFAULT_SCAN_SECONDS = 60
 
 
+def _reminder_text(event: Any) -> str:
+    """The sentence the assistant says when a reminder falls due.
+
+    Plain text with no Markdown, for the reason the answering prompt gives: the
+    chat shows it verbatim.
+    """
+    when = event.starts_at.strftime("%H:%M %d/%m/%Y")
+    line = f"Nhắc bạn: \"{event.title}\" bắt đầu lúc {when}."
+    if event.location:
+        line += f" Địa điểm: {event.location}."
+    return line
+
+
+async def _post_reminder_message(
+    *,
+    user_id: str,
+    reminder_id: str,
+    event: Any,
+    publisher: Any,
+    factory: Callable[[], Any],
+) -> None:
+    """Write the due reminder into the person's thread with the assistant.
+
+    Imported inside the function: `chat.py` is a large module that pulls in much
+    of the service layer, and importing it at module scope would drag all of it
+    into every process that merely starts the scheduler.
+
+    Never raises. A reminder already counts as delivered by the time this runs
+    -- the row was claimed before anything was sent -- so a failure here costs
+    one message in a thread, and must not take down the scan behind it.
+    """
+    from src.schemas.chat import MessageReceivedEvent, RealtimeMessage
+    from src.services.chat import ChatService
+
+    try:
+        async with factory() as session:
+            posted = await ChatService(session).post_assistant_notice(
+                user_id=user_id,
+                text=_reminder_text(event),
+                idempotency_key=f"reminder:{reminder_id}",
+            )
+            if posted is None:
+                return
+            realtime = RealtimeMessage.model_validate(posted.message)
+            realtime.assistant_generated = True
+            payload = MessageReceivedEvent(message=realtime).model_dump(mode="json")
+        await publisher.send_to_users((user_id,), payload)
+    except Exception:
+        logger.warning(
+            "Posting the reminder message failed for user %s", user_id, exc_info=True
+        )
+
+
 async def scan_due_reminders(
     publisher: Any,
     *,
@@ -127,6 +180,18 @@ async def scan_due_reminders(
             )
         except Exception:
             logger.warning("Reminder delivery failed for user %s", row.user_id, exc_info=True)
+
+        # And leave it in the person's thread with the assistant. The event
+        # above only reaches a socket that happens to be open right now; the
+        # message is what they find when they come back, and what tells them
+        # afterwards that they were reminded at all.
+        await _post_reminder_message(
+            user_id=row.user_id,
+            reminder_id=row.id,
+            event=event,
+            publisher=publisher,
+            factory=factory,
+        )
 
     return len(claimed)
 

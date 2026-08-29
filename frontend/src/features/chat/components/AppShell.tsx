@@ -32,6 +32,8 @@ import {
   listAttachments,
   listConversations,
   listUsers,
+  confirmActionProposal,
+  rejectActionProposal,
   markRead,
   rejectCall,
   removeGroupMember,
@@ -87,6 +89,7 @@ import { ContactsPanel } from "./ContactsPanel";
 import { GroupsPanel } from "./GroupsPanel";
 import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
+import { isAwaitingDecision } from "../proposal-approval";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
 import { TaskInboxPanel } from "./TaskInboxPanel";
@@ -211,10 +214,13 @@ export const AppShell: React.FC = () => {
   const soundEnabledRef = useRef(true);
   const [pendingTaskCount, setPendingTaskCount] = useState(0);
   const [incomingProposals, setIncomingProposals] = useState<ApiActionProposal[]>([]);
+  const [proposalBusyId, setProposalBusyId] = useState<string | null>(null);
   // A counter rather than a boolean: two calendar changes in a row must
   // both trigger a reload, and a boolean flipped twice reads as unchanged.
   const [calendarRefreshCount, setCalendarRefreshCount] = useState(0);
   const [users, setUsers] = useState<User[]>([]);
+  // null = chưa tìm kiếm, hiển thị danh bạ. Mảng = kết quả tìm kiếm của máy chủ.
+  const [userSearchResults, setUserSearchResults] = useState<User[] | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({});
   const [attachmentsMap, setAttachmentsMap] = useState<Record<string, MessageAttachment[]>>({});
@@ -280,6 +286,13 @@ export const AppShell: React.FC = () => {
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const activeConversation = isAssistantChatOpen ? assistantConversation : selectedConversation;
   const activeConversationId = activeConversation?.id ?? null;
+  // Only the undecided ones, and only for the thread on screen. A proposal
+  // already approved from the inbox must not reappear here asking again.
+  const currentProposals = activeConversationId
+    ? incomingProposals.filter(
+        (proposal) => proposal.conversation_id === activeConversationId && isAwaitingDecision(proposal),
+      )
+    : [];
   const currentMessages = activeConversationId ? messagesMap[activeConversationId] ?? [] : [];
   const currentAttachments = activeConversationId ? attachmentsMap[activeConversationId] ?? [] : [];
   const usersById = useMemo(() => new Map([currentUser, ...users].filter((user) => user.id).map((user) => [user.id, user])), [currentUser, users]);
@@ -810,9 +823,54 @@ export const AppShell: React.FC = () => {
     });
   };
 
+  // Results go to their own state, never into `users`.
+  //
+  // `users` is the contact list derived from existing conversations, and
+  // `refreshConversations` rewrites it on every socket event — a message, a
+  // translation finishing, someone typing. While the picker was open that
+  // rewrite landed on top of whatever the search had just returned, so the list
+  // flickered between two different sets and a row moved out from under the
+  // pointer before the click landed. Keeping the two apart is the fix: an
+  // arriving translation can no longer disturb a search in progress.
+  /** Decide on a proposal without leaving the conversation.
+   *
+   *  The row is dropped from the in-chat list on success rather than left
+   *  showing a decided state: the card exists to ask a question, and once it is
+   *  answered the answer belongs on the calendar, not in the transcript. The
+   *  task inbox reloads from the server and shows the outcome there.
+   */
+  const decideProposal = async (
+    proposal: ApiActionProposal,
+    run: () => Promise<ApiActionProposal>,
+    success: string,
+  ) => {
+    if (!token.current) return;
+    setProposalBusyId(proposal.id);
+    try {
+      const decided = await run();
+      setIncomingProposals((current) =>
+        current.map((item) => (item.id === decided.id ? decided : item)),
+      );
+      addToast(success, proposal.title, "success");
+    } catch (error) {
+      addToast(
+        "Không thực hiện được",
+        error instanceof Error ? error.message : undefined,
+        "warning",
+      );
+    } finally {
+      setProposalBusyId(null);
+    }
+  };
+
   const searchUsers = async (query: string) => {
-    if (!token.current || query.trim().length < 2) return;
-    try { setUsers((await listUsers(token.current, query.trim())).map(toChatUser)); }
+    if (!token.current) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setUserSearchResults(null);
+      return;
+    }
+    try { setUserSearchResults((await listUsers(token.current, trimmed)).map(toChatUser)); }
     catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
   };
 
@@ -1239,6 +1297,10 @@ export const AppShell: React.FC = () => {
         <TaskInboxPanel
           token={accessToken}
           incoming={incomingProposals}
+          onProposalChanged={(proposal, removed) =>
+            setIncomingProposals((current) => removed
+              ? current.filter((item) => item.id !== proposal.id)
+              : current.map((item) => (item.id === proposal.id ? proposal : item)))}
           onCountChange={setPendingTaskCount}
           onNotify={addToast}
         />
@@ -1272,6 +1334,18 @@ export const AppShell: React.FC = () => {
         onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
         onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
+        pendingProposals={currentProposals}
+        proposalBusyId={proposalBusyId}
+        onApproveProposal={(proposal, corrections) => void decideProposal(
+          proposal,
+          () => confirmActionProposal(token.current!, proposal.id, corrections),
+          "Đã duyệt và thêm vào lịch",
+        )}
+        onRejectProposal={(proposal) => void decideProposal(
+          proposal,
+          () => rejectActionProposal(token.current!, proposal.id),
+          "Đã từ chối",
+        )}
         onStartCall={(type) => void initiateCall(type)}
         language={settings.interfaceLanguage}
         attachments={currentAttachments}
@@ -1290,7 +1364,7 @@ export const AppShell: React.FC = () => {
         assistantMode={isAssistantChatOpen}
       />}
     </div>
-    <NewConversationModal isOpen={isNewChatOpen} onClose={() => setIsNewChatOpen(false)} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
+    <NewConversationModal isOpen={isNewChatOpen} onClose={() => { setIsNewChatOpen(false); setUserSearchResults(null); }} onSelectUser={startConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} users={users} searchResults={userSearchResults} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <CreateGroupModal isOpen={isCreateGroupOpen} onClose={() => setIsCreateGroupOpen(false)} onCreateGroup={createGroup} users={users} onSearchUsers={searchUsers} language={settings.interfaceLanguage} />
     <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={settings} onUpdateSettings={handleUpdateSettings} currentUser={currentUser} onUpdateUser={(value) => void saveProfile(value)} agentConsents={agentConsents} agentConsentsAnswered={agentConsentsAnswered} onUpdateAgentConsents={handleUpdateAgentConsents} />
     <CallModal

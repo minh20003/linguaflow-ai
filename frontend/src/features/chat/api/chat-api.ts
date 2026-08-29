@@ -644,6 +644,10 @@ export interface ApiActionProposal {
   confidence_score: number;
   source_mode: "on_demand" | "proactive";
   created_at: string;
+  /** JSON array of the required fields the extractor could not fill. The
+   *  server refuses to confirm while any remain, so the approval form uses it
+   *  to know what it must collect. */
+  missing_fields: string;
 }
 
 export interface ApiCalendarSyncResult {
@@ -728,6 +732,20 @@ export function confirmActionProposal(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corrections ?? {}),
+  });
+}
+
+/** Clear one proposal out of the task inbox. Calendars are untouched. */
+export function dismissActionProposal(token: string, proposalId: string) {
+  return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/dismiss`, token, {
+    method: "POST",
+  });
+}
+
+/** Clear every already-decided proposal. Anything still awaiting a decision stays. */
+export function dismissDecidedActionProposals(token: string) {
+  return request<{ dismissed: number }>(`/api/v1/me/action-proposals/dismiss-decided`, token, {
+    method: "POST",
   });
 }
 

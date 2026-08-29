@@ -234,12 +234,31 @@ def _reminder_lead(minutes: int | None) -> timedelta | None:
     return None if minutes is None else timedelta(minutes=minutes)
 
 
+# The extractor and the time normalizer grew separate names for the same gap.
+# `ActionCandidateDTO` reports a missing start as `scheduled_time`; everything
+# that resolves one -- `normalize_action_time`, and the clarification and
+# confirmation paths that read its output -- speaks of `time`. Nothing ever
+# translated between them, so a proposal the extractor marked `scheduled_time`
+# could never be completed: clarification did not recognise it as temporal and
+# so never cleared it, and confirmation then refused with "still has unresolved
+# required fields". Answering the question and pressing approve returned an
+# error every time, with no way forward.
+#
+# Both names are normalised on the way in, here, so existing rows are fixed as
+# they are read rather than needing a data migration.
+_MISSING_FIELD_ALIASES = {"scheduled_time": "time", "scheduled_start_at": "time"}
+
+
 def _load_missing(value: str | None) -> list[str]:
     try:
         parsed = json.loads(value or "[]")
     except json.JSONDecodeError:
         return ["manual_correction_required"]
-    return [item for item in parsed if isinstance(item, str)]
+    return [
+        _MISSING_FIELD_ALIASES.get(item, item)
+        for item in parsed
+        if isinstance(item, str)
+    ]
 
 
 def _dump_missing(values: list[str] | tuple[str, ...] | set[str]) -> str:
@@ -270,12 +289,58 @@ class ActionProposalService:
         status_filter: str | None = None,
         conversation_id: str | None = None,
     ) -> list[ActionProposal]:
-        statement = select(ActionProposal).where(ActionProposal.owner_user_id == user_id)
+        """The owner's proposals, most recent first, minus the ones they cleared."""
+        statement = select(ActionProposal).where(
+            ActionProposal.owner_user_id == user_id,
+            ActionProposal.dismissed_at.is_(None),
+        )
         if status_filter:
             statement = statement.where(ActionProposal.status == status_filter)
         if conversation_id:
             statement = statement.where(ActionProposal.conversation_id == conversation_id)
         return list((await self.db.scalars(statement.order_by(ActionProposal.created_at.desc()))).all())
+
+    async def dismiss(self, *, proposal_id: str, user_id: str) -> ActionProposal:
+        """Clear one proposal out of its owner's task inbox.
+
+        Hiding, not deleting. An approved proposal has already produced a
+        calendar event, and that event keeps its reminders and still fires when
+        it comes due -- somebody tidying a list of finished items is not asking
+        to cancel their meetings. Removing the row would take the calendar entry
+        with it through `calendar_events.action_proposal_id`.
+
+        Idempotent: dismissing an already-dismissed proposal keeps the first
+        timestamp, so a double click does not rewrite history.
+        """
+        proposal = await self.db.get(ActionProposal, proposal_id)
+        if proposal is None:
+            raise ActionProposalNotFoundError(proposal_id)
+        if proposal.owner_user_id != user_id:
+            raise ActionProposalOwnershipError(proposal_id)
+        if proposal.dismissed_at is None:
+            proposal.dismissed_at = datetime.now(UTC)
+            await self.db.commit()
+            await self.db.refresh(proposal)
+        return proposal
+
+    async def dismiss_all_decided(self, *, user_id: str) -> int:
+        """Clear every proposal the owner has already decided on.
+
+        Only decided ones. Sweeping away something still awaiting a decision
+        would silently drop a question the assistant is waiting on, and the
+        person would never learn it had been asked.
+        """
+        result = await self.db.execute(
+            update(ActionProposal)
+            .where(
+                ActionProposal.owner_user_id == user_id,
+                ActionProposal.dismissed_at.is_(None),
+                ActionProposal.status.in_(("confirmed", "rejected", "stale")),
+            )
+            .values(dismissed_at=datetime.now(UTC))
+        )
+        await self.db.commit()
+        return int(result.rowcount or 0)
 
     async def create_proposals_from_candidates(
         self,
