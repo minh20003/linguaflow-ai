@@ -418,7 +418,11 @@ async function request<T>(path: string, accessToken: string, init: RequestInit =
   });
   if (response.status === 204) return undefined as T;
   const body = await parseJson<T & ApiErrorBody>(response);
-  if (!response.ok) throw new Error(getApiErrorMessage(body, "Request failed"));
+  if (!response.ok) {
+    throw new Error(
+      getApiErrorMessage(body, `Yêu cầu không thành công (HTTP ${response.status})`),
+    );
+  }
   return body as T;
 }
 
@@ -638,6 +642,7 @@ export interface ApiActionProposal {
   details: string | null;
   location: string | null;
   scheduled_start_at: string | null;
+  scheduled_end_at: string | null;
   due_at: string | null;
   clarification_prompt: string | null;
   clarification_question: string | null;
@@ -648,6 +653,28 @@ export interface ApiActionProposal {
    *  server refuses to confirm while any remain, so the approval form uses it
    *  to know what it must collect. */
   missing_fields: string;
+}
+
+/** Result of checking one message for information that would make an action
+ * unsafe to carry out.  The server supplies the question; the client never
+ * guesses or persists an interpretation of the user's intent. */
+export interface ApiClarificationAnalysis {
+  is_ambiguous: boolean;
+  needs_clarification: boolean;
+  reason: string;
+  suggested_clarification_prompt: string | null;
+}
+
+export function analyzeMessageAmbiguity(
+  token: string,
+  conversationId: string,
+  messageId: string,
+) {
+  return request<ApiClarificationAnalysis>(
+    `/api/v1/conversations/${conversationId}/messages/${messageId}/clarify`,
+    token,
+    { method: "POST" },
+  );
 }
 
 export interface ApiCalendarSyncResult {
@@ -753,6 +780,10 @@ export function rejectActionProposal(token: string, proposalId: string) {
   return request<ApiActionProposal>(`/api/v1/action-proposals/${proposalId}/reject`, token, {
     method: "POST",
   });
+}
+
+export function deleteTerminalActionProposal(token: string, proposalId: string) {
+  return request<void>(`/api/v1/action-proposals/${proposalId}`, token, { method: "DELETE" });
 }
 
 export function clarifyActionProposal(

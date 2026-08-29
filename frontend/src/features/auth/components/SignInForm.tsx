@@ -2,7 +2,7 @@
 
 import React, { useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, Check, Loader2 } from 'lucide-react';
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
 import { signIn, signInWithGoogle } from '../api/auth-api';
@@ -17,7 +17,9 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  // An unchecked "Remember me" control must be visibly neutral; persistence
+  // is an explicit choice rather than the default sign-in behaviour.
+  const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -85,12 +87,12 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.25 }}
-      className="bg-white rounded-2xl border border-slate-200/80 p-6 sm:p-8 shadow-sm shadow-slate-100"
+      className="bg-white rounded-3xl border border-slate-200/90 p-7 sm:p-9 md:p-10 shadow-lg shadow-slate-200/40"
     >
       {/* Title & Subtitle */}
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
-        <p className="text-sm text-slate-500 mt-1">Sign in to continue to LinguaFlow.</p>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Welcome back</h2>
+        <p className="text-sm sm:text-base text-slate-500 mt-1.5">Sign in to continue to LinguaFlow.</p>
       </div>
 
       {/* Error Alert */}
@@ -100,10 +102,10 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-4 overflow-hidden"
+            className="mb-5 overflow-hidden"
           >
-            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs font-medium">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs sm:text-sm font-medium">
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 text-rose-600" />
               <span>{errorMessage}</span>
             </div>
           </motion.div>
@@ -118,7 +120,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       />
 
       {/* Divider */}
-      <div className="relative my-5">
+      <div className="relative my-6">
         <div className="absolute inset-0 flex items-center">
           <div className="w-full border-t border-slate-200" />
         </div>
@@ -128,15 +130,15 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
       </div>
 
       {/* Form Fields */}
-      <form action="/api/auth/login" method="post" onSubmit={handleSubmit} className="space-y-4">
+      <form action="/api/auth/login" method="post" onSubmit={handleSubmit} className="space-y-4.5">
         {/* Email Field */}
         <div>
-          <label htmlFor="signin-email" className="block text-xs font-semibold text-slate-700 mb-1.5">
+          <label htmlFor="signin-email" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
             Email address
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Mail className="w-4 h-4" />
+              <Mail className="w-4.5 h-4.5" />
             </div>
             <input
               id="signin-email"
@@ -149,7 +151,7 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
                 if (errorMessage) setErrorMessage(null);
               }}
               placeholder="you@example.com"
-              className="w-full h-11 pl-10 pr-3.5 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-400"
+              className="w-full h-12 pl-11 pr-3.5 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#08BCFD] rounded-xl outline-none focus:ring-3 focus:ring-[#08BCFD]/20 transition-all text-slate-900 placeholder:text-slate-400"
             />
           </div>
         </div>
@@ -157,13 +159,13 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
         {/* Password Field */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label htmlFor="signin-password" className="block text-xs font-semibold text-slate-700">
+            <label htmlFor="signin-password" className="block text-xs sm:text-sm font-semibold text-slate-700">
               Password
             </label>
           </div>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Lock className="w-4 h-4" />
+              <Lock className="w-4.5 h-4.5" />
             </div>
             <input
               id="signin-password"
@@ -176,16 +178,16 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
                 if (errorMessage) setErrorMessage(null);
               }}
               placeholder="Enter your password"
-              className="w-full h-11 pl-10 pr-10 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-400"
+              className="w-full h-12 pl-11 pr-11 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#08BCFD] rounded-xl outline-none focus:ring-3 focus:ring-[#08BCFD]/20 transition-all text-slate-900 placeholder:text-slate-400"
             />
             <button
               id="toggle-password-visibility-button"
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-[#08BCFD] transition-colors cursor-pointer"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
             </button>
           </div>
         </div>
@@ -199,15 +201,18 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
               type="checkbox"
               checked={rememberMe}
               onChange={(e) => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 focus:ring-offset-0 transition-colors accent-indigo-600"
+              className="peer sr-only"
             />
-            <span className="text-xs text-slate-600 font-medium">Remember me</span>
+            <span aria-hidden="true" className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-transparent transition-colors peer-checked:border-[#08BCFD] peer-checked:bg-[#08BCFD] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-[#08BCFD]/35">
+              <Check className="h-3 w-3" strokeWidth={3} />
+            </span>
+            <span className="text-xs sm:text-sm text-slate-600 font-medium">Remember me</span>
           </label>
           <button
             id="forgot-password-link"
             type="button"
             onClick={() => onNavigate('forgot-password')}
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 transition-colors hover:underline"
+            className="text-xs sm:text-sm font-semibold text-[#0284C7] hover:text-[#08BCFD] transition-colors hover:underline cursor-pointer"
           >
             Forgot password?
           </button>
@@ -218,30 +223,30 @@ export const SignInForm: React.FC<SignInFormProps> = ({ onNavigate, onSuccess })
           id="signin-submit-button"
           type="submit"
           disabled={isLoading}
-          className="w-full h-11 mt-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all shadow-sm shadow-indigo-600/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
+          className="w-full h-12 mt-2 px-4 rounded-xl bg-[#08BCFD] hover:bg-[#0284C7] text-white text-sm sm:text-base font-semibold transition-all shadow-md shadow-[#08BCFD]/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
         >
           {isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-4.5 h-4.5 animate-spin" />
               <span>Signing in…</span>
             </>
           ) : (
             <>
               <span>Sign in</span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-4.5 h-4.5" />
             </>
           )}
         </button>
       </form>
 
       {/* Bottom Switcher */}
-      <div className="mt-6 text-center text-xs text-slate-500">
+      <div className="mt-6 text-center text-xs sm:text-sm text-slate-500">
         Don't have an account?{' '}
         <button
           id="navigate-signup-button"
           type="button"
           onClick={() => onNavigate('signup')}
-          className="font-semibold text-indigo-600 hover:text-indigo-700 transition-colors hover:underline ml-1"
+          className="font-semibold text-[#0284C7] hover:text-[#08BCFD] transition-colors hover:underline ml-1 cursor-pointer"
         >
           Sign up
         </button>

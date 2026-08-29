@@ -124,10 +124,12 @@ export interface FeedbackReviewEntry {
   rating: number | null;
   user_correction: string | null;
   created_at: string;
+  occurrence_count: number;
 }
 
 export interface FeedbackOverview {
   votes: FeedbackVoteSummary;
+  edited_translations: number;
   review_entries: FeedbackReviewEntry[];
   shared_total: number;
   withheld_total: number;

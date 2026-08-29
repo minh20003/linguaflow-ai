@@ -203,6 +203,9 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
     onProposalChanged?.(updated);
   };
 
+  const remove = (proposalId: string) =>
+    setProposals((current) => current.filter((item) => item.id !== proposalId));
+
   const act = async (
     proposal: ApiActionProposal,
     run: () => Promise<ApiActionProposal>,
@@ -231,6 +234,10 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
           return (
             <article
               key={proposal.id}
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("button, input, textarea")) return;
+                if (proposal.status === "pending_confirmation") setEditingProposal(proposal);
+              }}
               className={`relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-md dark:bg-[#1C1F27] ${
                 needsAnswer
                   ? "border-amber-300 dark:border-amber-400/30"
@@ -238,7 +245,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
               }`}
             >
               <div className={`absolute inset-y-0 left-0 w-1 ${needsAnswer ? "bg-amber-400" : proposal.status === "confirmed" ? "bg-emerald-500" : "bg-[#2563EB]"}`} />
-              <div className="p-4 pl-5 sm:p-5 sm:pl-6">
+              <div className={`p-4 pl-5 sm:p-5 sm:pl-6 ${proposal.status === "pending_confirmation" ? "cursor-pointer" : ""}`}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -274,6 +281,11 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     {proposal.details && (
                       <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">{proposal.details}</p>
                     )}
+                    <dl className="mt-3 grid max-w-3xl grid-cols-1 gap-x-5 gap-y-1.5 border-t border-[#EEF0F5] pt-3 text-xs text-[#62687B] dark:border-[#2A2E3D] dark:text-[#C6CAD6] sm:grid-cols-2">
+                      <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">Loại</dt><dd className="font-medium">{proposal.action_type === 'appointment' ? 'Sự kiện' : 'Việc cần làm'}</dd></div>
+                      <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">Nguồn</dt><dd className="font-medium">{proposal.source_mode === 'proactive' ? 'Agent tự quét hội thoại' : 'Yêu cầu từ hội thoại'}</dd></div>
+                      {proposal.location && <div className="flex gap-2 sm:col-span-2"><dt className="shrink-0 text-[#8A8F9E]">Địa điểm / liên kết</dt><dd className="min-w-0 break-words font-medium">{proposal.location}</dd></div>}
+                    </dl>
                   </div>
 
                   {!decided && !needsAnswer && (
@@ -498,6 +510,58 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
         )}
         </div>
       </div>
+      {editingProposal && (
+        <ProposalEditModal
+          proposal={editingProposal}
+          onClose={() => setEditingProposal(null)}
+          onConfirm={(corrections) => {
+            void act(
+              editingProposal,
+              () => confirmActionProposal(token, editingProposal.id, corrections),
+              "Đã duyệt và thêm vào lịch",
+            );
+            setEditingProposal(null);
+          }}
+        />
+      )}
     </section>
+  );
+};
+
+const ProposalEditModal: React.FC<{
+  proposal: ApiActionProposal;
+  onClose: () => void;
+  onConfirm: (corrections: Record<string, unknown>) => void;
+}> = ({ proposal, onClose, onConfirm }) => {
+  const [title, setTitle] = useState(proposal.title);
+  const [location, setLocation] = useState(proposal.location ?? "");
+  const [details, setDetails] = useState(proposal.details ?? "");
+  const [startsAt, setStartsAt] = useState(toDateTimeLocal(proposal.scheduled_start_at));
+  const [endsAt, setEndsAt] = useState(toDateTimeLocal(proposal.scheduled_end_at));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true">
+      <form
+        className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl dark:bg-[#1C1F27]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onConfirm({
+            title: title.trim(),
+            location: location.trim() || null,
+            details: details.trim() || null,
+            scheduled_start_at: startsAt ? new Date(startsAt).toISOString() : null,
+            scheduled_end_at: endsAt ? new Date(endsAt).toISOString() : null,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
+        }}
+      >
+        <div className="mb-5 flex items-center justify-between"><div><h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chỉnh sửa {proposal.action_type === "appointment" ? "sự kiện" : "việc cần làm"}</h3><p className="mt-1 text-xs text-[#74798C]">Kiểm tra thông tin trước khi thêm vào lịch.</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-[#74798C] hover:bg-[#F1F3F4] dark:hover:bg-[#2A2E3D]"><X className="h-5 w-5" /></button></div>
+        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">Tiêu đề<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">Bắt đầu<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">Kết thúc<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label></div>
+        <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">Địa điểm hoặc liên kết họp<input value={location} onChange={(event) => setLocation(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
+        <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">Mô tả<textarea value={details} onChange={(event) => setDetails(event.target.value)} rows={4} className="mt-1.5 w-full resize-none rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
+        <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold text-[#62687B] hover:bg-[#F7F8FC]">Hủy</button><button type="submit" className="rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-bold text-white hover:bg-[#1D4ED8]">Duyệt và thêm vào lịch</button></div>
+      </form>
+    </div>
   );
 };

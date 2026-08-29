@@ -43,6 +43,40 @@
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Full event/task editor: keep a neutral scrollbar flush with the modal edge. */
+#linguachat-app-shell .calendar-event-form-scroll {
+  scrollbar-color: #9aa0a6 transparent;
+}
+
+#linguachat-app-shell .calendar-event-form-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+#linguachat-app-shell .calendar-event-form-scroll::-webkit-scrollbar-thumb {
+  background: #9aa0a6;
+}
+
+#linguachat-app-shell .calendar-event-form-scroll::-webkit-scrollbar-thumb:hover {
+  background: #70757a;
+}
+
+/* Keep native number steppers readable in the reminder editor in every theme. */
+#linguachat-app-shell .calendar-reminder-number {
+  color-scheme: light;
+  background-color: #ffffff;
+}
+
+#linguachat-app-shell .calendar-reminder-number::-webkit-inner-spin-button {
+  opacity: 0;
+  background-color: #ffffff;
+  transition: opacity 120ms ease;
+}
+
+#linguachat-app-shell .calendar-reminder-row:hover .calendar-reminder-number::-webkit-inner-spin-button,
+#linguachat-app-shell .calendar-reminder-number:focus::-webkit-inner-spin-button {
+  opacity: 1;
+}
+
 #linguachat-app-shell ::selection {
   color: #ffffff;
   background: rgb(37 99 235 / 72%);

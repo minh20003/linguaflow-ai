@@ -39,6 +39,9 @@ deep-translator>=1.11.0
 # Database
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
+# Windows does not ship the IANA timezone database required for securely
+# resolving user-confirmed schedule times such as Asia/Ho_Chi_Minh.
+tzdata>=2025.2
 # Migrations — bat buoc tu khi trien khai that: create_all khong ALTER duoc bang
 # da ton tai, xoa co so du lieu de doi schema la mat du lieu nguoi dung (ADR-06).
 alembic>=1.14.0

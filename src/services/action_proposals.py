@@ -25,6 +25,11 @@ _RELATIVE_TIME = re.compile(
 )
 _TOMORROW_MORNING = re.compile(r"\b(?:tomorrow morning|sáng mai)\b", re.IGNORECASE)
 _NEXT_FRIDAY = re.compile(r"\bnext friday\b", re.IGNORECASE)
+_LOCAL_DATE_TIME = re.compile(
+    r"^\s*(?P<hour>\d{1,2})(?:\s*(?::|h|giờ)\s*(?P<minute>\d{1,2})?)?\s*"
+    r"(?:ngày\s*)?(?P<day>\d{1,2})[/-](?P<month>\d{1,2})[/-](?P<year>\d{4})\s*$",
+    re.IGNORECASE,
+)
 
 
 class ActionProposalError(Exception):
@@ -118,6 +123,33 @@ def _resolve_relative_time(raw: str, reference: datetime, timezone: ZoneInfo) ->
     return None
 
 
+def _resolve_local_date_time(answer: str | None, timezone: ZoneInfo) -> datetime | None:
+    """Parse a user-supplied local date/time only when its timezone is trusted.
+
+    Clarification answers arrive as ordinary Vietnamese text rather than ISO
+    timestamps.  A full date plus time is unambiguous once the authenticated
+    client supplies a valid IANA timezone, so it is safe to normalize here.
+    """
+
+    match = _LOCAL_DATE_TIME.match(answer or "")
+    if match is None:
+        return None
+    try:
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute") or 0)
+        local = datetime(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+            hour,
+            minute,
+            tzinfo=timezone,
+        )
+    except ValueError:
+        return None
+    return local.astimezone(UTC)
+
+
 def normalize_action_time(
     *,
     raw_time_expression: str | None,
@@ -151,6 +183,13 @@ def normalize_action_time(
     if timezone_name is None and "timezone" in missing and answer and _valid_timezone(answer):
         timezone_name = answer
     timezone = _valid_timezone(timezone_name)
+
+    if timezone is not None:
+        local_answer = _resolve_local_date_time(answer, timezone)
+        if local_answer is not None:
+            missing.discard("time")
+            missing.discard("timezone")
+            return TemporalResolution(local_answer, raw, timezone.key, tuple(sorted(missing)))
 
     # A confirm payload is authenticated owner input, unlike model candidate
     # data. Its offset-bearing datetime is a complete representation of an
@@ -561,6 +600,15 @@ class ActionProposalService:
             raise ActionProposalStatusError("Proposal was already transitioned")
         await self.db.commit()
         return await self.get_proposal(proposal_id)
+
+    async def delete_terminal_proposal(self, proposal_id: str, user_id: str) -> None:
+        """Remove an owner-visible rejected or stale proposal from the inbox."""
+
+        proposal = await self._get_owned(proposal_id, user_id)
+        if proposal.status not in ("rejected", "stale"):
+            raise ActionProposalStatusError("Only rejected or stale proposals can be deleted")
+        await self.db.delete(proposal)
+        await self.db.commit()
 
     async def clarify(
         self,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart3, BookOpen, Globe, Languages, Lightbulb, LogOut, Moon, Settings, Sun, ThumbsUp, User as UserIcon, X } from 'lucide-react';
+import { BarChart3, BookOpen, Globe, Languages, Lightbulb, LogOut, MessageSquareText, Moon, Settings, Sun, User as UserIcon, X } from 'lucide-react';
 import { AdminInterfaceLanguage, AdminTab } from '../types';
 
 const DISPLAY_LANGUAGES: Array<{ value: AdminInterfaceLanguage; flag: string; name: string; nativeName: string }> = [
@@ -39,7 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, inter
   const initials = adminName.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase() || 'AD';
   const navItems = [
     { id: 'analytics' as AdminTab, label: isVietnamese ? 'Thống kê' : 'Analytics', icon: BarChart3 },
-    { id: 'feedback' as AdminTab, label: isVietnamese ? 'Phản hồi' : 'Feedback', icon: ThumbsUp },
+    { id: 'feedback' as AdminTab, label: isVietnamese ? 'Phản hồi' : 'Feedback', icon: MessageSquareText },
     { id: 'glossary' as AdminTab, label: isVietnamese ? 'Thuật ngữ' : 'Glossary', icon: BookOpen },
     { id: 'suggestions' as AdminTab, label: isVietnamese ? 'Đề xuất' : 'Suggestions', icon: Lightbulb },
   ];
@@ -56,9 +56,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, inter
   return (
     <aside id="admin-navigation-sidebar" className="fixed inset-y-0 left-0 z-50 flex w-[72px] min-w-[72px] flex-col items-center justify-between border-r border-[#E8EAF0] bg-white py-4 transition-colors dark:border-[#232630] dark:bg-[#1C1F27]" aria-label="Điều hướng quản trị">
       <div className="flex w-full flex-col items-center gap-5">
-        <button id="admin-brand-logo-btn" type="button" aria-label="LinguaFlow" onClick={() => onTabChange('analytics')} className="group relative flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-[#2563EB] to-[#60A5FA] text-white shadow-md shadow-blue-600/25 transition-transform hover:scale-105 active:scale-95">
-          <svg className="h-6 w-6 fill-current" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z" /><path d="M7 9H17M7 13H13" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" /></svg>
-          <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-blue-600 bg-amber-400" />
+        <button id="admin-brand-logo-btn" type="button" aria-label="LinguaFlow" onClick={() => onTabChange('analytics')} className="group relative flex h-12 w-12 items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer">
+          <img
+            src="/brand/brand-mark.svg?v=20260828"
+            alt="LinguaFlow"
+            className="h-full w-full object-contain select-none"
+          />
           <span className="pointer-events-none absolute left-[58px] z-50 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">LinguaFlow</span>
         </button>
         <div className="h-px w-8 bg-[#E8EAF0] dark:bg-[#2A2E3D]" />
