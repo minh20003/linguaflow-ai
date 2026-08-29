@@ -6,14 +6,16 @@ on:
   pull_request:
     branches: [develop_v2]
 
-# Giới hạn quyền của GITHUB_TOKEN ở mức tối thiểu cần thiết
+# The default token stays read-only. Production jobs opt in to the narrowly
+# scoped package/PR permissions they need.
 permissions:
   contents: read
 
-# Huỷ lần chạy cũ khi có commit mới trên cùng nhánh, tránh tiêu tốn phút chạy
+# PR updates may supersede an older PR check. A develop_v2 push receives its
+# own group so a newer merge can never cancel a running production release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'pull_request' && format('{0}-{1}', github.workflow, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint-and-test:
@@ -73,3 +75,345 @@ jobs:
           # Trỏ vào service container ở trên. conftest.py suy ra tên cơ sở dữ
           # liệu kiểm thử bằng cách thêm hậu tố `_test`, rồi tự tạo nếu chưa có.
           DATABASE_URL: "postgresql+asyncpg://linguaflow:linguaflow@localhost:${{ job.services.postgres.ports[5432] }}/linguaflow"
+
+  production-gate:
+    name: Gate automatic production release
+    needs: lint-and-test
+    if: >-
+      ${{ github.event_name == 'push' &&
+          github.ref == 'refs/heads/develop_v2' &&
+          vars.AUTO_DEPLOY_PRODUCTION == 'true' &&
+          needs.lint-and-test.result == 'success' }}
+    runs-on: self-hosted
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      pull_request: ${{ steps.approval.outputs.pull_request }}
+    steps:
+      - name: Validate the event's immutable release SHA
+        id: release
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == push ]]
+          [[ "$GITHUB_REF" == refs/heads/develop_v2 ]]
+          [[ "$RELEASE_SHA" =~ ^[0-9A-Fa-f]{40}$ ]] || {
+            echo 'github.sha is not a full commit SHA.' >&2
+            exit 1
+          }
+          echo "release_sha=${RELEASE_SHA,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Require an associated merged PR targeting develop_v2
+        id: approval
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.release_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const sha = process.env.RELEASE_SHA;
+            const { owner, repo } = context.repo;
+            const pulls = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: sha, per_page: 100 },
+            );
+            const approved = pulls.find((pr) =>
+              pr.merged_at &&
+              pr.base?.ref === "develop_v2" &&
+              pr.merge_commit_sha === sha
+            );
+            if (!approved) {
+              throw new Error(
+                "Fail closed: release SHA is not an associated merged PR commit targeting develop_v2.",
+              );
+            }
+            core.setOutput("pull_request", String(approved.number));
+
+  build-production-artifacts:
+    name: Build or reuse exact-SHA production images
+    needs: production-gate
+    runs-on: self-hosted
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      release_sha: ${{ needs.production-gate.outputs.release_sha }}
+      backend_digest: ${{ steps.build_evidence.outputs.backend_digest || steps.reuse_evidence.outputs.backend_digest }}
+      frontend_digest: ${{ steps.build_evidence.outputs.frontend_digest || steps.reuse_evidence.outputs.frontend_digest }}
+      image_status: ${{ steps.image_state.outputs.image_status }}
+    steps:
+      - name: Checkout the gated release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.production-gate.outputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Require public frontend build configuration
+        shell: bash
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$NEXT_PUBLIC_API_URL" ]] || {
+            echo 'NEXT_PUBLIC_API_URL Actions Variable is required.' >&2
+            exit 1
+          }
+          [[ -n "$NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID" ]] || {
+            echo 'NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID Actions Variable is required.' >&2
+            exit 1
+          }
+
+      - name: Verify shared-runner build prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null
+          docker version --format '{{.Server.Version}}' >/dev/null
+          docker buildx version >/dev/null
+
+      - name: Define immutable image references
+        id: images
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.production-gate.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          echo "backend_image=ghcr.io/ai20k-build-phase-cohort-3/p-217-backend:$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=ghcr.io/ai20k-build-phase-cohort-3/p-217-frontend:$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+          logout: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: false
+          cleanup: true
+          keep-state: false
+
+      - name: Determine exact-SHA image state without overwrite
+        id: image_state
+        shell: bash
+        env:
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          image_presence() {
+            local image result
+            image=$1
+            if result="$(docker buildx imagetools inspect "$image" --raw 2>&1)"; then
+              printf '%s\n' present
+              return 0
+            fi
+            if grep -Eqi 'manifest unknown|name unknown|not found|404' <<< "$result"; then
+              printf '%s\n' absent
+              return 0
+            fi
+            echo "Could not safely determine existing-image state for $image." >&2
+            return 1
+          }
+
+          backend_state="$(image_presence "$BACKEND_IMAGE")"
+          frontend_state="$(image_presence "$FRONTEND_IMAGE")"
+          case "$backend_state:$frontend_state" in
+            absent:absent)
+              echo 'Both exact-SHA images are absent; building an immutable release.'
+              echo 'image_status=build' >> "$GITHUB_OUTPUT"
+              ;;
+            present:present)
+              echo 'Both exact-SHA images exist; validating and reusing them.'
+              echo 'image_status=reuse' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo 'PARTIAL RELEASE STATE: exactly one exact-SHA image exists.' >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Validate existing immutable image metadata
+        id: reuse_evidence
+        if: steps.image_state.outputs.image_status == 'reuse'
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ needs.production-gate.outputs.release_sha }}
+          BACKEND_IMAGE: ${{ steps.images.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.images.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          docker pull "$BACKEND_IMAGE"
+          docker pull "$FRONTEND_IMAGE"
+          backend_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$BACKEND_IMAGE")"
+          frontend_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$FRONTEND_IMAGE")"
+          [[ "$backend_revision" == "$RELEASE_SHA" ]] || {
+            echo 'Backend OCI revision does not match the release SHA.' >&2
+            exit 1
+          }
+          [[ "$frontend_revision" == "$RELEASE_SHA" ]] || {
+            echo 'Frontend OCI revision does not match the release SHA.' >&2
+            exit 1
+          }
+          backend_digest="$(docker image inspect --format '{{ index .RepoDigests 0 }}' "$BACKEND_IMAGE")"
+          frontend_digest="$(docker image inspect --format '{{ index .RepoDigests 0 }}' "$FRONTEND_IMAGE")"
+          [[ "$backend_digest" == *@sha256:* ]]
+          [[ "$frontend_digest" == *@sha256:* ]]
+          echo "backend_digest=${backend_digest#*@}" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=${frontend_digest#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish backend image
+        id: build_backend
+        if: steps.image_state.outputs.image_status == 'build'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.backend_image }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.production-gate.outputs.release_sha }}
+            org.opencontainers.image.source=https://github.com/AI20K-Build-Phase-Cohort-3/P-217
+          cache-from: type=gha,scope=linguaflow-backend
+          cache-to: type=gha,mode=max,scope=linguaflow-backend
+
+      - name: Build and publish frontend image
+        id: build_frontend
+        if: steps.image_state.outputs.image_status == 'build'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.images.outputs.frontend_image }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.production-gate.outputs.release_sha }}
+            org.opencontainers.image.source=https://github.com/AI20K-Build-Phase-Cohort-3/P-217
+          cache-from: type=gha,scope=linguaflow-frontend
+          cache-to: type=gha,mode=max,scope=linguaflow-frontend
+
+      - name: Record newly published image digests
+        id: build_evidence
+        if: steps.image_state.outputs.image_status == 'build'
+        shell: bash
+        env:
+          BACKEND_DIGEST: ${{ steps.build_backend.outputs.digest }}
+          FRONTEND_DIGEST: ${{ steps.build_frontend.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$BACKEND_DIGEST" == sha256:* ]]
+          [[ "$FRONTEND_DIGEST" == sha256:* ]]
+          echo "backend_digest=$BACKEND_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "frontend_digest=$FRONTEND_DIGEST" >> "$GITHUB_OUTPUT"
+
+  deploy-production:
+    name: Deploy exact-SHA release to production
+    needs: [production-gate, build-production-artifacts]
+    runs-on: self-hosted
+    timeout-minutes: 45
+    concurrency:
+      group: linguaflow-production
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout the gated release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.production-gate.outputs.release_sha }}
+          fetch-depth: 1
+
+      - name: Refuse a release superseded by a newer develop_v2 merge
+        id: freshness
+        uses: actions/github-script@v7
+        env:
+          RELEASE_SHA: ${{ needs.production-gate.outputs.release_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const branch = await github.rest.repos.getBranch({
+              owner,
+              repo,
+              branch: "develop_v2",
+            });
+            const current = branch.data.commit.sha === process.env.RELEASE_SHA;
+            core.setOutput("current", String(current));
+            if (!current) {
+              core.warning(
+                "This release was superseded by a newer develop_v2 merge; refusing to deploy an older SHA.",
+              );
+            }
+
+      - name: Run the fail-closed production release channel
+        if: steps.freshness.outputs.current == 'true'
+        shell: bash
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ vars.PROD_SSH_USER }}
+          PROD_SSH_KNOWN_HOSTS: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sh scripts/run_remote_release.sh deploy \
+            '${{ needs.production-gate.outputs.release_sha }}' \
+            '${{ needs.build-production-artifacts.outputs.backend_digest }}' \
+            '${{ needs.build-production-artifacts.outputs.frontend_digest }}'
+
+  production-channel-rehearsal:
+    name: Rehearse production channel without mutation
+    needs: lint-and-test
+    if: >-
+      ${{ github.event_name == 'push' &&
+          github.ref == 'refs/heads/develop_v2' &&
+          vars.CD_CHANNEL_REHEARSAL == 'true' &&
+          vars.AUTO_DEPLOY_PRODUCTION != 'true' &&
+          needs.lint-and-test.result == 'success' }}
+    runs-on: self-hosted
+    timeout-minutes: 30
+    concurrency:
+      group: linguaflow-production
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout the CI workflow revision
+        uses: actions/checkout@v4
+
+      - name: Rehearse the dedicated channel against current LKG
+        shell: bash
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_HOST: ${{ vars.PROD_SSH_HOST }}
+          PROD_SSH_PORT: ${{ vars.PROD_SSH_PORT }}
+          PROD_SSH_USER: ${{ vars.PROD_SSH_USER }}
+          PROD_SSH_KNOWN_HOSTS: ${{ vars.PROD_SSH_KNOWN_HOSTS }}
+          GHCR_TOKEN: ${{ github.token }}
+          REHEARSAL_SHA: ${{ vars.PROD_REHEARSAL_SHA }}
+          REHEARSAL_BACKEND_DIGEST: ${{ vars.PROD_REHEARSAL_BACKEND_DIGEST }}
+          REHEARSAL_FRONTEND_DIGEST: ${{ vars.PROD_REHEARSAL_FRONTEND_DIGEST }}
+        run: |
+          set -euo pipefail
+          sh scripts/run_remote_release.sh rehearse \
+            "$REHEARSAL_SHA" \
+            "$REHEARSAL_BACKEND_DIGEST" \
+            "$REHEARSAL_FRONTEND_DIGEST"

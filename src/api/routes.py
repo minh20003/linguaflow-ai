@@ -3568,6 +3568,7 @@ async def download_conversation_attachment(
                 # Uploaded, not yet sent: no message to judge visibility by.
                 Attachment.message_id.is_(None),
                 and_(
+                    Message.conversation_id == conversation_id,
                     Message.deleted_at.is_(None),
                     or_(
                         Message.visible_to_user_id.is_(None),

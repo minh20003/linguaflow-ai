@@ -450,3 +450,61 @@ Ghi ra để người vận hành biết, không phải để bỏ qua:
 | Upload vẫn ghi vào container | Thiếu `SUPABASE_URL` hoặc `SUPABASE_SERVICE_ROLE_KEY` | Đặt đủ hai biến rồi deploy lại |
 | Tin nhắn gửi được nhưng người kia không nhận | Đang chạy nhiều hơn một bản sao | Đặt lại về 1 replica |
 | Tin nhắn không được dịch, cờ `is_fallback` bật | Hết hạn mức LLM hoặc khoá sai | Kiểm tra khoá, `make metrics` xem tỷ lệ fallback |
+
+## 9. Tự động phát hành từ `develop_v2`
+
+Luồng production chuẩn bắt đầu khi một pull request được merge vào
+`develop_v2`:
+
+1. job `lint-and-test` hiện hữu phải chạy xanh trên PostgreSQL/pgvector;
+2. gate xác minh sự kiện là `push`, dùng đúng `github.sha`, và SHA đó là merge
+   commit của PR nhắm vào `develop_v2`;
+3. backend và frontend được build hoặc tái sử dụng bằng tag SHA 40 ký tự, rồi
+   kiểm tra digest và nhãn OCI revision;
+4. job deploy nối hàng trong concurrency group `linguaflow-production`, đăng
+   nhập VPS bằng dedicated key và gọi duy nhất root-owned release wrapper;
+5. wrapper kiểm tra bundle, health, dung lượng, digest và OCI revision trước khi
+   backup, migrate, và recreate riêng backend/frontend/Caddy;
+6. PostgreSQL container và bốn durable volume phải giữ nguyên identity; public
+   verification phải đạt trước khi ghi LKG.
+
+Pull-request workflow chỉ chạy test, không được build image hoặc deploy. Push
+trực tiếp không gắn với PR được gate từ chối. Nhiều merge gần nhau được xếp hàng
+và không huỷ release đang chạy. Ngay trước SSH, workflow đọc lại head của
+`develop_v2`; release cũ đã bị một merge mới thay thế sẽ dừng ở trạng thái
+superseded thay vì triển khai ngược production về SHA cũ.
+
+### 9.1. Công tắc vận hành
+
+- `AUTO_DEPLOY_PRODUCTION=false`: tắt phát hành tự động ngay ở gate. Đây là
+  trạng thái mặc định khi bootstrap hoặc xử lý sự cố.
+- `AUTO_DEPLOY_PRODUCTION=true`: mỗi merge hợp lệ vào `develop_v2` tự động đi
+  qua toàn bộ pipeline.
+- `CD_CHANNEL_REHEARSAL=true` chỉ dùng khi `AUTO_DEPLOY_PRODUCTION` đang tắt.
+  Rehearsal xác minh SSH/GHCR/wrapper với đúng LKG hiện tại và không backup,
+  migrate, recreate container hay ghi LKG.
+
+Workflow `deploy-production.yml` trên default branch `main` là đường fallback
+thủ công để gate và tạo exact-SHA artifacts. Nó không bị luồng tự động thay thế
+hoặc xoá.
+
+### 9.2. Phân tách secret
+
+GitHub chỉ giữ private key của kênh deploy. Host, port, user, pinned host key và
+public build values nằm trong Repository Actions Variables. Token GHCR theo job
+được chuyển qua SSH bằng stdin, dùng với một `DOCKER_CONFIG` tạm, logout và xoá
+ngay khi kết thúc.
+
+Toàn bộ runtime secret (`JWT_SECRET`, database, SMTP, LLM, OAuth backend, v.v.)
+vẫn chỉ nằm trong `/etc/linguaflow/production.env` trên VPS. Workflow và release
+wrapper không đọc hoặc in nội dung file này.
+
+### 9.3. Khi pipeline dừng
+
+- Test/gate/build lỗi: production chưa bị chạm; sửa bằng PR mới.
+- Digest hoặc OCI revision không khớp: wrapper dừng trước migration/rollout.
+- Backup, Caddy validation hoặc migration lỗi: không rollout và không đổi LKG.
+- Rollout/public verification lỗi: LKG không đổi; không tự rollback, restore hay
+  downgrade database. Người vận hành phải đánh giá thủ công trạng thái thực tế.
+- Muốn chặn release tiếp theo: đặt `AUTO_DEPLOY_PRODUCTION=false`. Việc đổi công
+  tắc không huỷ job production đang chạy.
