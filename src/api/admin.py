@@ -738,6 +738,12 @@ async def read_feedback_overview(
         )
         or 0
     )
+    edited_translations = int(
+        await db.scalar(
+            select(func.count(func.distinct(TranslationEdit.translation_id)))
+        )
+        or 0
+    )
 
     rows = (
         await db.scalars(
@@ -757,11 +763,30 @@ async def read_feedback_overview(
             .limit(limit)
         )
     ).all()
+    # Reader edits are append-only so that the product can audit a correction,
+    # but repeating every revision in this overview made a single translation
+    # look like many independent quality signals.  The review page shows the
+    # latest wording per translated message; the full revision trail remains
+    # in its own persistence boundary.
+    latest_edit_rank = (
+        select(
+            TranslationEdit.id.label("edit_id"),
+            func.row_number()
+            .over(
+                partition_by=TranslationEdit.translation_id,
+                order_by=(TranslationEdit.created_at.desc(), TranslationEdit.id.desc()),
+            )
+            .label("rank"),
+        )
+        .subquery()
+    )
     edit_rows = (
         await db.execute(
             select(TranslationEdit, TranslationResult, Message)
+            .join(latest_edit_rank, TranslationEdit.id == latest_edit_rank.c.edit_id)
             .join(TranslationResult, TranslationEdit.translation_id == TranslationResult.id)
             .join(Message, TranslationResult.message_id == Message.id)
+            .where(latest_edit_rank.c.rank == 1)
             .order_by(TranslationEdit.created_at.desc())
             .limit(limit)
         )
@@ -802,8 +827,34 @@ async def read_feedback_overview(
 
     review_entries.sort(key=review_entry_time, reverse=True)
 
+    # This dashboard intentionally hides people and conversations.  Without
+    # those identifiers, repeated tests of the same sentence appeared as a
+    # wall of indistinguishable rows.  Collapse matching anonymous evidence
+    # while retaining its frequency, and keep the newest timestamp as the
+    # representative row.
+    grouped_entries: dict[tuple[object, ...], FeedbackReviewEntry] = {}
+    for entry in review_entries:
+        key = (
+            entry.entry_type,
+            entry.original_text,
+            entry.translated_text,
+            entry.source_language,
+            entry.target_language,
+            entry.model,
+            entry.vote,
+            entry.rating,
+            entry.user_correction,
+        )
+        existing = grouped_entries.get(key)
+        if existing is None:
+            grouped_entries[key] = entry
+        else:
+            existing.occurrence_count += 1
+    review_entries = list(grouped_entries.values())
+
     return FeedbackOverviewResponse(
         votes=votes,
+        edited_translations=edited_translations,
         review_entries=review_entries[:limit],
         shared_corrections=[SharedCorrection.model_validate(row) for row in rows],
         shared_total=shared_total,

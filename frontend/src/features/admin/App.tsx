@@ -224,12 +224,17 @@ export default function App() {
           const source = attempt.source_language.toUpperCase();
           const target = attempt.target_language.toUpperCase();
           const isSameLanguage = source === target;
-          const isFallback = attempt.outcome === 'secondary' || attempt.outcome === 'original';
+          const isFallback = attempt.outcome === 'secondary'
+            || attempt.outcome === 'original'
+            || Boolean(attempt.fallback_reason);
           return {
             id: attempt.id,
             timestamp: new Date(attempt.created_at).toLocaleString('vi-VN'),
             pair: `${source} → ${target}` as LanguagePair,
-            model: isSameLanguage ? '—' : attempt.model,
+            // The configured primary model did not produce this result. Showing
+            // its name here would make a fallback look like a successful model
+            // response, so surface the operational outcome instead.
+            model: isSameLanguage ? '—' : isFallback ? 'Lỗi · Fallback' : attempt.model,
             isFallback,
             status: isFallback ? 'warning' as const : ['llm', 'passthrough'].includes(attempt.outcome) ? 'success' as const : 'error' as const,
             latency: attempt.total_ms,

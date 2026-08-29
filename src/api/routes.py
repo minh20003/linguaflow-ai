@@ -2605,6 +2605,19 @@ async def analyze_message_clarification(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=exc.message,
         ) from exc
+    except Exception as exc:
+        # Do not expose an unhandled provider/SDK exception as an HTTP 500 to
+        # the chat UI.  Preserve the trace in server logs while returning a
+        # stable, actionable response that the client can present to the user.
+        logger.exception(
+            "Unexpected clarification analysis failure for conversation %s, message %s",
+            conversation_id,
+            message_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Clarification service is temporarily unavailable",
+        ) from exc
 
 
 @router.post(
@@ -2747,6 +2760,25 @@ async def reject_action_proposal(
         ) from exc
     except ActionProposalOwnershipError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the assigned owner can reject this proposal") from exc
+    except ActionProposalStatusError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.delete("/action-proposals/{proposal_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_terminal_action_proposal(
+    proposal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete an inbox item only after it has been rejected or become stale."""
+    service = ActionProposalService(db)
+    try:
+        await service.delete_terminal_proposal(proposal_id, current_user.id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except ActionProposalNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action proposal was not found") from exc
+    except ActionProposalOwnershipError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the assigned owner can delete this proposal") from exc
     except ActionProposalStatusError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 

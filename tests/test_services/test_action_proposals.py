@@ -282,6 +282,20 @@ def test_temporal_normalizer_requires_trusted_timezone_for_relative_time():
     assert explicit.scheduled_start_at == datetime(2026, 8, 22, 2, 0, tzinfo=UTC)
 
 
+def test_temporal_normalizer_accepts_local_vietnamese_clarification_with_timezone():
+    resolved = normalize_action_time(
+        raw_time_expression=None,
+        reference_timestamp=datetime(2026, 8, 28, 8, 0, tzinfo=UTC),
+        trusted_timezone="Asia/Ho_Chi_Minh",
+        clarification_answer="09:00 ngày 29/08/2026",
+        existing_missing_fields=["time"],
+    )
+
+    assert resolved.scheduled_start_at == datetime(2026, 8, 29, 2, 0, tzinfo=UTC)
+    assert resolved.resolved_timezone == "Asia/Ho_Chi_Minh"
+    assert resolved.missing_fields == ()
+
+
 @pytest.mark.asyncio
 async def test_clarification_resolves_only_temporal_ambiguity(test_db: AsyncSession, proposal_setup):
     service = ActionProposalService(test_db)
