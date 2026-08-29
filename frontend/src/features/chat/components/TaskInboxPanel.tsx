@@ -93,6 +93,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   const [options, setOptions] = useState<Record<string, ApprovalOptions>>({});
 
   const [drafts, setDrafts] = useState<Record<string, ProposalDraft>>({});
+  const [editingProposal, setEditingProposal] = useState<ApiActionProposal | null>(null);
   const [tab, setTab] = useState<"awaiting" | "decided">("awaiting");
 
   const optionsFor = (id: string): ApprovalOptions => options[id] ?? DEFAULT_APPROVAL;
@@ -430,54 +431,48 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
 
   return (
     <section className="flex h-full w-full flex-col bg-[#F7F8FC] dark:bg-[#14161C]">
-      <header className="flex min-h-16 items-center border-b border-[#E8EAF0] bg-white px-5 dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-7">
+      <header className="shrink-0 border-b border-[#E8EAF0] bg-white px-5 py-4 dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-7">
+        <div className="mx-auto flex max-w-4xl items-center gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#2563EB] text-white shadow-sm shadow-blue-200 dark:shadow-none">
             <ListTodo className="h-5 w-5" />
           </span>
           <div>
-            <h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
-            <p className="text-xs text-[#74798C] dark:text-[#9DA3B4]">Các đề xuất của trợ lý đang chờ bạn xử lý</p>
+            <h2 className="text-base font-bold tracking-tight text-[#1E2230] dark:text-[#F5F6FA]">Hộp nhiệm vụ</h2>
+            <p className="mt-0.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">Theo dõi và duyệt các đề xuất từ trợ lý</p>
           </div>
         </div>
-        {pendingCount > 0 && (
-          <span className="ml-auto shrink-0 rounded-full bg-[#EFF6FF] px-3 py-1 text-xs font-bold text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
-            {pendingCount} cần xử lý
-          </span>
-        )}
+        </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7">
-        <div className="mx-auto max-w-5xl space-y-3">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-7 sm:py-8">
+        <div className="mx-auto max-w-4xl space-y-5">
         {isLoading && (
           <p className="px-1 py-6 text-center text-xs text-[#74798C]">Đang tải…</p>
         )}
 
-        {!isLoading && ordered.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-3 py-14 text-center dark:border-[#3A3F50] dark:bg-[#1C1F27]">
-            <ListTodo className="mx-auto h-8 w-8 text-[#CED2DE] dark:text-[#3A3F50]" />
-            <p className="mt-3 text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
-              Chưa có việc nào chờ bạn
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
-              Khi bạn hứa làm gì đó trong hội thoại, trợ lý sẽ đề xuất ở đây để bạn duyệt.
-            </p>
+        {!isLoading && ordered.length === 0 ? (
+          <div className="rounded-3xl border border-[#E8EAF0] bg-white px-6 py-14 text-center shadow-sm dark:border-[#2A2E3D] dark:bg-[#1C1F27] sm:px-12">
+            <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
+              <ListTodo className="h-7 w-7" />
+            </span>
+            <h3 className="mt-5 text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chưa có việc nào cần duyệt</h3>
           </div>
-        )}
-
+        ) : (
+          <>
         {/* Two tabs, not one long list. They answer different questions —
             "what needs me" against "what already happened" — and the second
             grows without bound, so merged it buries the first. */}
-        <div className="flex items-center gap-1 rounded-xl bg-white p-1 dark:bg-[#1C1F27]">
+        <div className="flex items-center gap-1 rounded-2xl border border-[#E8EAF0] bg-white p-1.5 shadow-sm dark:border-[#2A2E3D] dark:bg-[#1C1F27]">
           {([
             ["awaiting", "Cần duyệt", awaiting.length],
-            ["decided", "Đã duyệt", decidedList.length],
+            ["decided", "Đã xử lý", decidedList.length],
           ] as const).map(([key, caption, count]) => (
             <button
               key={key}
               type="button"
               onClick={() => setTab(key)}
-              className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+              className={`flex-1 rounded-xl px-3 py-2.5 text-xs font-bold transition-colors ${
                 tab === key
                   ? "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
                   : "text-[#74798C] hover:bg-[#F7F8FC] dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
@@ -504,9 +499,11 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
         {(tab === "awaiting" ? awaiting : decidedList).map(renderProposal)}
 
         {!isLoading && (tab === "awaiting" ? awaiting : decidedList).length === 0 && (
-          <p className="px-1 py-10 text-center text-xs text-[#74798C] dark:text-[#9DA3B4]">
-            {tab === "awaiting" ? "Không có việc nào chờ bạn duyệt." : "Chưa có việc nào đã duyệt."}
-          </p>
+          <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-5 py-12 text-center text-xs text-[#74798C] dark:border-[#3A3F50] dark:bg-[#1C1F27] dark:text-[#9DA3B4]">
+            {tab === "awaiting" ? "Không có việc nào đang chờ bạn duyệt." : "Chưa có việc nào đã được xử lý."}
+          </div>
+        )}
+          </>
         )}
         </div>
       </div>
