@@ -80,6 +80,7 @@ class _FixtureProvider:
         audio_bytes: bytes,
         filename: str,
         content_type: str,
+        language_hint: str | None = None,
     ) -> TranscriptionResult:
         self.calls.append((audio_bytes, filename, content_type))
         return TranscriptionResult(
@@ -132,7 +133,11 @@ def test_voice_path_has_no_summary_or_voice_specific_translation_seam():
     assert "audio/translations" not in provider_source
     assert "gemini-3.5-transcribe-live" not in provider_source
     assert '"type": "verbatim"' in provider_source
-    assert '"language_codes": []' in provider_source
+    # The language codes name the language being *spoken*, as a hint fed from
+    # the caller. They must never become a fixed target language, which is the
+    # shape that would quietly turn transcription into translation — the same
+    # thing `audio/translations` is barred for above.
+    assert '"language_codes": [language_hint] if language_hint else []' in provider_source
 
 
 class _RecordingPublisher:

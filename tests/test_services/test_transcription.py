@@ -58,14 +58,17 @@ class _FakeProvider:
     def __init__(self, result: TranscriptionResult) -> None:
         self.result = result
         self.calls: list[tuple[bytes, str, str]] = []
+        self.language_hints: list[str | None] = []
 
     async def transcribe(
         self,
         audio_bytes: bytes,
         filename: str,
         content_type: str,
+        language_hint: str | None = None,
     ) -> TranscriptionResult:
         self.calls.append((audio_bytes, filename, content_type))
+        self.language_hints.append(language_hint)
         return self.result
 
 
@@ -426,6 +429,45 @@ async def test_gemini_uploads_file_and_requests_verbatim_auto_detect_transcripti
     assert "live" not in request
     assert client.aio.files.delete_calls == ["files/provider-private-id"]
     assert client.aio.closed is True
+
+
+@pytest.mark.asyncio
+async def test_gemini_request_names_the_language_when_the_sender_has_one():
+    """The sender's preferred_language travels as a hint, not a constraint.
+
+    Pure auto-detection misheard a Vietnamese sample outright — "Chào Bob,
+    chiều mai" came back as "Chị ơi, khi nào bao giờ" — and naming the language
+    fixed it, so the hint has to actually reach the request.
+    """
+    client = _FakeClient()
+    provider = _gemini_provider(client)
+
+    await provider.transcribe(b"audio-bytes", "recording.ogg", "audio/ogg", "vi")
+
+    config = client.aio.interactions.calls[0]["generation_config"]
+    assert config["transcription_config"]["language_codes"] == ["vi"]
+    # Still verbatim: the hint must not quietly change the transcription mode.
+    assert config["transcription_config"]["mode"] == {"type": "verbatim"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_request_falls_back_to_auto_detection_without_a_hint():
+    client = _FakeClient()
+    provider = _gemini_provider(client)
+
+    await provider.transcribe(b"audio-bytes", "recording.ogg", "audio/ogg")
+
+    config = client.aio.interactions.calls[0]["generation_config"]
+    assert config["transcription_config"]["language_codes"] == []
+
+
+@pytest.mark.asyncio
+async def test_service_passes_the_language_hint_through_to_the_provider():
+    service, provider = _service()
+
+    await service.transcribe_attachment(_attachment(), "ja")
+
+    assert provider.language_hints == ["ja"]
 
 
 @pytest.mark.asyncio

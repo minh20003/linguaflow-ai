@@ -54,9 +54,13 @@ class FakeTranscriptionService:
         self.error = error
         self.before_return = before_return
         self.calls: list[str] = []
+        self.language_hints: list[str | None] = []
 
-    async def transcribe_attachment(self, attachment: Attachment) -> TranscriptionResult:
+    async def transcribe_attachment(
+        self, attachment: Attachment, language_hint: str | None = None
+    ) -> TranscriptionResult:
         self.calls.append(attachment.id)
+        self.language_hints.append(language_hint)
         if self.before_return is not None:
             await self.before_return()
         if self.error is not None:
@@ -297,7 +301,7 @@ async def test_duplicate_tasks_can_publish_only_one_terminal_transition(
     both_started = asyncio.Event()
 
     class BarrierTranscriptionService(FakeTranscriptionService):
-        async def transcribe_attachment(self, attachment):
+        async def transcribe_attachment(self, attachment, language_hint=None):
             self.calls.append(attachment.id)
             if len(self.calls) == 2:
                 both_started.set()
