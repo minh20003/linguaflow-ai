@@ -5,6 +5,11 @@
 #   ./run.sh              # chạy cả hai
 #   ./run.sh backend      # chỉ backend
 #   ./run.sh frontend     # chỉ frontend
+#   ./run.sh stop         # dừng mọi thứ đang giữ cổng 8000/3000
+#
+# `stop` có mặt vì Ctrl+C không đáng tin trong Git Bash trên Windows: bash ở đó
+# không phải lúc nào cũng chuyển được tín hiệu tới tiến trình Windows thật, nên
+# cần một cách dừng không dựa vào tín hiệu nào cả.
 #
 #   SKIP_MIGRATE=1 ./run.sh    # bỏ qua alembic upgrade head
 #   NO_DB_AUTOSTART=1 ./run.sh # không tự bật Postgres trong WSL
@@ -76,7 +81,7 @@ free_port() {
     local port="$1" label="$2" pids pid
     pids="$(port_pids "$port")"
     [ -n "$pids" ] || return 0
-    echo "♻️  Cổng $port ($label) đang bị PID $(echo "$pids" | tr '\n' ' ')giữ — dọn trước khi chạy."
+    echo "♻️  Cổng $port ($label) đang bị PID $(echo "$pids" | tr '\n' ' ')giữ — đang dọn."
     for _ in $(seq 1 20); do
         pids="$(port_pids "$port")"
         [ -z "$pids" ] && return 0
@@ -134,6 +139,24 @@ wait_until_up() {
     printf " — quá %ss mà chưa lên.\n" "$limit"
     return 1
 }
+
+if [ "${1:-all}" = "stop" ]; then
+    # Không dựa vào tín hiệu, không cần biết lần chạy trước bắt đầu thế nào:
+    # tra PID từ chính cổng đang lắng nghe rồi hạ cả cây tiến trình. Chạy được
+    # cả khi terminal cũ đã đóng, hoặc backend được khởi động bằng `make run`.
+    trap - INT TERM EXIT
+    stopped=0
+    for target in "$FRONTEND_PORT:frontend" "$BACKEND_PORT:backend"; do
+        target_port="${target%%:*}"
+        target_name="${target##*:}"
+        if [ -n "$(port_pids "$target_port")" ]; then
+            free_port "$target_port" "$target_name"
+            stopped=1
+        fi
+    done
+    [ "$stopped" -eq 1 ] && echo " ✅ Đã dừng xong." || echo " ℹ️  Không có gì đang chạy trên $BACKEND_PORT/$FRONTEND_PORT."
+    exit 0
+fi
 
 echo "=================================================="
 echo " 🚀 LinguaFlow — môi trường phát triển"
@@ -289,7 +312,7 @@ case "${1:-all}" in
     backend|be)  run_backend ;;
     frontend|fe) run_frontend ;;
     all|"")      run_backend; run_frontend ;;
-    *)           echo "Dùng: ./run.sh [all|backend|frontend]" >&2; exit 2 ;;
+    *)           echo "Dùng: ./run.sh [all|backend|frontend|stop]" >&2; exit 2 ;;
 esac
 
 echo ""
@@ -297,7 +320,8 @@ echo "=================================================="
 [ -n "$BE_PID" ] && echo "    Backend  : http://localhost:$BACKEND_PORT/docs"
 [ -n "$FE_PID" ] && echo "    Frontend : http://localhost:$FRONTEND_PORT"
 echo "    Log      : backend.log / frontend.log"
-echo " 💡 Ctrl+C để dừng tất cả."
+echo " 💡 Ctrl+C để dừng. Nếu Ctrl+C không ăn (hay gặp trong Git Bash trên"
+echo "    Windows), mở terminal khác và chạy: ./run.sh stop"
 echo "=================================================="
 echo ""
 
