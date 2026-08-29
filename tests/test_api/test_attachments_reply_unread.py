@@ -81,6 +81,54 @@ async def test_an_outsider_cannot_download_an_attachment(
 
 
 @pytest.mark.asyncio
+async def test_an_attachment_on_a_private_message_stays_private(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """The loose-upload exception must not expose a private message's file."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("private.txt", b"for the owner", "text/plain")},
+    )
+    assert upload.status_code == 201
+
+    private_message = Message(
+        client_message_id="private-attachment-1",
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        original_text="Private attachment",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private_message)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == upload.json()["id"])
+    )
+    attachment.message_id = private_message.id
+    await test_db.commit()
+
+    hidden = await client.get(
+        upload.json()["download_url"],
+        headers=auth_headers_for_user(test_user_two),
+    )
+    visible = await client.get(
+        upload.json()["download_url"],
+        headers=test_user_headers,
+    )
+
+    assert hidden.status_code == 404
+    assert visible.status_code == 200
+    assert visible.content == b"for the owner"
+
+
+@pytest.mark.asyncio
 async def test_sending_with_an_attachment_binds_it_to_that_message(
     client,
     test_db,
