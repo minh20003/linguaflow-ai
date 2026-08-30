@@ -20,9 +20,15 @@ concurrency:
 jobs:
   lint-and-test:
     runs-on: self-hosted
+    # A newer commit makes an older pre-deploy verification obsolete. This
+    # clears stale runner backlog without touching production jobs, whose own
+    # `linguaflow-production` group remains non-cancelling below.
+    concurrency:
+      group: ci-verification-${{ github.ref }}
+      cancel-in-progress: true
     # Runner BTC dùng chung có tốc độ biến động; dành tối đa 2 giờ để cài
     # dependencies và chạy toàn bộ hơn 700 tests mà không bị huỷ giữa chừng.
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     # Bộ kiểm thử chạy trên PostgreSQL thật chứ không phải SQLite (ADR-22):
     # glossary, correction_log và message_embeddings đều là cột `vector` của
@@ -55,6 +61,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -75,6 +88,21 @@ jobs:
           # Trỏ vào service container ở trên. conftest.py suy ra tên cơ sở dữ
           # liệu kiểm thử bằng cách thêm hậu tố `_test`, rồi tự tạo nếu chưa có.
           DATABASE_URL: "postgresql+asyncpg://linguaflow:linguaflow@localhost:${{ job.services.postgres.ports[5432] }}/linguaflow"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Verify frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          npm test
+          npx tsc --noEmit
+          npm run lint
+          npm run build
 
   production-gate:
     name: Gate automatic production release

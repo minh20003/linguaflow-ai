@@ -11,6 +11,7 @@ import {
   decisionCorrections,
   draftFromProposal,
   formatProposalWhen,
+  toLocalInputValue,
 } from "../proposal-approval";
 import { ProposalDecisionForm } from "./ProposalDecisionForm";
 import {
@@ -533,8 +534,8 @@ const ProposalEditModal: React.FC<{
   const [title, setTitle] = useState(proposal.title);
   const [location, setLocation] = useState(proposal.location ?? "");
   const [details, setDetails] = useState(proposal.details ?? "");
-  const [startsAt, setStartsAt] = useState(toDateTimeLocal(proposal.scheduled_start_at));
-  const [endsAt, setEndsAt] = useState(toDateTimeLocal(proposal.scheduled_end_at));
+  const [startsAt, setStartsAt] = useState(toLocalInputValue(proposal.scheduled_start_at));
+  const [endsAt, setEndsAt] = useState(toLocalInputValue(proposal.scheduled_end_at));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true">
