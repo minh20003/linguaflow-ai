@@ -65,6 +65,8 @@ function proposal(overrides: Partial<ApiActionProposal> = {}): ApiActionProposal
     details: null,
     location: null,
     scheduled_start_at: '2026-09-01T02:00:00Z',
+    // Required since develop_v2 gave a proposal an end as well as a start.
+    scheduled_end_at: null,
     due_at: null,
     clarification_prompt: null,
     clarification_question: null,

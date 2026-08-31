@@ -101,12 +101,21 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const shouldRenderText = isDeleted || !isVoice || message.transcriptionStatus === 'completed';
   const hasUserMention = message.mentions?.some((mention) => mention.type === 'user');
   const hasAssistantMention = message.mentions?.some((mention) => mention.type === 'assistant');
-  const renderMessageContent = (value: string) => value.split(/(@[A-Za-z0-9_.-]+)/g).map((part, index) => {
+  const renderMessageContent = (value: string) => value.split(/(\*\*[\s\S]+?\*\*|\*[^*\n]+?\*|@[A-Za-z0-9_.-]+)/g).map((part, index) => {
     if (part.toLowerCase() === '@assistant' && hasAssistantMention) {
       return <span key={index} className="rounded bg-violet-100 px-1 text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">{part}</span>;
     }
     if (part.startsWith('@') && hasUserMention) {
       return <span key={index} className="rounded bg-[#EFF6FF] px-1 text-[#2563EB] dark:bg-[#2563EB]/20 dark:text-[#93C5FD]">{part}</span>;
+    }
+    // Assistant text is model output.  We deliberately support just the
+    // harmless inline emphasis syntax instead of parsing HTML or injecting it
+    // into the DOM.  React still escapes the actual text content.
+    if (message.isAssistant && part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>;
+    }
+    if (message.isAssistant && part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
     }
     return part;
   });
@@ -249,12 +258,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         {/* Message Bubble Box */}
         <div
           onMouseEnter={() => setShowActions(true)}
-          onClick={(event) => {
-            if (event.target instanceof HTMLElement && event.target.closest('button, textarea, input, a, audio')) return;
-            setShowActions((visible) => !visible);
-            setShowEmojiPicker(false);
-            setShowMoreMenu(false);
-          }}
           className={`relative rounded-2xl text-sm leading-relaxed transition-colors select-text ${
             isAttachmentCaption
               ? 'bg-transparent p-0 shadow-none'
@@ -315,6 +318,25 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               </div>
             )}
 
+            {!isDeleted && isVoice && message.transcriptionStatus === 'failed' && (
+              <div className="flex flex-wrap items-center gap-2 py-1 text-xs text-amber-600 dark:text-amber-400" role="status">
+                <AlertCircle className="h-3.5 w-3.5" />
+                <span>{interactionText(language, 'Transcription unavailable')}</span>
+                <button
+                  type="button"
+                  onClick={() => onRetryTranscription(message.id)}
+                  disabled={isRetryingTranscription}
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:cursor-not-allowed disabled:opacity-50 dark:text-[#60A5FA] dark:hover:bg-[#2563EB]/20"
+                >
+                  <RotateCw className={`h-3 w-3 ${isRetryingTranscription ? 'animate-spin' : ''}`} />
+                  {interactionText(
+                    language,
+                    isRetryingTranscription ? 'Retrying transcription…' : 'Retry transcription',
+                  )}
+                </button>
+              </div>
+            )}
+
             {/* Translating Pending State */}
             {isTranslating && (
               <div className="flex items-center gap-1.5 py-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
@@ -338,6 +360,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 >
                   Retry
                 </button>
+
               </div>
             )}
           </div>
@@ -439,7 +462,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       {/* Hover on desktop; tap/click remains available for touch devices. */}
       {showActions && (
         <div
-          className={`absolute left-1/2 flex items-center gap-0.5 rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-lg transition-all z-20 dark:border-[#2E3342] dark:bg-[#232630] ${
+          className={`absolute left-1/2 translate-y-1 flex items-center gap-0.5 rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-lg transition-all z-20 dark:border-[#2E3342] dark:bg-[#232630] ${
             isOutgoing ? '-top-9' : 'top-0'
           }`}
         >
@@ -495,6 +518,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           >
             <Copy className="w-3.5 h-3.5" />
           </button>
+
 
           {isOutgoing && onDeleteMessage && (
             <button
@@ -555,6 +579,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           </div>
         </div>
       )}
+
     </div>
   );
 };

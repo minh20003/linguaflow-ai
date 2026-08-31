@@ -408,6 +408,21 @@ Quy tắc này **không áp dụng cho `type: "group"`**: hai nhóm cùng thành
 
 ### 3.6. Sửa và gỡ tin nhắn (F-06)
 
+### 3.5.1. Phân trang lịch sử tin nhắn
+
+`GET /conversations/{conversation_id}/messages` nhận `limit` (1..100), `offset`
+cho client cũ, và cursor opaque `before` cho client mới. Không được gửi `offset`
+cùng `before`; server trả `400` cho tổ hợp này.
+
+- Không có `before` và `paginated=false`: tương thích ngược, trả mảng `MessageDTO`.
+- Có `before` hoặc `paginated=true`: trả `{items, has_more, next_cursor}`.
+- `next_cursor` là cặp `(created_at, id)` được mã hoá; client chỉ chuyển nguyên
+  giá trị đó vào `before` để lấy trang cũ hơn.
+
+Cursor giải quyết trường hợp nhiều tin nhắn có cùng timestamp và tránh chi phí
+OFFSET tăng theo độ sâu lịch sử. Kiểm tra quyền thành viên và các quy tắc ẩn tin
+đã gỡ vẫn áp dụng cho mọi trang.
+
 `PATCH .../messages/{message_id}` đổi `original_text`, ghi `edited_at`, rồi **dịch lại** tin nhắn cho các thành viên còn lại — bản dịch cũ không còn đúng với nội dung mới. `DELETE .../messages/{message_id}` là **xoá mềm**: giữ nguyên dòng, ghi `deleted_at`, và từ đó API trả `original_text` rỗng cùng mảng `translations` rỗng.
 
 Xoá mềm chứ không xoá cứng vì `translation_results` và `translation_attempts` trỏ vào `messages` — xoá cứng sẽ kéo theo toàn bộ bằng chứng đo lường mà ADR-16 dựng ra để giữ, tức là gỡ một tin nhắn sẽ âm thầm làm sai số liệu `fallback_rate` ở §3.4.

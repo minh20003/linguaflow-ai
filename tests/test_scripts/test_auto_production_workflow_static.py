@@ -25,6 +25,20 @@ def test_existing_ci_gate_remains_postgres_pgvector_and_full_suite() -> None:
     assert "pip install -r requirements.txt" in lint
     assert "ruff check src/ tests/ eval/" in lint
     assert "pytest tests/ -v --tb=short" in lint
+    assert "group: ci-verification-${{ github.ref }}" in lint
+    assert "cancel-in-progress: true" in lint
+
+
+def test_ci_gate_verifies_frontend_before_production_jobs() -> None:
+    lint = _job("lint-and-test", "production-gate")
+    assert "actions/setup-node@v4" in lint
+    assert "cache-dependency-path: frontend/package-lock.json" in lint
+    assert "working-directory: frontend" in lint
+    assert "npm ci" in lint
+    assert "npm test" in lint
+    assert "npx tsc --noEmit" in lint
+    assert "npm run lint" in lint
+    assert "npm run build" in lint
 
 
 def test_pull_request_events_can_only_run_lint_and_test() -> None:

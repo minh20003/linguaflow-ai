@@ -26,6 +26,30 @@ T = TypeVar("T", bound=BaseModel)
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", re.IGNORECASE)
 
 
+def _discard_cancelled_task(task: asyncio.Future[Any]) -> None:
+    """Consume a detached provider task's terminal exception.
+
+    Some SDKs (notably Gemini's async client) do not finish promptly after
+    cancellation.  The API request must still be allowed to return its timeout
+    response, while this callback prevents an unobserved-task warning later.
+    """
+    try:
+        task.exception()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def _await_with_hard_timeout(awaitable: Any, timeout: float) -> Any:
+    """Return within ``timeout`` even when a provider ignores cancellation."""
+    task = asyncio.ensure_future(awaitable)
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if not done:
+        task.cancel()
+        task.add_done_callback(_discard_cancelled_task)
+        raise TimeoutError
+    return task.result()
+
+
 def clean_json_text(raw_text: str) -> str:
     """Extract and normalize JSON text from raw LLM output.
 
@@ -122,16 +146,10 @@ async def invoke_with_repair(
 
     # 1. First invocation attempt
     try:
-        if runnable_config:
-            response = await asyncio.wait_for(
-                llm.ainvoke(messages, config=runnable_config),
-                timeout=timeout,
-            )
-        else:
-            response = await asyncio.wait_for(
-                llm.ainvoke(messages),
-                timeout=timeout,
-            )
+        response = await _await_with_hard_timeout(
+            llm.ainvoke(messages, config=runnable_config) if runnable_config else llm.ainvoke(messages),
+            timeout,
+        )
     except TimeoutError as exc:
         latency_ms = (time.perf_counter() - start_time) * 1000.0
         log_intelligence_event(
@@ -207,16 +225,12 @@ async def invoke_with_repair(
         ]
 
     try:
-        if runnable_config:
-            repair_response = await asyncio.wait_for(
-                llm.ainvoke(repair_messages, config=runnable_config),
-                timeout=timeout,
-            )
-        else:
-            repair_response = await asyncio.wait_for(
-                llm.ainvoke(repair_messages),
-                timeout=timeout,
-            )
+        repair_response = await _await_with_hard_timeout(
+            llm.ainvoke(repair_messages, config=runnable_config)
+            if runnable_config
+            else llm.ainvoke(repair_messages),
+            timeout,
+        )
         repair_output = extract_text(repair_response)
         result = parse_structured_json(repair_output, schema, operation=operation)
         latency_ms = (time.perf_counter() - start_time) * 1000.0

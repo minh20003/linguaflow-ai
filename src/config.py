@@ -157,6 +157,7 @@ class Settings(BaseSettings):
     stt_provider: Literal["gemini"] = "gemini"
     stt_model: str = "gemini-3.5-transcribe"
     stt_timeout_seconds: int = Field(default=60, ge=1, le=300)
+    stt_retry_attempts: int = Field(default=3, ge=1, le=5)
 
     # Google Identity Services authentication, and Google Calendar (ADR-35).
     #
@@ -312,6 +313,10 @@ class Settings(BaseSettings):
     # than making an API request wait indefinitely.
     database_pool_recycle_seconds: int = Field(default=900, ge=60, le=86_400)
     database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # SQLAlchemy echo includes bound parameters. Leaving it implicitly on in
+    # development therefore writes message text and completed voice transcripts
+    # to the console. Keep it opt-in in every environment.
+    database_echo: bool = False
     # The first managed-PostgreSQL connection can take longer than a pooled
     # request during a cold start. Keep readiness strict, but avoid reporting a
     # healthy database as unavailable before its TLS/pooler handshake finishes.

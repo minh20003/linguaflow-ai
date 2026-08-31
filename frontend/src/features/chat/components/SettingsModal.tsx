@@ -45,31 +45,41 @@ const copy = settingText;
  *  the component rather than in a locale file because the wording *is* the
  *  consent — a translation that drifts changes what was agreed to.
  */
-const CONSENT_COPY: { scope: AgentConsentScope; title: string; detail: string }[] = [
+const CONSENT_COPY: { scope: AgentConsentScope; title: string; detail: string; englishTitle: string; englishDetail: string }[] = [
   {
     scope: 'read_conversations',
     title: 'Đọc nội dung hội thoại',
     detail: 'Trợ lý đọc tin nhắn trong hội thoại bạn mở để tóm tắt và tìm việc cần làm.',
+    englishTitle: 'Read conversations',
+    englishDetail: 'Let the assistant read open conversations to summarize them and identify follow-up tasks.',
   },
   {
     scope: 'proactive_scan',
     title: 'Tự phát hiện việc khi bạn nhắn',
     detail: 'Mỗi tin nhắn bạn gửi được quét để tìm cam kết và lịch hẹn, kể cả khi bạn không hỏi.',
+    englishTitle: 'Proactively detect tasks',
+    englishDetail: 'Scan your messages for commitments and appointments, even when you do not ask.',
   },
   {
     scope: 'store_memory',
     title: 'Ghi nhớ hội thoại lâu dài',
     detail: 'Tin nhắn của bạn được lưu thêm dạng vector để trợ lý nhớ được chuyện đã nói từ lâu.',
+    englishTitle: 'Remember conversations',
+    englishDetail: 'Store conversation context so the assistant can remember what you discussed over time.',
   },
   {
     scope: 'calendar_read',
     title: 'Đọc lịch Google của bạn',
     detail: 'Sự kiện bạn tạo trên Google Calendar hiện trong trang lịch của ứng dụng.',
+    englishTitle: 'Read your Google Calendar',
+    englishDetail: 'Show events from your connected Google Calendar in the app calendar.',
   },
   {
     scope: 'calendar_write',
     title: 'Ghi sự kiện lên lịch Google',
     detail: 'Việc bạn đã duyệt được tạo thành sự kiện trên Google Calendar của bạn.',
+    englishTitle: 'Add events to Google Calendar',
+    englishDetail: 'Create approved tasks as events in your connected Google Calendar.',
   },
 ];
 
@@ -87,6 +97,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // `preferredLanguage` controls message translation; labels must follow the
   // separately persisted interface language selected by this account.
   const language = settings.interfaceLanguage;
+  const assistantText = (english: string, vietnamese: string) =>
+    language === 'vi' ? vietnamese : english;
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
   const [name, setName] = useState(currentUser.name);
   const [bio, setBio] = useState(currentUser.bio || '');
@@ -412,8 +424,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeSection === 'ai' && (
               <div className="space-y-3">
                 <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#EFF6FF] to-violet-50 p-4 dark:from-[#2563EB]/20 dark:to-violet-500/15">
-                  <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-gradient-to-br from-[#2563EB] to-violet-600 text-white shadow-md shadow-[#2563EB]/20">
-                    <Bot className="h-6 w-6" />
+                  <div className="flex h-12 w-12 flex-none items-center justify-center rounded-2xl bg-white p-2 shadow-md shadow-[#2563EB]/20 dark:bg-[#1C1F27]">
+                    <img src="/brand/brand-mark.svg" alt="LinguaFlow" className="h-full w-full object-contain" />
                   </div>
                   <div className="min-w-0">
                     <h5 className="text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">
@@ -461,17 +473,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     a permission can be withdrawn without turning it back on. */}
                 <div className="pt-2">
                   <h5 className="px-1 text-xs font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-                    {copy(language, 'Quyền bạn cấp cho trợ lý')}
+                    {assistantText('Assistant permissions', 'Quyền bạn cấp cho trợ lý')}
                   </h5>
                   <p className="mt-1 px-1 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
-                    {copy(
-                      language,
+                    {assistantText(
+                      'Each permission is independent, off by default, and can be withdrawn at any time.',
                       'Mỗi quyền độc lập với nhau, mặc định đều tắt, và rút lại được bất cứ lúc nào.',
                     )}
                   </p>
                   <div className="mt-2 space-y-2">
-                    {CONSENT_COPY.map(({ scope, title, detail }) => {
+                    {CONSENT_COPY.map(({ scope, title, detail, englishTitle, englishDetail }) => {
                       const granted = agentConsents[scope] === true;
+                      const localizedTitle = assistantText(englishTitle, title);
+                      const localizedDetail = assistantText(englishDetail, detail);
                       return (
                         <div
                           key={scope}
@@ -479,17 +493,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         >
                           <div className="min-w-0">
                             <h6 className="text-xs font-semibold text-[#1E2230] dark:text-[#F5F6FA]">
-                              {copy(language, title)}
+                              {localizedTitle}
                             </h6>
                             <p className="mt-0.5 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
-                              {copy(language, detail)}
+                              {localizedDetail}
                             </p>
                           </div>
                           <button
                             type="button"
                             role="switch"
                             aria-checked={granted}
-                            aria-label={copy(language, title)}
+                            aria-label={localizedTitle}
                             disabled={!onUpdateAgentConsents}
                             onClick={() => onUpdateAgentConsents?.({ [scope]: !granted })}
                             className={`relative mt-0.5 w-11 h-6 flex-none rounded-full transition-colors disabled:opacity-50 ${
@@ -515,7 +529,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
       <AssistantConsentDialog
         isOpen={isConsentDialogOpen}
-        items={CONSENT_COPY}
+        items={CONSENT_COPY.map(({ scope, title, detail, englishTitle, englishDetail }) => ({
+          scope,
+          title: assistantText(englishTitle, title),
+          detail: assistantText(englishDetail, detail),
+        }))}
         granted={agentConsents}
         onCancel={() => setIsConsentDialogOpen(false)}
         onConfirm={(changes) => {

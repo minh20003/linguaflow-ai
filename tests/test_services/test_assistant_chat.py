@@ -190,6 +190,7 @@ async def test_tagging_the_assistant_hides_the_request_from_everyone_else(
 @pytest.mark.asyncio
 async def test_replying_to_an_assistant_message_is_also_addressed_to_it(
     conversation_factory,
+    monkeypatch,
     test_db,
     test_user,
     test_user_two,
@@ -201,6 +202,10 @@ async def test_replying_to_an_assistant_message_is_also_addressed_to_it(
     feel like operating a machine.
     """
     conversation = await conversation_factory(test_user, [test_user_two])
+    llm = SimpleNamespace(
+        ainvoke=AsyncMock(return_value=SimpleNamespace(content="Tóm tắt riêng tư."))
+    )
+    monkeypatch.setattr(chat_module, "get_assistant_llm", lambda: llm)
     service = ChatService(test_db)
     tagged = await service.send_message(
         sender_id=test_user.id,

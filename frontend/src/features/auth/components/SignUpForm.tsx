@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle2, ArrowRight, Loader2, KeyRound, ArrowLeft } from 'lucide-react';
+import { User, Mail, Lock, Eye, EyeOff, AlertCircle, Check, CheckCircle2, ArrowRight, Loader2, KeyRound, ArrowLeft } from 'lucide-react';
 import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
 import { signUp, verifyRegisterOtp, resendRegisterOtp, signInWithGoogle } from '../api/auth-api';
@@ -229,7 +229,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -8 }}
         transition={{ duration: 0.25 }}
-        className="bg-white rounded-2xl border border-slate-200/80 p-6 sm:p-8 shadow-sm shadow-slate-100"
+        className="bg-white rounded-3xl border border-slate-200/90 p-7 sm:p-9 md:p-10 shadow-lg shadow-slate-200/40"
       >
         <button
           type="button"
@@ -239,14 +239,14 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             setStep('form');
             setFormError(null);
           }}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors mb-4 cursor-pointer"
+          className="inline-flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors mb-5 cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" /> Back to details
         </button>
 
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Check your email</h2>
-          <p className="text-sm text-slate-500 mt-1">
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Check your email</h2>
+          <p className="text-sm sm:text-base text-slate-500 mt-1.5">
             We sent a 6-digit verification code to <span className="font-semibold text-slate-800">{email}</span>.
           </p>
         </div>
@@ -257,24 +257,24 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="mb-4 overflow-hidden"
+              className="mb-5 overflow-hidden"
             >
-              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs font-medium">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+              <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs sm:text-sm font-medium">
+                <AlertCircle className="w-4.5 h-4.5 shrink-0 text-rose-600" />
                 <span>{formError}</span>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <form onSubmit={handleVerifyOtp} className="space-y-4">
+        <form onSubmit={handleVerifyOtp} className="space-y-4.5">
           <div>
-            <label htmlFor="otp-input" className="block text-xs font-semibold text-slate-700 mb-1.5">
+            <label htmlFor="otp-input" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
               Verification code
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <KeyRound className="w-4 h-4" />
+                <KeyRound className="w-4.5 h-4.5" />
               </div>
               <input
                 id="otp-input"
@@ -289,7 +289,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
                   if (formError) setFormError(null);
                 }}
                 placeholder="000000"
-                className="w-full h-12 pl-10 pr-3.5 text-center text-lg tracking-widest font-mono font-bold bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-300"
+                className="w-full h-14 pl-11 pr-3.5 text-center text-xl tracking-widest font-mono font-bold bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#08BCFD] rounded-xl outline-none focus:ring-3 focus:ring-[#08BCFD]/20 transition-all text-slate-900 placeholder:text-slate-300"
               />
             </div>
           </div>
@@ -298,17 +298,17 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             id="verify-otp-submit-button"
             type="submit"
             disabled={isLoading || otp.length !== 6}
-            className="w-full h-11 mt-2 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all shadow-sm shadow-indigo-600/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
+            className="w-full h-12 mt-2 px-4 rounded-xl bg-[#08BCFD] hover:bg-[#0284C7] text-white text-sm sm:text-base font-semibold transition-all shadow-md shadow-[#08BCFD]/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
           >
             {isLoading ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4.5 h-4.5 animate-spin" />
                 <span>Verifying...</span>
               </>
             ) : (
               <>
                 <span>Complete registration</span>
-                <ArrowRight className="w-4 h-4" />
+                <ArrowRight className="w-4.5 h-4.5" />
               </>
             )}
           </button>
@@ -318,7 +318,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               type="button"
               onClick={handleResendOtp}
               disabled={cooldown > 0 || resending}
-              className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
+              className="text-xs sm:text-sm font-semibold text-[#0284C7] hover:text-[#08BCFD] disabled:text-slate-400 transition-colors cursor-pointer disabled:cursor-not-allowed"
             >
               {cooldown > 0 ? `Resend code in ${cooldown}s` : resending ? 'Resending code...' : 'Resend verification code'}
             </button>
@@ -334,12 +334,12 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.25 }}
-      className="bg-white rounded-2xl border border-slate-200/80 p-6 sm:p-8 shadow-sm shadow-slate-100"
+      className="bg-white rounded-3xl border border-slate-200/90 p-7 sm:p-9 md:p-10 shadow-lg shadow-slate-200/40"
     >
       {/* Title & Subtitle */}
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Create your account</h2>
-        <p className="text-sm text-slate-500 mt-1">Chat across 10+ languages with automatic translation.</p>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Create your account</h2>
+        <p className="text-sm sm:text-base text-slate-500 mt-1.5">Chat across 10+ languages with automatic translation.</p>
       </div>
 
       {/* Error Alert */}
@@ -349,10 +349,10 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="mb-4 overflow-hidden"
+            className="mb-5 overflow-hidden"
           >
-            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs font-medium">
-              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs sm:text-sm font-medium">
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 text-rose-600" />
               <span>{formError}</span>
             </div>
           </motion.div>
@@ -367,7 +367,7 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       />
 
       {/* Divider */}
-      <div className="relative my-5">
+      <div className="relative my-6">
         <div className="absolute inset-0 flex items-center">
           <div className="w-full border-t border-slate-200" />
         </div>
@@ -377,15 +377,15 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
       </div>
 
       {/* Form Fields */}
-      <form onSubmit={handleSubmit} className="space-y-3.5">
+      <form onSubmit={handleSubmit} className="space-y-4.5">
         {/* Full Name */}
         <div>
-          <label htmlFor="signup-name" className="block text-xs font-semibold text-slate-700 mb-1">
+          <label htmlFor="signup-name" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
             Full name
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <User className="w-4 h-4" />
+              <User className="w-4.5 h-4.5" />
             </div>
             <input
               id="signup-name"
@@ -398,22 +398,22 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               }}
               onBlur={() => setTouched({ ...touched, fullName: true })}
               placeholder="Your name"
-              className="w-full h-11 pl-10 pr-3.5 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-400"
+              className="w-full h-12 pl-11 pr-3.5 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#08BCFD] rounded-xl outline-none focus:ring-3 focus:ring-[#08BCFD]/20 transition-all text-slate-900 placeholder:text-slate-400"
             />
           </div>
           {touched.fullName && !fullName.trim() && (
-            <p className="text-[11px] text-rose-500 mt-1">Full name is required</p>
+            <p className="text-xs text-rose-500 mt-1.5 font-medium">Full name is required</p>
           )}
         </div>
 
         {/* Email */}
         <div>
-          <label htmlFor="signup-email" className="block text-xs font-semibold text-slate-700 mb-1">
+          <label htmlFor="signup-email" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
             Email address
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Mail className="w-4 h-4" />
+              <Mail className="w-4.5 h-4.5" />
             </div>
             <input
               id="signup-email"
@@ -426,28 +426,28 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               }}
               onBlur={() => setTouched({ ...touched, email: true })}
               placeholder="you@example.com"
-              className={`w-full h-11 pl-10 pr-3.5 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border rounded-xl outline-none transition-all text-slate-900 placeholder:text-slate-400 ${
+              className={`w-full h-12 pl-11 pr-3.5 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border rounded-xl outline-none transition-all text-slate-900 placeholder:text-slate-400 ${
                 touched.email && !isEmailValid && email
                   ? 'border-rose-300 focus:border-rose-500 focus:ring-3 focus:ring-rose-500/15'
-                  : 'border-slate-200 focus:border-indigo-500 focus:ring-3 focus:ring-indigo-500/15'
+                  : 'border-slate-200 focus:border-[#08BCFD] focus:ring-3 focus:ring-[#08BCFD]/20'
               }`}
             />
           </div>
           {touched.email && email.length > 0 && !isEmailValid && (
-            <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" /> Please enter a valid email format
+            <p className="text-xs text-rose-500 mt-1.5 font-medium flex items-center gap-1">
+              <AlertCircle className="w-3.5 h-3.5" /> Please enter a valid email format
             </p>
           )}
         </div>
 
         {/* Password */}
         <div>
-          <label htmlFor="signup-password" className="block text-xs font-semibold text-slate-700 mb-1">
+          <label htmlFor="signup-password" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
             Password
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Lock className="w-4 h-4" />
+              <Lock className="w-4.5 h-4.5" />
             </div>
             <input
               id="signup-password"
@@ -460,24 +460,24 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               }}
               onBlur={() => setTouched({ ...touched, password: true })}
               placeholder="Enter your password"
-              className="w-full h-11 pl-10 pr-10 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-indigo-500 rounded-xl outline-none focus:ring-3 focus:ring-indigo-500/15 transition-all text-slate-900 placeholder:text-slate-400"
+              className="w-full h-12 pl-11 pr-11 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-200 focus:border-[#08BCFD] rounded-xl outline-none focus:ring-3 focus:ring-[#08BCFD]/20 transition-all text-slate-900 placeholder:text-slate-400"
             />
             <button
               id="toggle-signup-password-visibility-button"
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-[#08BCFD] transition-colors cursor-pointer"
             >
-              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
             </button>
           </div>
           {/* Real-time inline password strength indicators */}
           {password.length > 0 && (
-            <div className="mt-1.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px]">
+            <div className="mt-2 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+              <div className="flex items-center gap-1.5 text-xs">
                 {isPasswordLengthOk ? (
-                  <span className="text-emerald-600 flex items-center gap-1 font-medium">
-                    <CheckCircle2 className="w-3 h-3" /> At least 8 characters
+                  <span className="text-emerald-600 flex items-center gap-1 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> At least 8 characters
                   </span>
                 ) : (
                   <span className="text-slate-400 flex items-center gap-1">
@@ -485,10 +485,10 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 text-xs">
                 {hasLetterAndNumber ? (
-                  <span className="text-emerald-600 flex items-center gap-1 font-medium">
-                    <CheckCircle2 className="w-3 h-3" /> Contains letters & numbers
+                  <span className="text-emerald-600 flex items-center gap-1 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Contains letters & numbers
                   </span>
                 ) : (
                   <span className="text-slate-400 flex items-center gap-1">
@@ -502,12 +502,12 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
 
         {/* Confirm Password */}
         <div>
-          <label htmlFor="signup-confirm-password" className="block text-xs font-semibold text-slate-700 mb-1">
+          <label htmlFor="signup-confirm-password" className="block text-xs sm:text-sm font-semibold text-slate-700 mb-1.5">
             Confirm password
           </label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Lock className="w-4 h-4" />
+              <Lock className="w-4.5 h-4.5" />
             </div>
             <input
               id="signup-confirm-password"
@@ -520,37 +520,38 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
               }}
               onBlur={() => setTouched({ ...touched, confirmPassword: true })}
               placeholder="Re-enter your password"
-              className={`w-full h-11 pl-10 pr-10 text-sm bg-slate-50/50 hover:bg-slate-50 focus:bg-white border rounded-xl outline-none transition-all text-slate-900 placeholder:text-slate-400 ${
+              className={`w-full h-12 pl-11 pr-11 text-sm sm:text-base bg-slate-50/50 hover:bg-slate-50 focus:bg-white border rounded-xl outline-none transition-all text-slate-900 placeholder:text-slate-400 ${
                 touched.confirmPassword && confirmPassword && !isPasswordMatch
                   ? 'border-rose-300 focus:border-rose-500 focus:ring-3 focus:ring-rose-500/15'
-                  : 'border-slate-200 focus:border-indigo-500 focus:ring-3 focus:ring-indigo-500/15'
+                  : 'border-slate-200 focus:border-[#08BCFD] focus:ring-3 focus:ring-[#08BCFD]/20'
               }`}
             />
             <button
               id="toggle-signup-confirm-password-visibility-button"
               type="button"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-[#08BCFD] transition-colors cursor-pointer"
             >
-              {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {showConfirmPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
             </button>
           </div>
           {touched.confirmPassword && confirmPassword.length > 0 && (
-            <div className="mt-1">
+            <div className="mt-1.5">
               {isPasswordMatch ? (
-                <span className="text-emerald-600 text-[11px] font-medium flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> Passwords match
+                <span className="text-emerald-600 text-xs font-semibold flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Passwords match
                 </span>
               ) : (
-                <span className="text-rose-500 text-[11px] font-medium flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> Passwords do not match
+                <span className="text-rose-500 text-xs font-semibold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> Passwords do not match
                 </span>
               )}
             </div>
           )}
         </div>
 
-        <label className="flex cursor-pointer items-start gap-2.5 rounded-xl px-1 py-1 text-xs leading-relaxed text-slate-500">
+        {/* Terms and Conditions Checkbox */}
+        <label className="flex items-start gap-2.5 cursor-pointer select-none pt-1">
           <input
             id="signup-accept-terms"
             type="checkbox"
@@ -561,15 +562,14 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
             }}
             className="peer sr-only"
           />
-          <span
-            aria-hidden="true"
-            className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-[11px] font-bold leading-none text-transparent transition-colors peer-checked:border-[#2563EB] peer-checked:bg-[#2563EB] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-[#2563EB]/30"
-          >✓</span>
-          <span>
+          <span aria-hidden="true" className="mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-transparent transition-colors peer-checked:border-[#08BCFD] peer-checked:bg-[#08BCFD] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-[#08BCFD]/35">
+            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+          </span>
+          <span className="text-xs sm:text-sm text-slate-600 leading-relaxed">
             Tôi đồng ý với{' '}
-            <Link href="/terms" target="_blank" className="font-semibold text-indigo-600 hover:underline">Điều khoản dịch vụ</Link>{' '}
+            <Link href="/terms" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">Điều khoản dịch vụ</Link>{' '}
             và{' '}
-            <Link href="/privacy" target="_blank" className="font-semibold text-indigo-600 hover:underline">Chính sách riêng tư</Link>.
+            <Link href="/privacy" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">Chính sách riêng tư</Link>.
           </span>
         </label>
 
@@ -578,30 +578,30 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
           id="signup-submit-button"
           type="submit"
           disabled={isLoading}
-          className="w-full h-11 mt-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition-all shadow-sm shadow-indigo-600/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
+          className="w-full h-12 mt-3 px-4 rounded-xl bg-[#08BCFD] hover:bg-[#0284C7] text-white text-sm sm:text-base font-semibold transition-all shadow-md shadow-[#08BCFD]/25 active:scale-[0.99] flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
         >
           {isLoading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2 className="w-4.5 h-4.5 animate-spin" />
               <span>Sending verification code...</span>
             </>
           ) : (
             <>
               <span>Create account</span>
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-4.5 h-4.5" />
             </>
           )}
         </button>
       </form>
 
       {/* Bottom Switcher */}
-      <div className="mt-6 text-center text-xs text-slate-500">
+      <div className="mt-6 text-center text-xs sm:text-sm text-slate-500">
         Already have an account?{' '}
         <button
           id="navigate-signin-button"
           type="button"
           onClick={() => onNavigate('signin')}
-          className="font-semibold text-indigo-600 hover:text-indigo-700 transition-colors hover:underline ml-1"
+          className="font-semibold text-[#0284C7] hover:text-[#08BCFD] transition-colors hover:underline ml-1 cursor-pointer"
         >
           Sign in
         </button>

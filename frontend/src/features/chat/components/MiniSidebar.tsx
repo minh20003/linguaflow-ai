@@ -86,32 +86,16 @@ export const MiniSidebar: React.FC<MiniSidebarProps> = ({
           id="sidebar-logo-button"
           onClick={() => onTabChange('chats')}
           aria-label="LinguaFlow Home"
-          className="group relative flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#2563EB] to-[#60A5FA] text-white shadow-md shadow-[#2563EB]/25 hover:scale-105 active:scale-95 transition-all"
+          className="group relative flex h-12 w-12 items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer"
         >
-          {/* Logo SVG: Speech bubble with global connection accent */}
-          <div className="relative flex items-center justify-center">
-            <svg
-              className="w-6 h-6 fill-current"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z"
-                fill="currentColor"
-              />
-              <path
-                d="M7 9H17M7 13H13"
-                stroke="white"
-                strokeWidth="2"
-                strokeLinecap="round"
-              />
-            </svg>
-            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full border-2 border-[#2563EB]" />
-          </div>
+          <img
+            src="/brand/brand-mark.svg?v=20260828"
+            alt="LinguaFlow"
+            className="h-full w-full object-contain select-none"
+          />
 
           {/* Logo Tooltip */}
-          <div className="absolute left-[78px] px-2.5 py-1 bg-[#1E2230] text-white text-xs font-semibold rounded-lg shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
+          <div className="absolute left-[58px] px-2.5 py-1 bg-[#1E2230] text-white text-xs font-semibold rounded-lg shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
             LinguaFlow
           </div>
         </button>

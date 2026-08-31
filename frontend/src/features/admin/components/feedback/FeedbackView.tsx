@@ -11,7 +11,7 @@ interface FeedbackViewProps {
 function voteLabel(entry: FeedbackReviewEntry, isVietnamese: boolean) {
   if (entry.entry_type === 'edit') {
     return {
-      label: isVietnamese ? 'Đã sửa bản dịch' : 'Edited translation',
+      label: isVietnamese ? 'Chỉnh sửa' : 'Edited translation',
       className: 'bg-violet-50 text-violet-700 ring-violet-200',
       Icon: Pencil,
     };
@@ -40,7 +40,8 @@ function voteLabel(entry: FeedbackReviewEntry, isVietnamese: boolean) {
 export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading, interfaceLanguage }) => {
   const isVietnamese = interfaceLanguage === 'vi';
   const entries = overview?.review_entries ?? [];
-  const edits = entries.filter((entry) => entry.entry_type === 'edit').length;
+  const editedTranslations = overview?.edited_translations ?? 0;
+  const totalSignals = (overview?.votes.total ?? 0) + editedTranslations;
   const locale = isVietnamese ? 'vi-VN' : 'en-US';
 
   return (
@@ -57,7 +58,7 @@ export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading,
           </p>
         </div>
         <span className="inline-flex w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">
-          {isVietnamese ? `${entries.length} phản hồi gần nhất` : `${entries.length} latest signals`}
+          {isVietnamese ? `${entries.length} nhóm phản hồi gần nhất` : `${entries.length} latest feedback groups`}
         </span>
       </div>
 
@@ -75,8 +76,8 @@ export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading,
           <p className="mt-3 text-3xl font-bold text-blue-950">{((overview?.votes.up_rate ?? 0) * 100).toFixed(1)}%</p>
         </div>
         <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-5">
-          <div className="flex items-center justify-between"><span className="text-sm font-medium text-violet-800">{isVietnamese ? 'Bản dịch đã sửa' : 'Translation edits'}</span><Pencil className="h-5 w-5 text-violet-600" /></div>
-          <p className="mt-3 text-3xl font-bold text-violet-950">{edits}</p>
+          <div className="flex items-center justify-between"><span className="text-sm font-medium text-violet-800">{isVietnamese ? 'Bản dịch đã sửa' : 'Edited translations'}</span><Pencil className="h-5 w-5 text-violet-600" /></div>
+          <p className="mt-3 text-3xl font-bold text-violet-950">{editedTranslations}</p>
         </div>
       </div>
 
@@ -86,7 +87,7 @@ export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading,
             <h3 className="font-semibold text-gray-900">{isVietnamese ? 'Chi tiết phản hồi' : 'Feedback details'}</h3>
             <p className="mt-0.5 text-xs text-gray-500">{isVietnamese ? 'Bản gốc và bản dịch máy được giữ cạnh vote hoặc phần người dùng chỉnh sửa.' : 'Original and machine translation stay next to each vote or reader edit.'}</p>
           </div>
-          <span className="text-xs font-medium text-gray-500">{isVietnamese ? `${overview?.votes.total ?? 0} lượt đánh giá` : `${overview?.votes.total ?? 0} ratings`}</span>
+          <span className="text-xs font-medium text-gray-500">{isVietnamese ? `${entries.length} nhóm / ${totalSignals} tín hiệu` : `${entries.length} groups / ${totalSignals} signals`}</span>
         </div>
 
         <div className="overflow-x-auto">
@@ -109,7 +110,7 @@ export const FeedbackView: React.FC<FeedbackViewProps> = ({ overview, isLoading,
                   <tr key={`${entry.entry_type}-${entry.created_at}-${index}`} className="align-top transition-colors hover:bg-gray-50/60">
                     <td className="whitespace-nowrap px-5 py-4 text-xs text-gray-500">{new Date(entry.created_at).toLocaleString(locale)}</td>
                     <td className="px-5 py-4">
-                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${signal.className}`}><SignalIcon className="h-3.5 w-3.5" />{signal.label}</span>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${signal.className}`}><SignalIcon className="h-3.5 w-3.5" />{signal.label}{entry.occurrence_count > 1 && <span className="ml-0.5 border-l border-current/25 pl-1.5">×{entry.occurrence_count}</span>}</span>
                     </td>
                     <td className="max-w-xs px-5 py-4"><p className="whitespace-pre-wrap break-words text-gray-900">{entry.original_text}</p><span className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{entry.source_language}</span></td>
                     <td className="max-w-xs px-5 py-4"><p className="whitespace-pre-wrap break-words text-gray-900">{entry.translated_text}</p><span className="mt-2 inline-block text-[11px] font-semibold uppercase tracking-wide text-gray-400">{entry.target_language}</span></td>

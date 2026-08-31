@@ -233,16 +233,76 @@ async def test_review_queue_shows_anonymous_votes_and_edits_with_translation_con
         "rating": 1,
         "user_correction": "Use a less formal question.",
         "created_at": vote["created_at"],
+        "occurrence_count": 1,
     }
     assert edit["entry_type"] == "edit"
     assert edit["vote"] is None
     assert edit["user_correction"] == "Is the deployment finished yet?"
     assert edit["original_text"] == vote["original_text"]
     assert edit["translated_text"] == vote["translated_text"]
+    assert response.json()["edited_translations"] == 1
     assert "user_id" not in vote
     assert "editor_id" not in edit
     assert test_user.id not in response_text(response.json())
     assert conversation.id not in response_text(response.json())
+
+
+@pytest.mark.asyncio
+async def test_review_queue_keeps_only_the_latest_edit_for_each_translation(
+    client, test_db, test_admin_headers, test_user, test_user_two, conversation_factory
+):
+    """Repeated revisions must not look like duplicate quality signals."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    translation_id = await _translation(test_db, conversation.id, test_user_two.id)
+    now = datetime.now(UTC)
+    test_db.add_all(
+        [
+            TranslationEdit(
+                translation_id=translation_id,
+                editor_id=test_user.id,
+                edited_text="Older wording",
+                created_at=now - timedelta(minutes=1),
+            ),
+            TranslationEdit(
+                translation_id=translation_id,
+                editor_id=test_user.id,
+                edited_text="Latest wording",
+                created_at=now,
+            ),
+        ]
+    )
+    await test_db.commit()
+
+    body = (await client.get("/api/v1/admin/feedback", headers=test_admin_headers)).json()
+    edits = [entry for entry in body["review_entries"] if entry["entry_type"] == "edit"]
+
+    assert body["edited_translations"] == 1
+    assert len(edits) == 1
+    assert edits[0]["user_correction"] == "Latest wording"
+
+
+@pytest.mark.asyncio
+async def test_review_queue_groups_identical_anonymous_signals(
+    client, test_db, test_admin_headers, test_user, test_user_two, conversation_factory
+):
+    """Separate messages with the same correction should form one readable row."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    first = await _translation(test_db, conversation.id, test_user_two.id)
+    second = await _translation(test_db, conversation.id, test_user_two.id)
+    test_db.add_all(
+        [
+            TranslationEdit(translation_id=first, editor_id=test_user.id, edited_text="Use this wording"),
+            TranslationEdit(translation_id=second, editor_id=test_user.id, edited_text="Use this wording"),
+        ]
+    )
+    await test_db.commit()
+
+    body = (await client.get("/api/v1/admin/feedback", headers=test_admin_headers)).json()
+    edits = [entry for entry in body["review_entries"] if entry["entry_type"] == "edit"]
+
+    assert body["edited_translations"] == 2
+    assert len(edits) == 1
+    assert edits[0]["occurrence_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -255,5 +315,6 @@ async def test_an_empty_system_reports_zeroes_rather_than_failing(
     ).json()
 
     assert body["votes"]["total"] == 0
+    assert body["edited_translations"] == 0
     assert body["votes"]["up_rate"] == 0.0
     assert body["shared_corrections"] == []

@@ -1,11 +1,13 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ApiCalendarEvent } from "../api/chat-api";
+import type { ApiCalendarEvent, ApiConversation, ApiUser } from "../api/chat-api";
 import { GoogleCalendarControls } from "./GoogleCalendarControls";
 import {
   cancelCalendarEvent,
   createCalendarEvent,
+  listConversations,
+  listUsers,
   listCalendarEvents,
   updateCalendarEvent,
 } from "../api/chat-api";
@@ -34,6 +36,8 @@ export interface EventReminder {
   method: "popup" | "email";
   minutes: number;
 }
+
+type ReminderUnit = "minutes" | "hours" | "days";
 
 export interface CalendarTask {
   id: string;
@@ -173,16 +177,6 @@ const CustomCheckbox: React.FC<{
 
 /* ────────────────────────── CONSTANTS & UTILITIES ────────────────────────── */
 const MIN_DURATION = 15;
-
-const REMINDER_OPTIONS = [
-  { minutes: 0, label: "Đúng giờ" },
-  { minutes: 5, label: "5 phút trước" },
-  { minutes: 10, label: "10 phút trước" },
-  { minutes: 15, label: "15 phút trước" },
-  { minutes: 30, label: "30 phút trước" },
-  { minutes: 60, label: "1 giờ trước" },
-  { minutes: 1440, label: "1 ngày trước" },
-];
 
 export function toDateString(d: Date): string {
   const year = d.getFullYear();
@@ -614,21 +608,6 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
     google: true,
   });
 
-  // Quick click-create popover on grid
-  const [quickCreateState, setQuickCreateState] = useState<{
-    open: boolean;
-    anchor: DetailPopoverAnchor | null;
-    date: string;
-    startTime: string;
-    endTime: string;
-  }>({
-    open: false,
-    anchor: null,
-    date: toDateString(new Date()),
-    startTime: "09:00",
-    endTime: "10:00",
-  });
-
   // Kéo chọn khung giờ trực tiếp trên lịch
   const [dragSelection, setDragSelection] = useState<DragTimeSelection | null>(null);
 
@@ -698,14 +677,15 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       const startTime = minutesToTime(start);
       const endTime = minutesToTime(end);
 
-      setQuickCreateState({
-        open: true,
-        anchor: { top: e.clientY, right: e.clientX, bottom: e.clientY, left: e.clientX },
-        date: dragSelection.dateStr,
-        startTime,
-        endTime,
-      });
-
+      setDraftDate(dragSelection.dateStr);
+      setDraftStartTime(startTime);
+      setDraftEndTime(endTime);
+      setNewItemKind("event");
+      setDraftTitle("");
+      setDraftLocation("");
+      setDraftColorId("sage");
+      setDraftIsAllDay(false);
+      setShowForm(true);
       setDragSelection(null);
     };
 
@@ -836,7 +816,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
     setDraftLocation(location);
     setDraftIsAllDay(isAllDay);
     setShowForm(true);
-    setQuickCreateState((prev) => ({ ...prev, open: false }));
+    setDragSelection(null);
   }, []);
 
   // Xử lý khi bắt đầu kéo chuột trên cột ngày để chọn khung giờ linh hoạt
@@ -861,10 +841,27 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
     });
   }, []);
 
+  const handleResizeDragTime = useCallback((dateStr: string, fixedMinute: number, e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const column = e.currentTarget.closest("[data-time-column]") as HTMLDivElement | null;
+    if (!column) return;
+    const rect = column.getBoundingClientRect();
+    const rawMinute = ((e.clientY - rect.top) / (24 * HOUR_HEIGHT)) * 1440;
+    const snappedMinute = Math.max(0, Math.min(1440, Math.round(rawMinute / 15) * 15));
+    setDragSelection({
+      isDragging: true,
+      dateStr,
+      startMin: fixedMinute,
+      currentMin: snappedMinute,
+      columnTop: rect.top,
+      columnHeight: 24 * HOUR_HEIGHT,
+    });
+  }, []);
+
   const openTaskDetails = useCallback((task: CalendarTask, anchor?: DetailPopoverAnchor) => {
     setDetailAnchor(anchor ?? null);
     setSelectedTask(task);
-    setQuickCreateState((prev) => ({ ...prev, open: false }));
   }, []);
 
   const navigate = useCallback(
@@ -1101,6 +1098,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                 tasks={scheduledTasks}
                 onSelect={openTaskDetails}
                 onStartDrag={handleStartDragTime}
+                onResizeDrag={handleResizeDragTime}
                 dragSelection={dragSelection}
               />
             )}
@@ -1112,6 +1110,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                 tasks={scheduledTasks}
                 onSelect={openTaskDetails}
                 onStartDrag={handleStartDragTime}
+                onResizeDrag={handleResizeDragTime}
                 dragSelection={dragSelection}
                 onOpenDay={(d) => {
                   setCursor(new Date(d));
@@ -1140,36 +1139,10 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
         </div>
       </main>
 
-      {/* ── QUICK CREATE POPOVER ON GRID DRAG / CLICK ── */}
-      {quickCreateState.open && (
-        <QuickCreatePopover
-          dateStr={quickCreateState.date}
-          startTime={quickCreateState.startTime}
-          endTime={quickCreateState.endTime}
-          anchor={quickCreateState.anchor}
-          onClose={() => setQuickCreateState((prev) => ({ ...prev, open: false }))}
-          onMoreOptions={(title, kind, colorId, location, isAllDay) => {
-            openCreateForm(
-              quickCreateState.date,
-              quickCreateState.startTime,
-              quickCreateState.endTime,
-              kind,
-              title,
-              colorId,
-              location,
-              isAllDay
-            );
-          }}
-          onSave={(task) => {
-            setTasks((prev) => [...prev, task]);
-            setQuickCreateState((prev) => ({ ...prev, open: false }));
-          }}
-        />
-      )}
-
       {/* ── FULL EVENT / TASK MODAL ── */}
       {showForm && (
         <FullEventModal
+          token={token}
           initialKind={newItemKind}
           initialDate={draftDate}
           initialStartTime={draftStartTime}
@@ -1178,22 +1151,34 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
           initialLocation={draftLocation}
           initialColorId={draftColorId}
           initialIsAllDay={draftIsAllDay}
+          onDraftChange={({ date, startTime, endTime, isAllDay }) => {
+            setDragSelection((current) => {
+              if (!current) return current;
+              const start = isAllDay ? 0 : timeToMinutes(startTime);
+              const end = isAllDay ? 1440 : Math.max(start + 15, timeToMinutes(endTime));
+              if (current.dateStr === date && current.startMin === start && current.currentMin === end && !current.isDragging) return current;
+              return { ...current, dateStr: date, startMin: start, currentMin: end, isDragging: false };
+            });
+          }}
           onClose={() => {
             setShowForm(false);
             setDraftTitle("");
             setDraftLocation("");
+            setDragSelection(null);
           }}
           onSubmit={(task) => {
             setTasks((items) => [...items, task]);
             setShowForm(false);
             setDraftTitle("");
             setDraftLocation("");
+            setDragSelection(null);
           }}
         />
       )}
 
       {editingTask && (
         <FullEventModal
+          token={token}
           initialTask={editingTask}
           onClose={() => setEditingTask(null)}
           onSubmit={(task) => {
@@ -1334,6 +1319,7 @@ interface GridProps {
   tasks: CalendarTask[];
   onSelect: (task: CalendarTask, anchor?: DetailPopoverAnchor) => void;
   onStartDrag: (dateStr: string, e: React.MouseEvent<HTMLDivElement>) => void;
+  onResizeDrag: (dateStr: string, fixedMinute: number, e: React.MouseEvent<HTMLElement>) => void;
   dragSelection: DragTimeSelection | null;
 }
 
@@ -1356,6 +1342,7 @@ const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => v
   tasks,
   onSelect,
   onStartDrag,
+  onResizeDrag,
   dragSelection,
   onOpenDay,
 }) => {
@@ -1452,15 +1439,16 @@ const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => v
 
         {/* 7 Day Columns với hỗ trợ kéo chọn khung giờ linh hoạt */}
         {columns.map(({ day, dateStr, timed }) => {
-          const isDraggingThisDay = dragSelection?.isDragging && dragSelection.dateStr === dateStr;
-          const dragStart = isDraggingThisDay ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
-          const dragEnd = isDraggingThisDay ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
-          const dragTop = isDraggingThisDay ? (dragStart / 60) * HOUR_HEIGHT : 0;
-          const dragHeight = isDraggingThisDay ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
+          const hasDraftSelection = dragSelection?.dateStr === dateStr;
+          const dragStart = hasDraftSelection ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
+          const dragEnd = hasDraftSelection ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
+          const dragTop = hasDraftSelection ? (dragStart / 60) * HOUR_HEIGHT : 0;
+          const dragHeight = hasDraftSelection ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
 
           return (
             <div
               key={day.toISOString()}
+              data-time-column
               onMouseDown={(e) => onStartDrag(dateStr, e)}
               className="relative border-r border-[#DADCE0] bg-white last:border-r-0 cursor-crosshair dark:border-[#36373A] dark:bg-[#1E1F20]"
               style={{ height: gridHeight }}
@@ -1476,14 +1464,17 @@ const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => v
               ))}
 
               {/* Riêng lúc kéo thả trong khung Tuần: Vẫn hiển thị thời gian bắt đầu – kết thúc, bỏ chữ Chưa có tiêu đề */}
-              {isDraggingThisDay && (
+              {hasDraftSelection && (
                 <div
                   style={{ top: dragTop, height: dragHeight }}
-                  className="pointer-events-none absolute inset-x-1 z-30 flex items-center justify-center rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/30 px-1 py-0.5 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  className="absolute inset-x-1 z-30 flex items-center justify-center rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/30 px-1 py-0.5 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
                 >
+                  <button type="button" aria-label="Kéo để đổi giờ bắt đầu" onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
                   <span className="truncate rounded bg-white/95 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-[#1A73E8] shadow-2xs">
                     {minutesToTime(dragStart)} – {minutesToTime(dragEnd)}
                   </span>
+                  <button type="button" aria-label="Kéo để đổi giờ kết thúc" onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
                 </div>
               )}
 
@@ -1514,6 +1505,7 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
   tasks,
   onSelect,
   onStartDrag,
+  onResizeDrag,
   dragSelection,
 }) => {
   const startHour = hours[0];
@@ -1525,11 +1517,11 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
   const timed = layoutDay(dayTasks, startHour);
   const isToday = sameDay(day, now);
 
-  const isDraggingThisDay = dragSelection?.isDragging && dragSelection.dateStr === dateStr;
-  const dragStart = isDraggingThisDay ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
-  const dragEnd = isDraggingThisDay ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
-  const dragTop = isDraggingThisDay ? (dragStart / 60) * HOUR_HEIGHT : 0;
-  const dragHeight = isDraggingThisDay ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
+  const hasDraftSelection = dragSelection?.dateStr === dateStr;
+  const dragStart = hasDraftSelection ? Math.min(dragSelection.startMin, dragSelection.currentMin) : 0;
+  const dragEnd = hasDraftSelection ? Math.max(dragStart + 15, Math.max(dragSelection.startMin, dragSelection.currentMin)) : 0;
+  const dragTop = hasDraftSelection ? (dragStart / 60) * HOUR_HEIGHT : 0;
+  const dragHeight = hasDraftSelection ? Math.max(26, ((dragEnd - dragStart) / 60) * HOUR_HEIGHT) : 0;
 
   return (
     <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col overflow-auto scrollbar-thin">
@@ -1537,6 +1529,7 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
         {/* Day Header */}
         <div className="sticky top-0 z-20 border-b border-[#DADCE0] bg-white px-6 py-3 text-left dark:border-[#36373A] dark:bg-[#1E1F20]">
           <div
+            data-time-column
             className={`text-xs font-semibold uppercase tracking-wider ${
               isToday ? "text-[#1A73E8] dark:text-[#A8C7FA]" : "text-[#70757A] dark:text-[#9AA0A6]"
             }`}
@@ -1598,11 +1591,13 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
             ))}
 
             {/* Khung xem trước kéo chọn giờ: Hiển thị đầy đủ chi tiết */}
-            {isDraggingThisDay && (
+            {hasDraftSelection && (
               <div
                 style={{ top: dragTop, height: dragHeight }}
-                className="pointer-events-none absolute inset-x-2 z-30 flex flex-col justify-start rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/25 p-2 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
+                onMouseDown={(event) => event.stopPropagation()}
+                className="absolute inset-x-2 z-30 flex flex-col justify-start rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/25 p-2 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
               >
+                <button type="button" aria-label="Kéo để đổi giờ bắt đầu" onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
                 <div className="flex items-center justify-between gap-2 leading-tight text-xs font-semibold text-[#0B57D0] dark:text-[#A8C7FA]">
                   <span className="truncate text-xs font-semibold">(Chưa có tiêu đề)</span>
                   <span className="shrink-0 rounded bg-white px-2 py-0.5 text-xs font-bold text-[#1A73E8] shadow-2xs">
@@ -1616,6 +1611,7 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
                     <span>Thời lượng: {formatMinutesDuration(dragEnd - dragStart)}</span>
                   </div>
                 )}
+                <button type="button" aria-label="Kéo để đổi giờ kết thúc" onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
               </div>
             )}
 
@@ -2096,6 +2092,7 @@ const QuickCreatePopover: React.FC<{
   const [isAllDay, setIsAllDay] = useState(false);
   const [location, setLocation] = useState("");
   const [colorId, setColorId] = useState<string>("sage");
+  const [showColorPalette, setShowColorPalette] = useState(false);
   const [note, setNote] = useState("");
   const dateObj = parseDateString(dateStr);
 
@@ -2205,33 +2202,15 @@ const QuickCreatePopover: React.FC<{
           </div>
         )}
 
-        {/* ── BẢNG 11 MÀU SẮC CHUẨN GOOGLE PALETTE ── */}
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[11px] font-medium text-[#70757A]">
-            <span>Màu phân loại</span>
-            <span className="font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">
-              {GOOGLE_PALETTE[colorId]?.name || "Lam khổng tước"}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 py-1 pl-1">
-            {Object.values(GOOGLE_PALETTE).map((color) => {
-              const isSelected = colorId === color.id;
-              return (
-                <button
-                  key={color.id}
-                  type="button"
-                  onClick={() => setColorId(color.id)}
-                  title={color.name}
-                  style={{ backgroundColor: color.bg }}
-                  className={`relative flex h-5 w-5 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 ${
-                    isSelected ? "ring-2 ring-offset-2 ring-[#1A73E8] shadow-sm dark:ring-offset-[#1E1F20]" : ""
-                  }`}
-                >
-                  {isSelected && <Check className="h-3 w-3 text-white stroke-[3]" />}
-                </button>
-              );
-            })}
-          </div>
+        <div className="relative flex items-center gap-2">
+          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">Màu sắc</span>
+          <button type="button" onClick={() => setShowColorPalette((current) => !current)} aria-label="Chọn màu sắc" aria-expanded={showColorPalette} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#DADCE0] bg-white px-2 hover:bg-[#F8FAFD] dark:border-[#5F6368] dark:bg-[#2D2E30]">
+            <span className="h-4 w-4 rounded-full" style={{ backgroundColor: GOOGLE_PALETTE[colorId]?.bg }} />
+            <ChevronDown className="h-3.5 w-3.5 text-[#70757A]" />
+          </button>
+          {showColorPalette && <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 grid w-52 grid-cols-6 gap-2 rounded-xl border border-[#DADCE0] bg-white p-3 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
+            {Object.values(GOOGLE_PALETTE).map((color) => <button key={color.id} type="button" title={color.name} onClick={() => { setColorId(color.id); setShowColorPalette(false); }} className={`grid h-6 w-6 place-items-center rounded-full transition-transform hover:scale-110 ${colorId === color.id ? "ring-2 ring-[#1A73E8] ring-offset-2 dark:ring-offset-[#2D2E30]" : ""}`} style={{ backgroundColor: color.bg }}>{colorId === color.id && <Check className="h-3.5 w-3.5 text-white stroke-[3]" />}</button>)}
+          </div>}
         </div>
 
         {/* Action Buttons */}
@@ -2267,6 +2246,8 @@ const QuickCreatePopover: React.FC<{
 
 /* ────────────────────────── FULL EVENT / TASK MODAL ────────────────────────── */
 interface FullEventModalProps {
+  token: string;
+  popoverAnchor?: DetailPopoverAnchor | null;
   initialTask?: CalendarTask;
   initialKind?: EventKind;
   initialDate?: string;
@@ -2276,11 +2257,14 @@ interface FullEventModalProps {
   initialLocation?: string;
   initialColorId?: string;
   initialIsAllDay?: boolean;
+  onDraftChange?: (draft: { date: string; startTime: string; endTime: string; isAllDay: boolean }) => void;
   onClose: () => void;
   onSubmit: (task: CalendarTask) => void;
 }
 
 const FullEventModal: React.FC<FullEventModalProps> = ({
+  token,
+  popoverAnchor = null,
   initialTask,
   initialKind = "event",
   initialDate = toDateString(new Date()),
@@ -2290,6 +2274,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   initialLocation = "",
   initialColorId,
   initialIsAllDay = false,
+  onDraftChange,
   onClose,
   onSubmit,
 }) => {
@@ -2317,14 +2302,21 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   const [meetLink, setMeetLink] = useState<string>(initialTask?.meetLink ?? "");
   const [location, setLocation] = useState(initialTask?.location ?? initialLocation);
 
-  // Người tham gia (Khách mời)
+  // Người tham gia
   const [attendees, setAttendees] = useState<Attendee[]>(initialTask?.attendees ?? []);
   const [guestEmail, setGuestEmail] = useState("");
+  const [guestError, setGuestError] = useState("");
+  const [suggestedUsers, setSuggestedUsers] = useState<ApiUser[]>([]);
+  const [isSearchingGuests, setIsSearchingGuests] = useState(false);
+  const [groups, setGroups] = useState<ApiConversation[]>([]);
+  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [groupError, setGroupError] = useState("");
 
   // Màu sắc (11 màu chuẩn Google Calendar)
   const [colorId, setColorId] = useState<string>(
     initialTask?.colorId ?? initialColorId ?? (kind === "task" ? "peacock" : "sage")
   );
+  const [showColorPalette, setShowColorPalette] = useState(false);
 
   // Nhắc nhở (Thông báo)
   const [reminders, setReminders] = useState<EventReminder[]>(
@@ -2332,9 +2324,25 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
       ? initialTask.reminders
       : [{ id: "r1", method: "popup", minutes: 10 }]
   );
+  const [reminderUnits, setReminderUnits] = useState<Record<string, ReminderUnit>>(() =>
+    Object.fromEntries(
+      (initialTask?.reminders ?? [{ id: "r1", method: "popup", minutes: 10 }]).map((reminder) => [
+        reminder.id,
+        reminder.minutes > 0 && reminder.minutes % 1440 === 0
+          ? "days"
+          : reminder.minutes > 0 && reminder.minutes % 60 === 0
+            ? "hours"
+            : "minutes",
+      ]),
+    ),
+  );
 
   // Ghi chú / Mô tả
   const [note, setNote] = useState(initialTask?.note ?? "");
+
+  useEffect(() => {
+    onDraftChange?.({ date, startTime, endTime, isAllDay });
+  }, [date, endTime, isAllDay, onDraftChange, startTime]);
 
   // Tính thời lượng
   const calculatedDuration = useMemo(() => {
@@ -2354,30 +2362,124 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     }
   };
 
-  const applyQuickDuration = (minutes: number) => {
-    const startM = timeToMinutes(startTime);
-    setEndTime(minutesToTime(Math.min(1439, startM + minutes)));
-  };
-
-  const handleAddGuest = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    const clean = guestEmail.trim();
-    if (!clean) return;
-    if (!attendees.some((a) => a.email.toLowerCase() === clean.toLowerCase())) {
-      setAttendees([
-        ...attendees,
-        {
-          email: clean,
-          name: clean.split("@")[0],
-          status: "needsAction",
-        },
-      ]);
+  useEffect(() => {
+    const query = guestEmail.trim();
+    if (query.length < 2) {
+      setSuggestedUsers([]);
+      setIsSearchingGuests(false);
+      return;
     }
+
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setIsSearchingGuests(true);
+      void listUsers(token, query)
+        .then((users) => {
+          if (!active) return;
+          setSuggestedUsers(
+            users
+              .filter((user) => !attendees.some((attendee) => attendee.email.toLowerCase() === user.email.toLowerCase()))
+              .slice(0, 5),
+          );
+        })
+        .catch(() => {
+          if (active) setSuggestedUsers([]);
+        })
+        .finally(() => {
+          if (active) setIsSearchingGuests(false);
+        });
+    }, 250);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [attendees, guestEmail, token]);
+
+  const handleAddGuest = (e?: React.FormEvent, value = guestEmail) => {
+    if (e) e.preventDefault();
+    const clean = value.trim();
+    if (!clean) return;
+
+    const normalizedEmail = clean.toLowerCase();
+    const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+    if (!isValidEmail) {
+      setGuestError("Nhập địa chỉ email hợp lệ.");
+      return;
+    }
+    if (attendees.some((attendee) => attendee.email.toLowerCase() === normalizedEmail)) {
+      setGuestError("Email này đã có trong danh sách.");
+      return;
+    }
+
+    setAttendees((current) => [
+      ...current,
+      {
+        email: normalizedEmail,
+        name: normalizedEmail.split("@")[0],
+        status: "needsAction",
+      },
+    ]);
     setGuestEmail("");
+    setGuestError("");
+    setSuggestedUsers([]);
   };
 
   const handleRemoveGuest = (email: string) => {
-    setAttendees(attendees.filter((a) => a.email !== email));
+    setAttendees((current) => current.filter((attendee) => attendee.email !== email));
+  };
+
+  const handleToggleGroupPicker = async () => {
+    if (showGroupPicker) {
+      setShowGroupPicker(false);
+      return;
+    }
+    setGroupError("");
+    try {
+      const conversations = await listConversations(token);
+      setGroups(conversations.filter((conversation) => conversation.type === "group"));
+      setShowGroupPicker(true);
+    } catch {
+      setGroupError("Không tải được danh sách nhóm.");
+    }
+  };
+
+  const handleAddGroup = (group: ApiConversation) => {
+    const existingEmails = new Set(attendees.map((attendee) => attendee.email.toLowerCase()));
+    const membersToAdd = group.members
+      .filter((member) => member.email && !existingEmails.has(member.email.toLowerCase()))
+      .map((member) => ({
+        email: member.email.toLowerCase(),
+        name: member.display_name || member.username || member.email,
+        status: "needsAction" as const,
+      }));
+
+    if (membersToAdd.length === 0) {
+      setGroupError("Nhóm này không có người tham gia mới.");
+      return;
+    }
+    setAttendees((current) => [...current, ...membersToAdd]);
+    setGroupError("");
+    setShowGroupPicker(false);
+  };
+
+  const updateReminder = (id: string, changes: Partial<EventReminder>) => {
+    setReminders((current) => current.map((reminder) => (reminder.id === id ? { ...reminder, ...changes } : reminder)));
+  };
+
+  const addReminder = () => {
+    const id = `reminder-${Date.now()}`;
+    setReminders((current) => [...current, { id, method: "popup", minutes: 10 }]);
+    setReminderUnits((current) => ({ ...current, [id]: "minutes" }));
+  };
+
+  const removeReminder = (id: string) => {
+    setReminders((current) => current.filter((reminder) => reminder.id !== id));
+    setReminderUnits((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
   };
 
   const handleSubmit = (event: React.FormEvent) => {
@@ -2417,9 +2519,10 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     <Modal
       title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : "Chỉnh sửa sự kiện") : (kind === "task" ? "Tạo việc cần làm mới" : "Tạo sự kiện mới")}
       maxWidth="max-w-xl"
+      popoverAnchor={popoverAnchor}
       onClose={onClose}
     >
-      <form onSubmit={handleSubmit} className="space-y-4 max-h-[80vh] overflow-y-auto pr-1 scrollbar-thin">
+      <form onSubmit={handleSubmit} className="calendar-event-form-scroll -mr-5 max-h-[calc(100dvh-8rem)] space-y-5 overflow-y-auto overscroll-contain pr-5">
         {/* 2 Tab chuyển đổi: Sự kiện vs Việc cần làm */}
         <div className="flex rounded-xl bg-[#F1F3F4] p-1 dark:bg-[#2D2E30]" role="tablist">
           <button
@@ -2471,12 +2574,12 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
         </div>
 
         {/* ── THỜI GIAN: 1 NGÀY VỚI LỰA CHỌN CẢ NGÀY HOẶC THEO GIỜ ── */}
-        <div className="rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-3.5 dark:border-[#36373A] dark:bg-[#1E1F20] space-y-3">
+        <div className="space-y-4 rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-4 dark:border-[#36373A] dark:bg-[#1E1F20]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock3 className="h-4 w-4 text-[#1A73E8]" />
               <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">
-                Thời gian (Trong 1 ngày)
+                Thời gian
               </span>
             </div>
             {/* Checkbox Cả ngày (Màu trắng khi chưa tích) */}
@@ -2486,18 +2589,12 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             </label>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,0.9fr)]">
             <div>
               <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
                 Ngày diễn ra
               </label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
-              />
+              <CalendarDateField value={date} onChange={setDate} />
             </div>
 
             {!isAllDay && (
@@ -2506,12 +2603,11 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
                     Bắt đầu
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <CalendarTimeField
                     value={startTime}
-                    onChange={(e) => handleStartTimeChange(e.target.value)}
-                    className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                    onChange={handleStartTimeChange}
+                    ariaLabel="Giờ bắt đầu"
+                    className="w-full"
                   />
                 </div>
 
@@ -2519,53 +2615,25 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
                     Kết thúc
                   </label>
-                  <input
-                    type="time"
-                    required
+                  <CalendarTimeField
                     value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs font-medium text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                    onChange={setEndTime}
+                    ariaLabel="Giờ kết thúc"
+                    className="w-full"
                   />
                 </div>
               </>
             )}
           </div>
 
-          {/* Quick duration chips nếu không chọn cả ngày */}
-          {!isAllDay && (
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#DADCE0]/60 dark:border-[#36373A]">
-              <div className="flex flex-wrap items-center gap-1">
-                <span className="text-[11px] text-[#70757A]">Chọn nhanh:</span>
-                {[15, 30, 45, 60, 90, 120].map((mins) => (
-                  <button
-                    key={mins}
-                    type="button"
-                    onClick={() => applyQuickDuration(mins)}
-                    className={`rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                      calculatedDuration === mins
-                        ? "bg-[#1A73E8] text-white"
-                        : "bg-[#F1F3F4] text-[#444746] hover:bg-[#E8EAED] dark:bg-[#2D2E30] dark:text-[#C4C7C5]"
-                    }`}
-                  >
-                    {mins >= 60 ? `${mins / 60}h` : `${mins}p`}
-                  </button>
-                ))}
-              </div>
-              <span className="text-[11px] font-medium text-[#1A73E8] dark:text-[#A8C7FA]">
-                {calculatedDuration >= 60 ? `${Math.floor(calculatedDuration / 60)} giờ ${calculatedDuration % 60 ? `${calculatedDuration % 60}p` : ""}` : `${calculatedDuration} phút`}
-              </span>
-            </div>
-          )}
-
-          {/* Quy tắc lặp lại (Đã bỏ chữ "Ngày làm việc") */}
-          <div>
-            <label className="block text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6] mb-1">
+          <div className="grid gap-1.5 border-t border-[#DADCE0]/70 pt-3 dark:border-[#36373A] sm:grid-cols-[3.5rem_auto] sm:items-center sm:justify-start">
+            <label className="text-[11px] font-medium text-[#70757A] dark:text-[#9AA0A6]">
               Lặp lại
             </label>
             <select
               value={recurrence}
               onChange={(e) => setRecurrence(e.target.value as RecurrenceFreq)}
-              className="w-full rounded-lg border border-[#DADCE0] bg-white px-2.5 py-1.5 text-xs text-[#1F1F1F] outline-none dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+              className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3] sm:w-auto"
             >
               <option value="none">Không lặp lại</option>
               <option value="daily">Hằng ngày</option>
@@ -2618,43 +2686,98 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             {/* Địa điểm */}
             <div>
               <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />Địa điểm / Phòng họp</span>
+                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />Địa điểm</span>
               </label>
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                placeholder="Ví dụ: Phòng họp Tầng 4, Quán Cafe..."
+                placeholder="Nhập địa điểm"
                 className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
               />
             </div>
 
             {/* Khách mời */}
             <div className="space-y-2">
-              <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
-                <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm người tham gia (Khách mời)</span>
-              </label>
+              <div className="flex items-center justify-between gap-3">
+                <label className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
+                  <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm email người tham gia</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleToggleGroupPicker()}
+                  aria-expanded={showGroupPicker}
+                  className="shrink-0 rounded-lg border border-[#D2E3FC] bg-[#E8F0FE] px-2.5 py-1.5 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] dark:border-[#1A73E8]/40 dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
+                >
+                  + Thêm nhóm
+                </button>
+              </div>
+              {showGroupPicker && (
+                <div className="overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-sm dark:border-[#5F6368] dark:bg-[#2D2E30]">
+                  {groups.length === 0 ? (
+                    <p className="px-2.5 py-2 text-xs text-[#70757A]">Chưa có nhóm trò chuyện.</p>
+                  ) : (
+                    groups.map((group) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => handleAddGroup(group)}
+                        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+                      >
+                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || "Nhóm chưa đặt tên"}</span>
+                        <span className="shrink-0 text-[11px] text-[#70757A]">{group.members.length} người</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              {groupError && <p className="text-[11px] text-red-600 dark:text-red-300">{groupError}</p>}
               <div className="flex gap-2">
+                <div className="relative min-w-0 flex-1">
                 <input
                   type="email"
                   value={guestEmail}
-                  onChange={(e) => setGuestEmail(e.target.value)}
+                  onChange={(e) => {
+                    setGuestEmail(e.target.value);
+                    if (guestError) setGuestError("");
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
                       handleAddGuest();
                     }
                   }}
-                  placeholder="Nhập email khách (ví dụ: friend@company.com)..."
-                  className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                  placeholder="Nhập email người tham gia"
+                  aria-invalid={Boolean(guestError)}
+                  aria-describedby={guestError ? "attendee-email-error" : undefined}
+                  className={`w-full rounded-lg border bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:bg-[#2D2E30] dark:text-[#E3E3E3] ${guestError ? "border-red-500" : "border-[#DADCE0] dark:border-[#5F6368]"}`}
                 />
+                {(isSearchingGuests || suggestedUsers.length > 0) && (
+                  <div className="absolute inset-x-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
+                    {isSearchingGuests && <p className="px-2.5 py-2 text-[11px] text-[#70757A]">Đang tìm liên hệ…</p>}
+                    {suggestedUsers.map((user) => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        onClick={() => handleAddGuest(undefined, user.email)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
+                      >
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#E8F0FE] text-[10px] font-bold text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">{(user.display_name || user.username || user.email).slice(0, 1).toUpperCase()}</span>
+                        <span className="min-w-0"><span className="block truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{user.display_name || user.username}</span><span className="block truncate text-[11px] text-[#70757A]">{user.email}</span></span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                </div>
                 <button
                   type="button"
                   onClick={() => handleAddGuest()}
-                  className="shrink-0 rounded-lg bg-[#E8F0FE] px-3.5 py-2 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
+                  disabled={!guestEmail.trim()}
+                  className="shrink-0 rounded-lg bg-[#E8F0FE] px-3.5 py-2 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
                 >
                   Thêm
                 </button>
               </div>
+              {guestError && <p id="attendee-email-error" className="text-[11px] text-red-600 dark:text-red-300">{guestError}</p>}
 
               {attendees.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
@@ -2679,64 +2802,105 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
           </>
         )}
 
-        {/* ── BẢNG 11 MÀU CHUẨN GOOGLE CALENDAR (DỊCH SANG PHẢI KHÔNG BỊ CHE) ── */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
-              Màu sắc phân loại
+        {kind === "task" && (
+          <div className="space-y-2">
+            <label className="flex items-center gap-1 text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
+              <Clock3 className="h-3.5 w-3.5 text-[#1A73E8]" /> Thời hạn
             </label>
-            <span className="text-xs font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">
-              {GOOGLE_PALETTE[colorId]?.name || "Lam khổng tước"}
-            </span>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_auto] sm:justify-start">
+              <CalendarDateField value={date} onChange={setDate} ariaLabel="Ngày thời hạn" containerClassName="w-48" />
+              {!isAllDay && (
+                <CalendarTimeField value={endTime} onChange={setEndTime} ariaLabel="Giờ thời hạn" />
+              )}
+            </div>
           </div>
+        )}
 
-          {/* Khung màu dịch sang phải (ml-2 pl-3) để các nút màu và viền ring không bị che */}
-          <div className="ml-2 flex flex-wrap items-center gap-2.5 rounded-2xl border border-[#DADCE0] bg-[#F8FAFD] p-3 dark:border-[#36373A] dark:bg-[#1E1F20]">
-            {Object.values(GOOGLE_PALETTE).map((color) => {
-              const isSelected = colorId === color.id;
-              return (
+        <div className="relative flex items-center gap-2">
+          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">Màu sắc</span>
+          <button
+            type="button"
+            onClick={() => setShowColorPalette((current) => !current)}
+            aria-label="Chọn màu sắc"
+            aria-expanded={showColorPalette}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-[#DADCE0] bg-white px-2 hover:bg-[#F8FAFD] dark:border-[#5F6368] dark:bg-[#2D2E30]"
+          >
+            <span className="h-4 w-4 rounded-full" style={{ backgroundColor: GOOGLE_PALETTE[colorId]?.bg }} />
+            <ChevronDown className="h-3.5 w-3.5 text-[#70757A]" />
+          </button>
+          {showColorPalette && (
+            <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 grid w-52 grid-cols-6 gap-2 rounded-xl border border-[#DADCE0] bg-white p-3 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
+              {Object.values(GOOGLE_PALETTE).map((color) => (
                 <button
                   key={color.id}
                   type="button"
-                  onClick={() => setColorId(color.id)}
                   title={color.name}
+                  onClick={() => {
+                    setColorId(color.id);
+                    setShowColorPalette(false);
+                  }}
+                  className={`grid h-6 w-6 place-items-center rounded-full transition-transform hover:scale-110 ${colorId === color.id ? "ring-2 ring-[#1A73E8] ring-offset-2 dark:ring-offset-[#2D2E30]" : ""}`}
                   style={{ backgroundColor: color.bg }}
-                  className={`relative flex h-7 w-7 items-center justify-center rounded-full transition-transform hover:scale-110 active:scale-95 ${
-                    isSelected ? "ring-2 ring-offset-2 ring-[#1A73E8] shadow-sm dark:ring-offset-[#1E1F20]" : ""
-                  }`}
                 >
-                  {isSelected && <Check className="h-4 w-4 text-white stroke-[3]" />}
+                  {colorId === color.id && <Check className="h-3.5 w-3.5 text-white stroke-[3]" />}
                 </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ── THÔNG BÁO NHẮC LỊCH ── */}
-        <div>
-          <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-            <span className="flex items-center gap-1"><Bell className="h-3.5 w-3.5 text-[#1A73E8]" />Thông báo nhắc lịch</span>
-          </label>
-          <select
-            value={reminders[0]?.minutes ?? 10}
-            onChange={(e) => {
-              const mins = parseInt(e.target.value, 10);
-              setReminders([{ id: "r1", method: "popup", minutes: mins }]);
-            }}
-            className="w-full rounded-lg border border-[#DADCE0] bg-white px-2.5 py-2 text-xs text-[#1F1F1F] outline-none dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
-          >
-            {REMINDER_OPTIONS.map((opt) => (
-              <option key={opt.minutes} value={opt.minutes}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+        <div className="space-y-2">
+          <span className="flex items-center gap-1 text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]"><Bell className="h-3.5 w-3.5 text-[#1A73E8]" />Thông báo nhắc lịch</span>
+          {reminders.map((reminder) => {
+            const unit = reminderUnits[reminder.id] ?? "minutes";
+            const divisor = unit === "days" ? 1440 : unit === "hours" ? 60 : 1;
+            return (
+              <div key={reminder.id} className="calendar-reminder-row flex items-center gap-2">
+                <select
+                  value={reminder.method}
+                  onChange={(event) => updateReminder(reminder.id, { method: event.target.value as EventReminder["method"] })}
+                  aria-label="Kênh nhắc lịch"
+                  className="w-auto shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
+                >
+                  <option value="popup">Thông báo</option>
+                  <option value="email">Email</option>
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  max="10080"
+                  step="1"
+                  value={Math.max(0, Math.round(reminder.minutes / divisor))}
+                  onChange={(event) => updateReminder(reminder.id, { minutes: Math.max(0, Math.min(10080, (Number.parseInt(event.target.value, 10) || 0) * divisor)) })}
+                  aria-label="Thời gian nhắc"
+                  className="calendar-reminder-number w-14 shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
+                />
+                <select
+                  value={unit}
+                  onChange={(event) => {
+                    const nextUnit = event.target.value as ReminderUnit;
+                    setReminderUnits((current) => ({ ...current, [reminder.id]: nextUnit }));
+                    updateReminder(reminder.id, { minutes: Math.max(0, Math.min(10080, Math.round(reminder.minutes / divisor) * (nextUnit === "days" ? 1440 : nextUnit === "hours" ? 60 : 1))) });
+                  }}
+                  aria-label="Đơn vị thời gian nhắc"
+                  className="w-auto shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
+                >
+                  <option value="minutes">Phút</option>
+                  <option value="hours">Giờ</option>
+                  <option value="days">Ngày</option>
+                </select>
+                <button type="button" onClick={() => removeReminder(reminder.id)} aria-label="Xóa thông báo" className="rounded-lg p-2 text-[#70757A] hover:bg-[#F1F3F4] hover:text-red-600 dark:hover:bg-[#36373A]"><X className="h-4 w-4" /></button>
+              </div>
+            );
+          })}
+          <button type="button" onClick={addReminder} className="text-xs font-medium text-[#1A73E8] hover:underline dark:text-[#A8C7FA]">+ Thêm thông báo</button>
         </div>
 
         {/* ── GHI CHÚ / MÔ TẢ ── */}
         <div>
           <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : "Mô tả / Ghi chú"}</span>
+            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : "Mô tả sự kiện"}</span>
           </label>
           <textarea
             value={note}
@@ -2941,6 +3105,186 @@ const EventDetailsModal: React.FC<{
   );
 };
 
+/* ────────────────────────── CALENDAR DATE FIELD ────────────────────────── */
+const CalendarDateField: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel?: string;
+  containerClassName?: string;
+}> = ({ value, onChange, ariaLabel = "Ngày diễn ra", containerClassName = "" }) => {
+  const selected = new Date(`${value}T00:00:00`);
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(selected.getFullYear(), selected.getMonth(), 1));
+
+  useEffect(() => {
+    if (!open) {
+      const nextSelected = new Date(`${value}T00:00:00`);
+      setVisibleMonth(new Date(nextSelected.getFullYear(), nextSelected.getMonth(), 1));
+    }
+  }, [open, value]);
+
+  const monthStart = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(1 - ((monthStart.getDay() + 6) % 7));
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(gridStart);
+    day.setDate(gridStart.getDate() + index);
+    return day;
+  });
+  const selectedKey = toDateString(selected);
+  const todayKey = toDateString(new Date());
+
+  return (
+    <div className={`relative ${containerClassName}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-left text-xs font-medium text-[#1F1F1F] outline-none hover:border-[#1A73E8] focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+      >
+        <span>{selected.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })}</span>
+        <CalendarDays className="h-3.5 w-3.5 text-[#1A73E8]" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+0.4rem)] z-30 w-72 rounded-xl border border-[#DADCE0] bg-white p-3 shadow-xl dark:border-[#5F6368] dark:bg-[#2D2E30]">
+          <div className="mb-2 flex items-center justify-between">
+            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label="Tháng trước"><ChevronLeft className="h-4 w-4" /></button>
+            <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">{visibleMonth.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })}</span>
+            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label="Tháng sau"><ChevronRight className="h-4 w-4" /></button>
+          </div>
+          <div className="grid grid-cols-7 text-center text-[10px] font-medium text-[#70757A]">
+            {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => <span key={day} className="py-1">{day}</span>)}
+          </div>
+          <div className="grid grid-cols-7 gap-y-0.5">
+            {days.map((day) => {
+              const dayKey = toDateString(day);
+              const isCurrentMonth = day.getMonth() === visibleMonth.getMonth();
+              const isSelected = dayKey === selectedKey;
+              return <button key={dayKey} type="button" onClick={() => { onChange(dayKey); setOpen(false); }} className={`mx-auto grid h-8 w-8 place-items-center rounded-full text-xs transition-colors ${isSelected ? "bg-[#1A73E8] font-bold text-white" : dayKey === todayKey ? "font-bold text-[#1A73E8] hover:bg-[#E8F0FE]" : isCurrentMonth ? "text-[#1F1F1F] hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]" : "text-[#9AA0A6] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"}`}>{day.getDate()}</button>;
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const CalendarTimeField: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel?: string;
+  className?: string;
+}> = ({ value, onChange, ariaLabel = "Giờ", className = "" }) => {
+  const [open, setOpen] = useState(false);
+  const [showValidationError, setShowValidationError] = useState(false);
+  const optionsRef = useRef<HTMLDivElement | null>(null);
+  const formatAmPm = (time: string) => {
+    const [hourPart = "00", minutePart = "00"] = time.split(":");
+    const hour = Number(hourPart);
+    const period = hour >= 12 ? "PM" : "AM";
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${minutePart} ${period}`;
+  };
+  const [draft, setDraft] = useState(formatAmPm(value));
+  const parseAmPm = (time: string) => {
+    const match = time.trim().match(/^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i);
+    if (!match) return null;
+    const inputHour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (inputHour < 1 || inputHour > 12) return null;
+    const hour = (inputHour % 12) + (match[3].toUpperCase() === "PM" ? 12 : 0);
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  };
+  const isValidTime = parseAmPm(draft) !== null;
+  const timeOptions = Array.from({ length: 96 }, (_, index) => {
+    const minutes = index * 15;
+    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  });
+
+  useEffect(() => {
+    if (!open) {
+      setDraft(formatAmPm(value));
+      setShowValidationError(false);
+    }
+  }, [open, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => {
+      optionsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, value]);
+
+  return (
+    <div className={`relative ${className}`}>
+      <div className="flex w-full items-center gap-2 rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] transition-colors focus-within:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]">
+        <Clock3 className="h-3.5 w-3.5 shrink-0 text-[#1A73E8]" />
+        <input
+          type="text"
+          value={draft}
+          onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
+          onChange={(event) => {
+            const sanitized = event.target.value.toUpperCase().replace(/[^0-9:\sAPM]/g, "");
+            setDraft(sanitized);
+            setShowValidationError(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && isValidTime) {
+              event.preventDefault();
+              const parsed = parseAmPm(draft);
+              if (parsed) onChange(parsed);
+              setOpen(false);
+            }
+            if (event.key === "Enter" && !isValidTime) {
+              event.preventDefault();
+              setShowValidationError(true);
+            }
+            if (event.key === "Escape") setOpen(false);
+          }}
+          onBlur={() => {
+            const parsed = parseAmPm(draft);
+            if (parsed) {
+              onChange(parsed);
+              setShowValidationError(false);
+            } else {
+              setShowValidationError(true);
+            }
+          }}
+          placeholder="9:00 AM"
+          aria-label={ariaLabel}
+          aria-expanded={open}
+          className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-[#9AA0A6]"
+        />
+      </div>
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+0.4rem)] z-30 w-full max-w-full rounded-xl border border-[#DADCE0] bg-white p-2 shadow-xl dark:border-[#5F6368] dark:bg-[#2D2E30]">
+          {showValidationError && (
+            <p className="px-2 pb-2 text-[11px] text-red-600 dark:text-red-300">Thời gian không hợp lệ.</p>
+          )}
+          <div ref={optionsRef} className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label={`${ariaLabel}: các mốc 15 phút`}>
+            {timeOptions.map((time) => (
+              <button
+                key={time}
+                type="button"
+                role="option"
+                aria-selected={value === time}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { onChange(time); setOpen(false); }}
+                className={`flex w-full rounded-lg px-3 py-1.5 text-left text-xs transition-colors ${value === time ? "bg-[#E8F0FE] font-semibold text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]" : "text-[#3C4043] hover:bg-[#F1F3F4] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]"}`}
+              >
+                {formatAmPm(time)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /* ────────────────────────── SHARED MODAL SHELL ────────────────────────── */
 const Modal: React.FC<{
   title?: React.ReactNode;
@@ -2950,6 +3294,7 @@ const Modal: React.FC<{
   popoverAnchor?: DetailPopoverAnchor | null;
 }> = ({ title, onClose, children, maxWidth = "max-w-md", popoverAnchor = null }) => {
   const isDetailsPopover = typeof title === "string" && title.startsWith("Chi tiết");
+  const isAnchoredPopover = Boolean(popoverAnchor);
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
   const viewportHeight = typeof window === "undefined" ? 900 : window.innerHeight;
   const canOpenRight = popoverAnchor && viewportWidth - popoverAnchor.right >= 420;
@@ -2964,7 +3309,7 @@ const Modal: React.FC<{
   return (
     <div
       className={`fixed inset-0 z-50 flex p-3 ${
-        isDetailsPopover
+        isAnchoredPopover
           ? "pointer-events-none items-start justify-end bg-transparent pt-20 sm:pr-8"
           : "items-center justify-center bg-black/40 backdrop-blur-[2px]"
       }`}
@@ -2973,8 +3318,12 @@ const Modal: React.FC<{
     >
       <div
         style={anchoredStyle}
-        className={`pointer-events-auto w-full ${
-          isDetailsPopover ? `${popoverAnchor ? "fixed" : ""} max-w-sm max-h-[calc(100vh-6rem)] overflow-y-auto` : maxWidth
+        className={`pointer-events-auto w-full max-h-[calc(100dvh-1.5rem)] overflow-hidden ${
+          isDetailsPopover
+            ? `${popoverAnchor ? "fixed" : ""} max-w-sm max-h-[calc(100vh-6rem)] overflow-y-auto`
+            : isAnchoredPopover
+              ? "fixed max-w-md overflow-y-auto"
+              : maxWidth
         } animate-[fadeIn_150ms_ease-out] rounded-3xl bg-white p-5 shadow-[0_24px_38px_3px_rgba(0,0,0,.14),0_9px_46px_8px_rgba(0,0,0,.12)] dark:bg-[#2D2E30]`}
       >
         {title ? (

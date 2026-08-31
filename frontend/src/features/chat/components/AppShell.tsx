@@ -82,6 +82,7 @@ import {
   type VoiceTranscriptionFailedPayload,
 } from "../message-events";
 import { VoiceRecorderError, type VoiceRecorderStage } from "../voice-recorder";
+import { VoiceStatusRefreshScheduler } from "../voice-status-refresh";
 import { interactionText } from "../i18n";
 import { MiniSidebar } from "./MiniSidebar";
 import { ConversationPanel } from "./ConversationPanel";
@@ -239,19 +240,17 @@ export const AppShell: React.FC = () => {
     () => new Set(),
   );
   const retryingTranscriptionIdsRef = useRef<Set<string>>(new Set());
-  const retryHistoryRefreshTimersRef = useRef<Set<number>>(new Set());
+  const voiceStatusRefreshSchedulerRef = useRef<VoiceStatusRefreshScheduler | null>(null);
+  if (voiceStatusRefreshSchedulerRef.current === null) {
+    voiceStatusRefreshSchedulerRef.current = new VoiceStatusRefreshScheduler();
+  }
   const selectedConversationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
 
-  useEffect(() => () => {
-    for (const timer of retryHistoryRefreshTimersRef.current) {
-      window.clearTimeout(timer);
-    }
-    retryHistoryRefreshTimersRef.current.clear();
-  }, []);
+  useEffect(() => () => voiceStatusRefreshSchedulerRef.current?.clear(), []);
 
   const addToast = useCallback((title: string, message?: string, type: ToastItem["type"] = "info") => {
     const id = `toast_${Date.now()}`;
@@ -392,23 +391,21 @@ export const AppShell: React.FC = () => {
     setUsers((previous) => JSON.stringify(previous) === JSON.stringify(nextUsers) ? previous : nextUsers);
   }, [currentUser.id, settings.interfaceLanguage]);
 
-  const scheduleVoiceRetryHistoryRefresh = useCallback((conversationId: string) => {
-    // The retry endpoint returns after it has durably set `pending`, while the
-    // detached STT task can finish later. Rehydrate a few bounded times so a
-    // missed WebSocket terminal event cannot leave this bubble pending forever.
-    for (const delayMilliseconds of [2_000, 8_000, 20_000]) {
-      const timer = window.setTimeout(() => {
-        retryHistoryRefreshTimersRef.current.delete(timer);
-        void Promise.all([
-          loadConversationMessages(conversationId),
+  const cancelVoiceStatusRefresh = useCallback((messageId: string) => {
+    voiceStatusRefreshSchedulerRef.current?.cancel(messageId);
+  }, []);
+
+  const scheduleVoiceStatusRefresh = useCallback((messageId: string, conversationId: string) => {
+    voiceStatusRefreshSchedulerRef.current?.schedule(
+      messageId,
+      conversationId,
+      async (targetConversationId) => {
+        await Promise.all([
+          loadConversationMessages(targetConversationId),
           refreshConversations(),
-        ]).catch(() => {
-          // Reconnect/history hydration remains available if this transient
-          // refresh fails; do not replace the durable retry result with a toast.
-        });
-      }, delayMilliseconds);
-      retryHistoryRefreshTimersRef.current.add(timer);
-    }
+        ]);
+      },
+    );
   }, [loadConversationMessages, refreshConversations]);
 
   useEffect(() => {
@@ -550,6 +547,9 @@ export const AppShell: React.FC = () => {
                 : { ...previous, [mapped.conversationId]: [mappedAttachment, ...existing] };
             });
           }
+          if (mapped.messageType === "voice" && mapped.transcriptionStatus === "pending") {
+            scheduleVoiceStatusRefresh(mapped.id, mapped.conversationId);
+          }
           void refreshConversations();
         }
         // The assistant found something the user may want on their calendar.
@@ -592,6 +592,7 @@ export const AppShell: React.FC = () => {
             original_text: String(payload.original_text),
             transcription_status: "completed",
           };
+          cancelVoiceStatusRefresh(transcriptionEvent.message_id);
           setMessagesMap((previous) => ({
             ...previous,
             [transcriptionEvent.conversation_id]: applyVoiceTranscriptionCompleted(
@@ -614,6 +615,7 @@ export const AppShell: React.FC = () => {
             transcription_status: "failed",
             retryable: Boolean(payload.retryable),
           };
+          cancelVoiceStatusRefresh(transcriptionEvent.message_id);
           setMessagesMap((previous) => ({
             ...previous,
             [transcriptionEvent.conversation_id]: applyVoiceTranscriptionFailed(
@@ -694,6 +696,7 @@ export const AppShell: React.FC = () => {
         if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
+          if (eventType === "message_deleted") cancelVoiceStatusRefresh(messageId);
           setMessagesMap((previous) => Object.fromEntries(Object.entries(previous).map(([conversationId, messages]) => [conversationId, messages.map((item) => item.id === messageId ? {
             ...item,
             content: eventType === "message_deleted" ? "This message was deleted" : payload.original_text as string,
@@ -727,7 +730,7 @@ export const AppShell: React.FC = () => {
     };
     connect();
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
-  }, [addToast, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
+  }, [addToast, cancelVoiceStatusRefresh, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, scheduleVoiceStatusRefresh, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
 
   useEffect(() => { soundEnabledRef.current = settings.soundEnabled; }, [settings.soundEnabled]);
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
@@ -1090,7 +1093,7 @@ export const AppShell: React.FC = () => {
         // can still recover its persisted terminal state after a transient
         // history request failure.
       }
-      scheduleVoiceRetryHistoryRefresh(result.conversation_id);
+      scheduleVoiceStatusRefresh(result.message_id, result.conversation_id);
       void refreshConversations();
     } catch {
       addToast(

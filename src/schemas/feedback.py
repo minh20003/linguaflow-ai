@@ -79,6 +79,9 @@ class FeedbackReviewEntry(BaseModel):
     rating: int | None = None
     user_correction: str | None = None
     created_at: datetime
+    # Identical anonymous signals are folded into one review row.  This makes
+    # repeated test messages readable without discarding the volume of evidence.
+    occurrence_count: int = 1
 
 
 class FeedbackOverviewResponse(BaseModel):
@@ -89,6 +92,10 @@ class FeedbackOverviewResponse(BaseModel):
     """
 
     votes: FeedbackVoteSummary
+    # Distinct translations that have at least one reader edit.  This is kept
+    # separate from the visible review rows because the latter is capped by
+    # ``limit`` and must not be used as a dashboard total.
+    edited_translations: int = 0
     # Latest anonymous individual signals, newest first. This is the
     # operational quality-review table; it intentionally contains no account,
     # conversation or message identifiers.
