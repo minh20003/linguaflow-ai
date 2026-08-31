@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -16,15 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import ActionProposal, Message, User
 from src.schemas.intelligence import ActionCandidateDTO
+from src.services.relative_time import mentions_relative_time, resolve_relative_time
 
 MAX_CLARIFICATION_ROUNDS = 2
 _ACTIVE_STATUSES = ("needs_clarification", "pending_confirmation")
-_RELATIVE_TIME = re.compile(
-    r"\b(?:mai|ngày mai|tomorrow)\b(?:\s+(?:lúc|at))?\s*(?P<hour>\d{1,2})(?:[:h](?P<minute>\d{2})?)?",
-    re.IGNORECASE,
-)
-_TOMORROW_MORNING = re.compile(r"\b(?:tomorrow morning|sáng mai)\b", re.IGNORECASE)
-_NEXT_FRIDAY = re.compile(r"\bnext friday\b", re.IGNORECASE)
 
 
 class ActionProposalError(Exception):
@@ -83,41 +77,6 @@ def _parse_explicit_offset(value: str | None) -> datetime | None:
     return _as_utc(parsed) if parsed.tzinfo else None
 
 
-def _relative_time_expression(value: str | None) -> bool:
-    if not value:
-        return False
-    lowered = value.casefold()
-    return bool(
-        _RELATIVE_TIME.search(lowered)
-        or _TOMORROW_MORNING.search(lowered)
-        or _NEXT_FRIDAY.search(lowered)
-    )
-
-
-def _resolve_relative_time(raw: str, reference: datetime, timezone: ZoneInfo) -> datetime | None:
-    """Resolve the deliberately small, execution-safe relative-time grammar."""
-
-    local_reference = _as_utc(reference).astimezone(timezone)
-    match = _RELATIVE_TIME.search(raw)
-    if match:
-        hour = int(match.group("hour"))
-        minute = int(match.group("minute") or 0)
-        if hour > 23 or minute > 59:
-            return None
-        local = datetime.combine(
-            local_reference.date() + timedelta(days=1), time(hour=hour, minute=minute), timezone
-        )
-        return local.astimezone(UTC)
-    if _TOMORROW_MORNING.search(raw):
-        local = datetime.combine(local_reference.date() + timedelta(days=1), time(hour=9), timezone)
-        return local.astimezone(UTC)
-    if _NEXT_FRIDAY.search(raw):
-        days = (4 - local_reference.weekday()) % 7 or 7
-        local = datetime.combine(local_reference.date() + timedelta(days=days), time(hour=9), timezone)
-        return local.astimezone(UTC)
-    return None
-
-
 def normalize_action_time(
     *,
     raw_time_expression: str | None,
@@ -166,11 +125,11 @@ def normalize_action_time(
             missing.discard("timezone")
             return TemporalResolution(canonical_candidate, raw, None, tuple(sorted(missing)))
 
-    if raw and _relative_time_expression(raw):
+    if raw and mentions_relative_time(raw):
         if timezone is None or reference_timestamp is None:
             missing.update({"timezone", "time"})
             return TemporalResolution(None, raw, None, tuple(sorted(missing)))
-        resolved = _resolve_relative_time(raw, reference_timestamp, timezone)
+        resolved = resolve_relative_time(raw, reference_timestamp, timezone)
         if resolved is None:
             missing.add("time")
             return TemporalResolution(None, raw, timezone.key, tuple(sorted(missing)))
@@ -603,7 +562,7 @@ class ActionProposalService:
 
         missing = _load_missing(proposal.missing_fields)
         temporal_missing = {"time", "timezone"}.intersection(missing)
-        if temporal_missing or _relative_time_expression(proposal.raw_time_expression):
+        if temporal_missing or mentions_relative_time(proposal.raw_time_expression):
             resolution = normalize_action_time(
                 raw_time_expression=proposal.raw_time_expression,
                 reference_timestamp=source.created_at,

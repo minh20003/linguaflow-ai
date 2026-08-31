@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -20,6 +21,7 @@ from src.schemas.intelligence import (
     ActionExtractionPayload,
 )
 from src.services.llm import get_intelligence_llm
+from src.services.relative_time import mentions_relative_time
 
 
 def _local_reference(reference: datetime, sender_timezone: str | None) -> str:
@@ -52,6 +54,68 @@ def _valid_zone(name: str | None) -> ZoneInfo | None:
         return None
 
 
+# A promise the sender makes in so many words.
+_COMMITMENT_PHRASES = (
+    "i'll", "i will", "i am going to", "let me ", "i can do", "i'm taking",
+    "tôi sẽ", "mình sẽ", "em sẽ", "anh sẽ", "chị sẽ", "tớ sẽ", "tui sẽ",
+    "để tôi", "để mình", "để em", "mình nhận", "em nhận", "mình lo", "em lo",
+    "mình làm", "mình gửi", "sẽ gửi", "sẽ làm", "sẽ hoàn thành",
+)
+
+# Words that settle or name a meeting. Kept, but no longer the only way in.
+_MEETING_WORDS = (
+    "chốt", "hẹn", "họp", "gặp", "lịch", "deadline", "hạn chót",
+    "meeting", "let's meet", "see you", "appointment", "schedule", "sync",
+)
+
+# A clock somebody read out: "6h", "6h30", "18 giờ", "3:30", "7pm". The same
+# shape the relative-time grammar accepts, minus the day, because here it only
+# has to answer "is a time being talked about at all".
+_CLOCK_MENTION = re.compile(
+    r"(?<![\d/])\d{1,2}\s*(?::\d{2}|h\d{0,2}|g\d{2}|giờ|(?<![a-z])[ap]m)\b",
+    re.IGNORECASE,
+)
+
+
+# Phrasings that put the whole sentence in doubt rather than settling anything.
+# Narrower than the list this replaces: only conditionals and hedges, no
+# past-tense words. "hôm qua" used to sit here and cost "Hôm qua mình chưa
+# chốt, mai 6h gặp nhé" its appointment -- a past reference inside a sentence
+# that settles a future meeting is ordinary speech, and telling the two apart is
+# reading, not substring matching. What is left is overridden by a stated day
+# and clock anyway, so a hedge cannot swallow a concrete arrangement either.
+_HYPOTHETICAL_PHRASES = (
+    "if i ", "if we ", "maybe", "perhaps",
+    "nếu ", "chắc là", "có thể là", "không biết có",
+)
+
+
+def _worth_examining(text: str) -> bool:
+    """Whether this message is worth spending a model call on.
+
+    A cheap gate, not a decision -- the model still judges everything that gets
+    through, and rule 2 of its prompt is what actually rejects a request aimed
+    at somebody else or an event already past.
+
+    A *time* is a signal in its own right, and that is the part that used to be
+    missing. The gate demanded a word from a keyword list, so an appointment
+    settled the way people actually settle one -- "Ok 6h chiều mai nhé", "Vậy
+    trưa thứ 5 lúc 12h nha" -- was thrown away before anything read it, purely
+    for containing none of "chốt", "hẹn" or "họp". A named day together with a
+    clock is close enough to arranging something to be worth a look, and it
+    outranks every hedge in the sentence around it: somebody who names both has
+    stopped speculating.
+    """
+    lowered = text.casefold()
+    if mentions_relative_time(lowered) and _CLOCK_MENTION.search(lowered):
+        return True
+    if any(phrase in lowered for phrase in _HYPOTHETICAL_PHRASES):
+        return False
+    if any(phrase in lowered for phrase in _COMMITMENT_PHRASES):
+        return True
+    return any(word in lowered for word in _MEETING_WORDS)
+
+
 async def detect_self_commitments(
     message_text: str,
     sender_id: str,
@@ -67,32 +131,7 @@ async def detect_self_commitments(
     clean_text = message_text.strip()
     if not clean_text:
         return []
-    # Deterministic gate, ahead of the model. Two jobs: keep questions,
-    # conditionals and finished actions out, and keep the cost of scanning every
-    # message down by not calling a model on the great majority that commit to
-    # nothing.
-    #
-    # The positive list covers appointments as well as first-person promises.
-    # Restricted to "sẽ"/"I will" it rejected the commonest way a time actually
-    # gets settled in chat -- "Ok chốt nhé, 3h chiều thứ Sáu họp ở phòng A"
-    # contains no "sẽ" at all -- so nothing in a real conversation was ever
-    # examined. The list stays a cheap pre-filter, not the decision: the model
-    # still judges every message that gets past it, and rule 2 of its prompt is
-    # what actually rejects a request aimed at somebody else.
-    lowered = clean_text.casefold()
-    negatives = (
-        "maybe", "if i ", "i sent", "john will", "bạn gửi", "you send", "nếu tôi", "đã gửi",
-        "hôm qua", "vừa xong", "yesterday", "đã họp",
-    )
-    positives = (
-        # A promise the sender makes.
-        "i'll", "i will", "i am going to", "let me ",
-        "tôi sẽ", "mình sẽ", "em sẽ", "anh sẽ", "tớ sẽ", "để tôi", "để mình", "mình nhận",
-        # A time being settled. These carry the appointments the old list missed.
-        "chốt", "hẹn", "họp", "gặp", "lịch", "meeting", "let's meet", "see you",
-        "appointment", "schedule",
-    )
-    if any(token in lowered for token in negatives) or not any(token in lowered for token in positives):
+    if not _worth_examining(clean_text):
         return []
 
     settings = settings or get_settings()
