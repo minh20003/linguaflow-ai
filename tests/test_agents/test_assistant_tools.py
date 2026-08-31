@@ -29,10 +29,22 @@ from src.agents.tools.registry import (
     render_catalogue,
 )
 from src.database.models import AGENT_CONSENT_SCOPES
+from src.services.assistant_scope import AssistantScope
 
 
-def _registry():
-    return build_registry(None, conversation_id="c-1", user_id="u-1")
+def _registry(kind: str = "conversation"):
+    """A registry bound to a scope, without a session behind it.
+
+    These tests are about registration -- names, flags, schemas -- so the scope
+    only has to be well-formed. `kind` lets one of them check that the personal
+    thread and an in-conversation mention are offered the same tool list: the
+    difference between them is how far each tool reaches, never which tools
+    exist.
+    """
+    return build_registry(
+        None,
+        scope=AssistantScope(kind=kind, user_id="u-1", origin_conversation_id="c-1"),
+    )
 
 
 # --- registration -----------------------------------------------------------
@@ -162,6 +174,7 @@ async def test_a_tool_whose_permission_is_missing_is_not_offered_to_the_planner(
         "search_old_messages",
         "summarize_conversation",
         "extract_actions",
+        "list_people",
     }
 
 

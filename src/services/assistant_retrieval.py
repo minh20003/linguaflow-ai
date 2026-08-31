@@ -113,6 +113,11 @@ class RetrievedChunk:
     chunk_id: str
     chunk_index: int
     text: str
+    # Which conversation the chunk was written in. Redundant while one
+    # conversation was searched; load-bearing now that several may be, both for
+    # citing the thread an answer came from and for matching a child to a parent
+    # -- `chunk_index` restarts at zero in every conversation.
+    conversation_id: str = ""
     message_ids: tuple[str, ...] = field(default_factory=tuple)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
@@ -162,7 +167,9 @@ def _decode_message_ids(raw: str | None) -> tuple[str, ...]:
     return tuple(item for item in parsed if isinstance(item, str))
 
 
-def _searchable_rows(conversation_id: str, config: RetrievalConfig, model: str):
+def _searchable_rows(
+    conversation_ids: Sequence[str], config: RetrievalConfig, model: str
+):
     """The base query every arm starts from.
 
     The three columns in the WHERE clause are exactly `ix_assistant_chunks_scope`,
@@ -172,7 +179,7 @@ def _searchable_rows(conversation_id: str, config: RetrievalConfig, model: str):
     filter `semantic_search.py` is missing and `glossary.py` gets right.
     """
     query = select(AssistantChunk).where(
-        AssistantChunk.conversation_id == conversation_id,
+        AssistantChunk.conversation_id.in_(tuple(conversation_ids)),
         AssistantChunk.strategy == config.strategy,
         AssistantChunk.embedding_model == model,
     )
@@ -187,7 +194,7 @@ def _searchable_rows(conversation_id: str, config: RetrievalConfig, model: str):
 async def _vector_candidates(
     db: AsyncSession,
     *,
-    conversation_id: str,
+    conversation_ids: Sequence[str],
     vector: list[float],
     config: RetrievalConfig,
     model: str,
@@ -195,7 +202,7 @@ async def _vector_candidates(
 ) -> list[AssistantChunk]:
     """Nearest chunks by cosine distance, best first."""
     rows = await db.scalars(
-        _searchable_rows(conversation_id, config, model)
+        _searchable_rows(conversation_ids, config, model)
         .where(AssistantChunk.embedding.is_not(None))
         .order_by(AssistantChunk.embedding.cosine_distance(vector))
         .limit(limit)
@@ -206,7 +213,7 @@ async def _vector_candidates(
 async def _lexical_candidates(
     db: AsyncSession,
     *,
-    conversation_id: str,
+    conversation_ids: Sequence[str],
     query_text: str,
     config: RetrievalConfig,
     model: str,
@@ -228,9 +235,11 @@ async def _lexical_candidates(
 
     The ranking expression is not index-accelerated — GIN answers the match, not
     the ordering — but the scan is already confined to one conversation by the
-    filter above, which is at most a few thousand rows.
+    filter above. That filter now names every conversation the reader belongs
+    to rather than one, so the scan grows with the account: the same index, but
+    no longer a single thread's worth of rows.
     """
-    scoped = _searchable_rows(conversation_id, config, model).subquery()
+    scoped = _searchable_rows(conversation_ids, config, model).subquery()
     ranked = (
         select(scoped.c.id)
         .select_from(scoped)
@@ -412,6 +421,7 @@ async def rerank(
         RetrievedChunk(
             chunk_id=candidate.chunk_id,
             chunk_index=candidate.chunk_index,
+            conversation_id=candidate.conversation_id,
             text=candidate.text,
             message_ids=candidate.message_ids,
             starts_at=candidate.starts_at,
@@ -427,7 +437,7 @@ async def rerank(
 async def _expand_to_parents(
     db: AsyncSession,
     *,
-    conversation_id: str,
+    conversation_ids: Sequence[str],
     children: Sequence[RetrievedChunk],
     config: RetrievalConfig,
     model: str,
@@ -437,6 +447,11 @@ async def _expand_to_parents(
 
     Deduplicated: two children of one parent must not put the same text into the
     prompt twice, which wastes context and reads to the model as emphasis.
+
+    Parents are keyed by conversation *and* index. `chunk_index` counts from
+    zero inside each conversation, so with more than one in scope the index
+    alone collides, and a child would be expanded into a stranger's parent --
+    text from a thread the answer was not about, presented as its context.
     """
     wanted = {
         child_rows[child.chunk_id].parent_index
@@ -449,29 +464,32 @@ async def _expand_to_parents(
 
     rows = await db.scalars(
         select(AssistantChunk).where(
-            AssistantChunk.conversation_id == conversation_id,
+            AssistantChunk.conversation_id.in_(tuple(conversation_ids)),
             AssistantChunk.strategy == config.strategy,
             AssistantChunk.embedding_model == model,
             AssistantChunk.chunk_index.in_(wanted),
         )
     )
-    parents = {row.chunk_index: row for row in rows.all()}
+    parents = {(row.conversation_id, row.chunk_index): row for row in rows.all()}
 
     expanded: list[RetrievedChunk] = []
-    emitted: set[int] = set()
+    emitted: set[tuple[str, int]] = set()
     for child in children:
         row = child_rows.get(child.chunk_id)
-        parent = parents.get(row.parent_index) if row else None
+        parent = (
+            parents.get((row.conversation_id, row.parent_index)) if row else None
+        )
         if parent is None:
             expanded.append(child)
             continue
-        if parent.chunk_index in emitted:
+        if (parent.conversation_id, parent.chunk_index) in emitted:
             continue
-        emitted.add(parent.chunk_index)
+        emitted.add((parent.conversation_id, parent.chunk_index))
         expanded.append(
             RetrievedChunk(
                 chunk_id=parent.id,
                 chunk_index=parent.chunk_index,
+                conversation_id=parent.conversation_id,
                 text=parent.chunk_text,
                 message_ids=_decode_message_ids(parent.message_ids),
                 starts_at=parent.starts_at,
@@ -487,12 +505,12 @@ async def _expand_to_parents(
 async def retrieve(
     db: AsyncSession,
     *,
-    conversation_id: str,
+    conversation_ids: Sequence[str],
     query_text: str,
     config: RetrievalConfig | None = None,
     settings: Settings | None = None,
 ) -> list[RetrievedChunk]:
-    """Find the chunks of one conversation that answer ``query_text``.
+    """Find the chunks that answer ``query_text``, within the given scope.
 
     Never raises. Every failure — no embedding provider, no chunks indexed yet,
     a reranker that will not load — returns fewer results or none, and the
@@ -502,11 +520,15 @@ async def retrieve(
     oversight. `assistant_chunks` is built from public messages only, so there is
     no per-reader filtering to do; adding a user id would suggest this function
     enforces something it does not, and the enforcement it would be mistaken for
-    belongs at the point chunks are written.
+    belongs at the point chunks are written. Membership is enforced one level up,
+    where the id set is built.
 
     Args:
         db: Session to read through.
-        conversation_id: The only conversation searched. Never widened.
+        conversation_ids: The conversations searched, and the only ones. The
+            caller decides this set from where the request arrived --
+            `AssistantScope` -- never from what the question asked for, because
+            a question must not be able to widen its own reach.
         query_text: What to look for. Embedded here, so it may be a question
             that appears nowhere in the conversation.
         config: Which layers run. Defaults to the production arrangement.
@@ -517,7 +539,10 @@ async def retrieve(
         indexed, when embedding failed, or when the query is blank.
     """
     cleaned = (query_text or "").strip()
-    if not cleaned:
+    scope = tuple(conversation_ids)
+    # An empty scope returns nothing rather than searching everything. The set
+    # is a permission, so the failure mode of getting it wrong has to be silence.
+    if not cleaned or not scope:
         return []
 
     settings = settings or get_settings()
@@ -551,7 +576,7 @@ async def retrieve(
             if vector is not None:
                 found = await _vector_candidates(
                     db,
-                    conversation_id=conversation_id,
+                    conversation_ids=scope,
                     vector=vector,
                     config=config,
                     model=model,
@@ -565,7 +590,7 @@ async def retrieve(
             if config.use_lexical:
                 found = await _lexical_candidates(
                     db,
-                    conversation_id=conversation_id,
+                    conversation_ids=scope,
                     query_text=query,
                     config=config,
                     model=model,
@@ -586,6 +611,7 @@ async def retrieve(
             RetrievedChunk(
                 chunk_id=identifier,
                 chunk_index=rows_by_id[identifier].chunk_index,
+                conversation_id=rows_by_id[identifier].conversation_id,
                 text=rows_by_id[identifier].chunk_text,
                 message_ids=_decode_message_ids(rows_by_id[identifier].message_ids),
                 starts_at=rows_by_id[identifier].starts_at,
@@ -607,7 +633,7 @@ async def retrieve(
         if config.use_parent_expansion and config.strategy == "parent_child":
             results = await _expand_to_parents(
                 db,
-                conversation_id=conversation_id,
+                conversation_ids=scope,
                 children=results,
                 config=config,
                 model=model,

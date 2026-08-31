@@ -42,12 +42,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.schemas.assistant_tools import (
     ExtractActionsArguments,
     ListCalendarEventsArguments,
+    ListPeopleArguments,
     ProposeCalendarEventArguments,
     RecallUserMemoryArguments,
     SaveUserMemoryArguments,
     SearchOldMessagesArguments,
     SummarizeConversationArguments,
 )
+from src.services.assistant_scope import PERSONAL_THREAD_TITLE, AssistantScope
 
 logger = logging.getLogger(__name__)
 
@@ -104,26 +106,40 @@ class ToolResult:
 def build_registry(
     db: AsyncSession,
     *,
-    conversation_id: str,
-    user_id: str,
+    scope: AssistantScope,
 ) -> dict[str, ToolSpec]:
-    """Bind every tool to one session, conversation and account.
+    """Bind every tool to one session, scope and account.
 
     Bound rather than passed per call, and that is a safety property rather than
-    convenience: `user_id` and `conversation_id` are closed over here from the
-    authenticated request, so no argument schema exposes them and no plan the
-    model produces can name a different person's calendar or another thread's
-    messages. The planner decides *what* to do; it never decides *whose*.
+    convenience: the account and the conversations it may read are closed over
+    here from the authenticated request, so no argument schema exposes them and
+    no plan the model produces can name a different person's calendar or a
+    thread outside the scope. The planner decides *what* to do; it never decides
+    *whose*, and it never decides *how widely*.
+
+    The scope itself comes from where the request arrived -- the private
+    assistant thread reads the whole account, a mention inside a conversation
+    reads that conversation -- and is resolved by `scope_for`, not from anything
+    the person wrote. A question that could widen its own reach would make the
+    rule decorative.
     """
+    user_id = scope.user_id
+    conversation_id = scope.origin_conversation_id
 
     async def search_old_messages(*, query: str, top_n: int = 4) -> ToolResult:
         from src.config import get_settings
         from src.services.assistant_retrieval import RetrievalConfig, retrieve
 
         settings = get_settings()
+        # Every conversation in scope, which in the private thread is all of
+        # them. A person asking their own assistant "what did we decide about
+        # the deadline" does not know or care which thread it was decided in,
+        # and answering only from the thread they are standing in -- one that
+        # contains nothing but their questions -- is how it came to answer
+        # "nothing was said" about things that were said at length elsewhere.
         chunks = await retrieve(
             db,
-            conversation_id=conversation_id,
+            conversation_ids=await scope.conversation_ids(db),
             query_text=query,
             config=RetrievalConfig(
                 top_k=settings.assistant_retrieval_top_k, top_n=top_n
@@ -136,7 +152,7 @@ def build_registry(
             return ToolResult(
                 tool="search_old_messages",
                 ok=True,
-                summary="Nothing in this conversation matches that.",
+                summary="Nothing in the conversations I can read matches that.",
                 data=[],
             )
         return ToolResult(
@@ -144,7 +160,14 @@ def build_registry(
             ok=True,
             summary="\n\n".join(chunk.text for chunk in chunks),
             data=[
-                {"chunk_id": chunk.chunk_id, "message_ids": list(chunk.message_ids)}
+                {
+                    "chunk_id": chunk.chunk_id,
+                    # Which thread the hit came from. With several in scope the
+                    # answer has to be able to say where something was said,
+                    # and the planner has to be able to tell two threads apart.
+                    "conversation_id": chunk.conversation_id,
+                    "message_ids": list(chunk.message_ids),
+                }
                 for chunk in chunks
             ],
         )
@@ -278,6 +301,103 @@ def build_registry(
             ],
         )
 
+    async def list_people() -> ToolResult:
+        """Who is in the conversations this request may read.
+
+        In the private thread that is every conversation the account belongs to,
+        with the members of each; from inside a conversation it is that
+        conversation alone. Without this the assistant could search what was
+        said but could not say who said it or who else was there, so a question
+        as ordinary as "ai trong nhóm dự án" had no path to an answer.
+
+        Names only. No email address, no account id the person could not already
+        read off the member list in the interface: this widens what the
+        assistant can say, not what the reader is entitled to.
+
+        No arguments at all. It had one -- a conversation id to narrow to -- and
+        the planner filled it in with an id it had no way to know, which
+        filtered every conversation away and produced "no conversation in
+        scope". The person was then told the assistant could not see their
+        conversations, which was false and came from an argument that existed
+        only to be got wrong. The scope already says what may be read; there is
+        nothing here for a model to decide.
+        """
+        from sqlalchemy import select as _select
+
+        from src.database.models import Conversation as _Conversation
+        from src.database.models import ConversationMember as _Member
+        from src.database.models import User as _User
+
+        allowed = await scope.conversation_ids(db)
+        if not allowed:
+            return ToolResult(
+                tool="list_people",
+                ok=True,
+                summary="No conversation in scope.",
+                data=[],
+            )
+
+        rows = (
+            await db.execute(
+                _select(
+                    _Member.conversation_id,
+                    _Conversation.type,
+                    _Conversation.title,
+                    _User.display_name,
+                    _User.username,
+                    _User.email,
+                )
+                .join(_Conversation, _Conversation.id == _Member.conversation_id)
+                .join(_User, _User.id == _Member.user_id)
+                .where(_Member.conversation_id.in_(allowed))
+            )
+        ).all()
+
+        grouped: dict[str, dict[str, object]] = {}
+        for cid, kind, title, display_name, username, email in rows:
+            if title == PERSONAL_THREAD_TITLE:
+                # The person's own thread with the assistant. Listing them as
+                # the sole member of it is noise in every answer.
+                continue
+            entry = grouped.setdefault(
+                cid, {"conversation_id": cid, "type": kind, "title": title, "members": []}
+            )
+            # The same fallback the summariser uses for a speaker label. An
+            # account can have neither a display name nor a username -- the two
+            # seeded developer accounts have neither -- and "Unknown, Unknown"
+            # is worse than useless: it reads as the assistant not being allowed
+            # to see, which is what it then tells the person.
+            name = display_name or username or (email or "").split("@")[0] or "Unknown"
+            members = entry["members"]
+            assert isinstance(members, list)
+            members.append(name)
+
+        # Written as sentences rather than as `direct: A, B`. The answering
+        # stage reads this summary and nothing else about the call, and a
+        # cryptic line gets treated as data it does not understand well enough
+        # to use -- which reaches the person as "I cannot see your
+        # conversations", the one thing that is not true here.
+        lines = []
+        for entry in grouped.values():
+            members = ", ".join(sorted(entry["members"]))
+            title = entry["title"]
+            lines.append(
+                f'Group "{title}" - members: {members}'
+                if title
+                else f"Direct conversation - members: {members}"
+            )
+        header = (
+            "The conversations this person belongs to, and who is in each:"
+            if lines
+            else "This person shares no conversation with anybody else."
+        )
+        return ToolResult(
+            tool="list_people",
+            ok=True,
+            summary="\n".join([header, *lines]),
+            data=list(grouped.values()),
+        )
+
     async def recall_user_memory(*, query: str, top_n: int = 3) -> ToolResult:
         from src.services.assistant_memory import recall
 
@@ -314,7 +434,9 @@ def build_registry(
         ToolSpec(
             name="search_old_messages",
             description=(
-                "Search earlier parts of this conversation by meaning. Use it "
+                "Search earlier messages by meaning. In the person's own "
+                "assistant chat this reaches every conversation they belong "
+                "to; inside a conversation it reaches only that one. Use it "
                 "whenever the answer might have been said before the recent "
                 "messages, which is most questions beginning 'what did we'."
             ),
@@ -322,6 +444,19 @@ def build_registry(
             consent_scope="read_conversations",
             produces_proposals=False,
             run=search_old_messages,
+        ),
+        ToolSpec(
+            name="list_people",
+            description=(
+                "List the conversations in reach and who is in each of them. "
+                "In the person's own assistant chat that is all their "
+                "conversations; inside a conversation it is only that one. Use "
+                "it for 'who is in the group', or before naming somebody."
+            ),
+            schema=ListPeopleArguments,
+            consent_scope="read_conversations",
+            produces_proposals=False,
+            run=list_people,
         ),
         ToolSpec(
             name="summarize_conversation",
