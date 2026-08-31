@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import (
     APIRouter,
@@ -80,6 +81,7 @@ from src.schemas.auth import (
     ResendRegisterOtpRequest,
     ResendRegisterOtpResponse,
     ResetPasswordRequest,
+    TimezoneUpdate,
     UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
     UserProfileUpdate,
@@ -1528,6 +1530,37 @@ async def update_interface_language(
     await db.commit()
     await db.refresh(current_user)
 
+    return UserResponse.model_validate(current_user)
+
+
+@router.put("/auth/me/timezone", response_model=UserResponse)
+async def update_timezone(
+    request: TimezoneUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Record the caller's IANA timezone, as reported by their browser.
+
+    Stored so proposals can carry a real time. A wall clock like "3 giờ chiều
+    thứ Sáu" is not an instant without an offset, and `normalize_action_time`
+    will not take one from model output -- a guessed offset books the meeting at
+    the wrong hour and nothing says so. Before this the server had no trusted
+    source at all, so every extracted time reached the owner as an empty field.
+
+    Validated against the zone database rather than stored as typed: an
+    unknown name would be accepted here and then silently ignored at every read,
+    which is the failure that looks like the feature simply not working.
+    """
+    try:
+        ZoneInfo(request.timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown IANA timezone name",
+        ) from exc
+    current_user.timezone = request.timezone
+    await db.commit()
+    await db.refresh(current_user)
     return UserResponse.model_validate(current_user)
 
 

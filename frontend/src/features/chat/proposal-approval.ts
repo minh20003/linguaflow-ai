@@ -181,3 +181,26 @@ export function decisionCorrections(
   }
   return body;
 }
+
+/** What the assistant says once the proposal has been answered.
+ *
+ *  A decision is a turn in the conversation, so it reads as one: the card asks,
+ *  the person answers, and the assistant confirms what it did with the answer.
+ *  `null` while the question is still open — there is nothing to report yet.
+ */
+export function decisionReply(proposal: ApiActionProposal): string | null {
+  switch (proposal.status) {
+    case "confirmed":
+      return `Đã thêm "${proposal.title}" vào Lịch cá nhân${
+        proposal.scheduled_start_at || proposal.due_at
+          ? ` — ${formatProposalWhen(proposal)}`
+          : ""
+      }.`;
+    case "rejected":
+      return `Đã từ chối đề xuất "${proposal.title}". Tôi sẽ không đưa việc này vào lịch.`;
+    case "stale":
+      return `Đề xuất "${proposal.title}" đã quá hạn nên tôi bỏ qua.`;
+    default:
+      return null;
+  }
+}

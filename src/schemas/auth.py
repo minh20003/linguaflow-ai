@@ -269,6 +269,23 @@ class UpdateLanguageRequest(BaseModel):
         return normalize_language(v)
 
 
+class TimezoneUpdate(BaseModel):
+    """The caller's IANA timezone name, as their browser reports it.
+
+    A name rather than an offset: an offset is only correct until the next
+    daylight-saving change, and a meeting proposed in October for December would
+    land an hour out. `ZoneInfo` resolves the name at the moment it is used.
+    """
+
+    timezone: str = Field(
+        ...,
+        description="IANA timezone name",
+        min_length=1,
+        max_length=64,
+        examples=["Asia/Ho_Chi_Minh", "Europe/London"],
+    )
+
+
 class UpdateInterfaceLanguageRequest(BaseModel):
     """Request schema for updating the language of the interface (§1.2).
 

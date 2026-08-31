@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import ActionProposal, Message
+from src.database.models import ActionProposal, Message, User
 from src.schemas.intelligence import ActionCandidateDTO
 
 MAX_CLARIFICATION_ROUNDS = 2
@@ -362,12 +362,24 @@ class ActionProposalService:
         if source is None or source.conversation_id != conversation_id:
             raise ActionProposalNotFoundError("Source message not found")
 
+        # The owner's own timezone, reported by their browser and stored on the
+        # account. This is the trusted offset `normalize_action_time` has always
+        # required and never had: with `None` it refused every wall-clock time,
+        # so "3 giờ chiều thứ Sáu" reached the owner as an empty field they had
+        # to retype. It is still never taken from model output -- a guessed
+        # offset books a meeting at the wrong hour and says nothing -- and an
+        # account that has never opened the web client still has none, which
+        # falls back to asking exactly as before.
+        owner_timezone = await self.db.scalar(
+            select(User.timezone).where(User.id == owner_user_id)
+        )
+
         saved: list[ActionProposal] = []
         for candidate in candidates:
             normalized = normalize_action_time(
                 raw_time_expression=candidate.raw_time_expression,
                 reference_timestamp=source.created_at,
-                trusted_timezone=None,
+                trusted_timezone=owner_timezone,
                 candidate_datetime=candidate.scheduled_time,
                 existing_missing_fields=candidate.missing_fields,
             )
