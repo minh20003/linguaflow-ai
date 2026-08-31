@@ -333,6 +333,43 @@ graph LR
 
 ## PHẦN III — GHI CHÚ THIẾT KẾ
 
+## PHẦN IV — LUỒNG ĐỀ XUẤT LỊCH HẸN VÀ VIỆC CẦN LÀM (HIỆN THỰC)
+
+### 4.1 Quét hội thoại và phân loại
+
+Từ cửa sổ chat, người dùng mở **Tìm lịch hẹn** và chọn phạm vi bằng số lượng + đơn vị `giờ`, `ngày` hoặc `tuần`; phạm vi tối đa là 30 ngày (720 giờ / 4 tuần). Hệ thống chỉ đọc tin nhắn trong đúng hội thoại và phạm vi được chọn, rồi tạo các đề xuất riêng biệt:
+
+- **Sự kiện**: có thời điểm hoặc khoảng thời gian cụ thể (họp, gọi, lịch hẹn).
+- **Việc cần làm**: cam kết, đầu việc hoặc hạn xử lý không nhất thiết có giờ họp.
+
+Mỗi tin nhắn nguồn được bảo vệ bằng idempotency; quét lặp lại không sinh lại cùng đề xuất. Đề xuất chưa duyệt vẫn được giữ để người dùng mở, sửa hoặc từ chối; không tự động tạo lịch.
+
+### 4.2 Xét duyệt có người trong vòng lặp
+
+Đề xuất luôn bắt đầu ở `pending_confirmation` hoặc `needs_clarification`. Người dùng có thể mở chi tiết để sửa ngày/giờ, địa điểm và ghi chú, sau đó **Duyệt** hoặc **Từ chối**. Chỉ sau khi duyệt, backend mới tạo CalendarEvent nội bộ và lịch mới có thể được đồng bộ sang Google Calendar.
+
+Hộp nhiệm vụ tách danh sách **Sự kiện** và **Việc cần làm** khi cả hai cùng tồn tại. Nội dung nhập bởi người dùng (tiêu đề, ghi chú, địa điểm, tin nhắn) không bị thay đổi bởi ngôn ngữ giao diện.
+
+### 4.3 Nguồn và khả năng truy vết
+
+Mỗi đề xuất trả về người gửi, tên hội thoại và loại hội thoại. Giao diện hiển thị:
+
+- `Yêu cầu từ <người/email>` cho đề xuất do yêu cầu trực tiếp.
+- `Trợ lý nhận diện yêu cầu từ <người/email>` cho đề xuất do trợ lý quét/phát hiện.
+- Nếu nguồn là nhóm, thêm `· Nhóm <tên nhóm>`.
+
+Nguồn chỉ là metadata cần cho người duyệt; không mở rộng quyền đọc hội thoại cho người không phải thành viên.
+
+### 4.4 Google Calendar và Google Meet
+
+Kết nối Google Calendar là OAuth tuỳ chọn, yêu cầu consent đọc lịch; ghi sự kiện cần consent ghi lịch riêng. Event đã duyệt được đẩy sang Google Calendar nền và có thể đồng bộ ngược, trong khi event từ Google được hiển thị chỉ đọc trong ứng dụng.
+
+**Google Meet hiện chưa được tạo thật.** Nút thêm Meet chỉ tạo URL minh hoạ phía giao diện. Để tạo phòng Meet thật cần gửi `conferenceData.createRequest` cùng `conferenceDataVersion=1` tới Google Calendar API và lưu `hangoutLink` Google trả về. Không được coi URL minh hoạ là một cuộc họp hợp lệ.
+
+### 4.5 Ngôn ngữ hiển thị
+
+`interfaceLanguage` là nguồn duy nhất cho nhãn, nút, trạng thái, menu, thời gian định dạng và thông báo hệ thống. `preferredLanguage` chỉ quyết định ngôn ngữ dịch nội dung tin nhắn. Nội dung người dùng gửi luôn giữ nguyên bản gốc hoặc bản dịch theo thiết lập dịch; không dùng cơ chế i18n để thay đổi nội dung đó.
+
 ### 3.1 Vấn đề trích dẫn trong glossary — cần xử lý trước khi code
 
 Yêu cầu "có trích dẫn để admin kiểm tra" mâu thuẫn trực tiếp với ràng buộc riêng tư (agent chỉ xử lý trong vùng đã giải mã, admin không đọc nội dung người dùng). Ba phương án, xếp theo mức độ an toàn:

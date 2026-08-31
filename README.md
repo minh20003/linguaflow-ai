@@ -27,6 +27,8 @@ seeded demo accounts in [Development Accounts](#development-accounts) below.
   same context-aware translation UI as text
 - Admin translation statistics
 - Multilingual interface
+- Human-approved appointment and task proposals extracted from selected chat history
+- Optional Google Calendar synchronization; Google Meet room creation is not yet implemented
 
 ## How It Works
 
@@ -37,6 +39,8 @@ Voice → authenticated upload → Gemini 3.5 Transcribe (verbatim) ┘
 ```
 
 [Architecture diagram](docs/gate2_architecture.md)
+
+Operational safeguards are documented in [Runtime reliability](docs/RUNTIME_RELIABILITY.md).
 
 ## Tech Stack
 
@@ -267,6 +271,9 @@ Gate 2 evidence: `eval/gate2_evidence.md`
 ## Deployment
 
 See [docs/DEPLOY.md](docs/DEPLOY.md) for detailed deployment instructions.
+For existing product integrations and operational behaviour (RTC, Google
+Calendar, assistant consent/retrieval, reminders, i18n and admin health), see
+[docs/FEATURE_OPERATIONS.md](docs/FEATURE_OPERATIONS.md).
 
 Summary:
 - **Runtime**: Ubuntu VPS with Docker Compose and Caddy

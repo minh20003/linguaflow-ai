@@ -65,9 +65,10 @@ Message history is bounded to a recent window (max 100 messages per request).
 This mechanism does **NOT** guarantee recovery of arbitrarily large backlogs
 after a long offline period.
 
-Cursor/pagination/replay infrastructure is out of scope for MVP.
-If a user is offline for an extended period, older messages beyond the 100-message
-window cannot be recovered through the reconnect mechanism.
+Cursor pagination hiện đã có cho REST history (`GET /conversations/{id}/messages`)
+qua `before` và `next_cursor`. Cơ chế reconnect WebSocket vẫn chỉ đồng bộ cửa sổ
+gần nhất; client cần tiếp tục tải các trang REST cũ hơn khi cần phục hồi backlog
+dài. Mỗi request vẫn bị giới hạn tối đa 100 tin nhắn.
 
 ## WebSocket Events
 
