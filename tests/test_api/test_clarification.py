@@ -106,7 +106,7 @@ async def test_clarify_execution_relevant_ambiguity_detected(client: AsyncClient
         )
     )
 
-    with patch("src.agents.conversation_intelligence.clarification.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.clarification.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_ambiguous_id}/clarify",
             headers={"Authorization": f"Bearer {token}"},
@@ -138,7 +138,7 @@ async def test_clarify_non_execution_ambiguity_skipped(client: AsyncClient, clar
         )
     )
 
-    with patch("src.agents.conversation_intelligence.clarification.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.clarification.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_clear_id}/clarify",
             headers={"Authorization": f"Bearer {token}"},
@@ -162,7 +162,7 @@ async def test_clarify_deleted_message_returns_no_clarification(client: AsyncCli
     m_ambiguous.original_text = ""
     await test_db.commit()
 
-    with patch("src.agents.conversation_intelligence.clarification.get_llm") as mock_get_llm:
+    with patch("src.agents.conversation_intelligence.clarification.get_intelligence_llm") as mock_get_llm:
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_ambiguous.id}/clarify",
             headers={"Authorization": f"Bearer {token}"},
@@ -211,7 +211,7 @@ async def test_clarify_provider_error_503(client: AsyncClient, clarify_setup):
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(side_effect=RuntimeError("Provider 500 error"))
 
-    with patch("src.agents.conversation_intelligence.clarification.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.clarification.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_ambiguous_id}/clarify",
             headers={"Authorization": f"Bearer {token}"},

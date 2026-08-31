@@ -9,6 +9,7 @@ import {
   ProposalDraft,
   canApprove,
   decisionCorrections,
+  missingFields,
   draftFromProposal,
   formatProposalWhen,
   toLocalInputValue,
@@ -215,8 +216,22 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   ) => {
     setBusyId(proposal.id);
     try {
-      replace(await run());
-      onNotify?.(success, proposal.title, "success");
+      const updated = await run();
+      replace(updated);
+      // A call that returns 200 having changed nothing is the worst outcome to
+      // render silently: the card looks identical and the button looks broken.
+      if (
+        updated.status === proposal.status &&
+        updated.missing_fields === proposal.missing_fields
+      ) {
+        onNotify?.(
+          "Chưa dùng được câu trả lời đó",
+          "Bạn điền trực tiếp vào ô Bắt đầu ở trên rồi bấm Duyệt.",
+          "warning",
+        );
+      } else {
+        onNotify?.(success, proposal.title, "success");
+      }
     } catch (error) {
       onNotify?.(
         "Không thực hiện được",
@@ -335,7 +350,14 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                 />
               )}
 
-              {needsAnswer && (
+              {/* Only for clarifications a date picker cannot express. When the
+                  missing field is the time, the form above already has a
+                  datetime input, and a free-text answer there was worse than
+                  useless: the server understands a deliberately tiny grammar
+                  ("mai 14h", "sáng mai", "next friday") and silently resolves
+                  nothing else, so a perfectly reasonable "9h sáng thứ năm" left
+                  the card unchanged and looked like a dead button. */}
+              {needsAnswer && !missingFields(proposal).includes("time") && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
                   <p className="flex items-start gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-200">
                     <MessageSquareQuote className="mt-0.5 h-3 w-3 flex-none" />

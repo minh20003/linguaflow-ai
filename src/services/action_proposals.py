@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,17 +14,16 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import ActionProposal, Message
+from src.database.models import ActionProposal, Message, User
 from src.schemas.intelligence import ActionCandidateDTO
+from src.services.relative_time import mentions_relative_time, resolve_relative_time
 
 MAX_CLARIFICATION_ROUNDS = 2
 _ACTIVE_STATUSES = ("needs_clarification", "pending_confirmation")
-_RELATIVE_TIME = re.compile(
-    r"\b(?:mai|ngày mai|tomorrow)\b(?:\s+(?:lúc|at))?\s*(?P<hour>\d{1,2})(?:[:h](?P<minute>\d{2})?)?",
-    re.IGNORECASE,
-)
-_TOMORROW_MORNING = re.compile(r"\b(?:tomorrow morning|sáng mai)\b", re.IGNORECASE)
-_NEXT_FRIDAY = re.compile(r"\bnext friday\b", re.IGNORECASE)
+# An absolute date the owner typed, which is a different problem from a
+# relative expression somebody spoke: this one needs no reference instant, only
+# a trusted timezone. The relative grammar that used to sit beside it now lives
+# in `src/services/relative_time.py`, where the detector can share it.
 _LOCAL_DATE_TIME = re.compile(
     r"^\s*(?P<hour>\d{1,2})(?:\s*(?::|h|giờ)\s*(?P<minute>\d{1,2})?)?\s*"
     r"(?:ngày\s*)?(?P<day>\d{1,2})[/-](?P<month>\d{1,2})[/-](?P<year>\d{4})\s*$",
@@ -86,41 +85,6 @@ def _parse_explicit_offset(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return _as_utc(parsed) if parsed.tzinfo else None
-
-
-def _relative_time_expression(value: str | None) -> bool:
-    if not value:
-        return False
-    lowered = value.casefold()
-    return bool(
-        _RELATIVE_TIME.search(lowered)
-        or _TOMORROW_MORNING.search(lowered)
-        or _NEXT_FRIDAY.search(lowered)
-    )
-
-
-def _resolve_relative_time(raw: str, reference: datetime, timezone: ZoneInfo) -> datetime | None:
-    """Resolve the deliberately small, execution-safe relative-time grammar."""
-
-    local_reference = _as_utc(reference).astimezone(timezone)
-    match = _RELATIVE_TIME.search(raw)
-    if match:
-        hour = int(match.group("hour"))
-        minute = int(match.group("minute") or 0)
-        if hour > 23 or minute > 59:
-            return None
-        local = datetime.combine(
-            local_reference.date() + timedelta(days=1), time(hour=hour, minute=minute), timezone
-        )
-        return local.astimezone(UTC)
-    if _TOMORROW_MORNING.search(raw):
-        local = datetime.combine(local_reference.date() + timedelta(days=1), time(hour=9), timezone)
-        return local.astimezone(UTC)
-    if _NEXT_FRIDAY.search(raw):
-        days = (4 - local_reference.weekday()) % 7 or 7
-        local = datetime.combine(local_reference.date() + timedelta(days=days), time(hour=9), timezone)
-        return local.astimezone(UTC)
-    return None
 
 
 def _resolve_local_date_time(answer: str | None, timezone: ZoneInfo) -> datetime | None:
@@ -205,11 +169,11 @@ def normalize_action_time(
             missing.discard("timezone")
             return TemporalResolution(canonical_candidate, raw, None, tuple(sorted(missing)))
 
-    if raw and _relative_time_expression(raw):
+    if raw and mentions_relative_time(raw):
         if timezone is None or reference_timestamp is None:
             missing.update({"timezone", "time"})
             return TemporalResolution(None, raw, None, tuple(sorted(missing)))
-        resolved = _resolve_relative_time(raw, reference_timestamp, timezone)
+        resolved = resolve_relative_time(raw, reference_timestamp, timezone)
         if resolved is None:
             missing.add("time")
             return TemporalResolution(None, raw, timezone.key, tuple(sorted(missing)))
@@ -390,23 +354,44 @@ class ActionProposalService:
         owner_user_id: str,
         source_mode: str,
         created_by_user_id: str | None = None,
+        timezone_user_id: str | None = None,
     ) -> list[ActionProposal]:
         """Persist candidates with one savepoint per insert conflict.
 
         A duplicate cannot roll back an earlier successful candidate in the same
         outer transaction.  Candidate-provided owners are deliberately ignored.
+
+        `timezone_user_id` names whose wall clock the times were spoken on, and
+        defaults to the owner.  It differs only when a proactive proposal is
+        offered to the whole conversation: "6h" belongs to the person who said
+        it, so every recipient's row must resolve on the sender's clock.
+        Resolving each row on its own owner's clock would move the meeting by
+        the offset between them -- and produce members holding the same
+        appointment at different instants, which is worse than asking.
         """
 
         source = await self.db.get(Message, source_message_id)
         if source is None or source.conversation_id != conversation_id:
             raise ActionProposalNotFoundError("Source message not found")
 
+        # The owner's own timezone, reported by their browser and stored on the
+        # account. This is the trusted offset `normalize_action_time` has always
+        # required and never had: with `None` it refused every wall-clock time,
+        # so "3 giờ chiều thứ Sáu" reached the owner as an empty field they had
+        # to retype. It is still never taken from model output -- a guessed
+        # offset books a meeting at the wrong hour and says nothing -- and an
+        # account that has never opened the web client still has none, which
+        # falls back to asking exactly as before.
+        owner_timezone = await self.db.scalar(
+            select(User.timezone).where(User.id == (timezone_user_id or owner_user_id))
+        )
+
         saved: list[ActionProposal] = []
         for candidate in candidates:
             normalized = normalize_action_time(
                 raw_time_expression=candidate.raw_time_expression,
                 reference_timestamp=source.created_at,
-                trusted_timezone=None,
+                trusted_timezone=owner_timezone,
                 candidate_datetime=candidate.scheduled_time,
                 existing_missing_fields=candidate.missing_fields,
             )
@@ -630,7 +615,7 @@ class ActionProposalService:
 
         missing = _load_missing(proposal.missing_fields)
         temporal_missing = {"time", "timezone"}.intersection(missing)
-        if temporal_missing or _relative_time_expression(proposal.raw_time_expression):
+        if temporal_missing or mentions_relative_time(proposal.raw_time_expression):
             resolution = normalize_action_time(
                 raw_time_expression=proposal.raw_time_expression,
                 reference_timestamp=source.created_at,

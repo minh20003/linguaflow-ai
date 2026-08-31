@@ -282,7 +282,7 @@ async def test_retrieve_ranks_the_chunk_that_answers_the_question_first(
 
     results = await retrieve(
         test_db,
-        conversation_id=seeded_conversation.id,
+        conversation_ids=[seeded_conversation.id],
         query_text="what did we decide about the deadline",
         config=RetrievalConfig(strategy="message", top_k=5, top_n=2, use_rerank=False),
     )
@@ -317,7 +317,7 @@ async def test_retrieve_never_reaches_into_another_conversation(
 
     results = await retrieve(
         test_db,
-        conversation_id=seeded_conversation.id,
+        conversation_ids=[seeded_conversation.id],
         query_text="deadline",
         config=RetrievalConfig(strategy="message", top_k=10, top_n=10, use_rerank=False),
     )
@@ -344,7 +344,7 @@ async def test_retrieve_ignores_chunks_written_by_a_different_embedding_model(
     )
     results = await retrieve(
         test_db,
-        conversation_id=seeded_conversation.id,
+        conversation_ids=[seeded_conversation.id],
         query_text="deadline",
         config=RetrievalConfig(strategy="message", top_k=5, top_n=5, use_rerank=False),
     )
@@ -367,7 +367,7 @@ async def test_retrieve_finds_an_exact_term_the_vector_arm_ranks_poorly(
 
     results = await retrieve(
         test_db,
-        conversation_id=seeded_conversation.id,
+        conversation_ids=[seeded_conversation.id],
         query_text="yesterday",
         config=RetrievalConfig(
             strategy="message", top_k=5, top_n=3, use_rerank=False, use_lexical=True
@@ -387,7 +387,7 @@ async def test_retrieve_returns_the_parent_when_a_child_matched(
 
     results = await retrieve(
         test_db,
-        conversation_id=seeded_conversation.id,
+        conversation_ids=[seeded_conversation.id],
         query_text="deadline",
         config=RetrievalConfig(
             strategy="parent_child",
@@ -418,7 +418,7 @@ async def test_retrieve_returns_nothing_when_the_conversation_is_not_indexed(
     assert (
         await retrieve(
             test_db,
-            conversation_id=seeded_conversation.id,
+            conversation_ids=[seeded_conversation.id],
             query_text="deadline",
             config=RetrievalConfig(strategy="message", use_rerank=False),
         )
@@ -430,7 +430,9 @@ async def test_retrieve_returns_nothing_for_a_blank_query_without_calling_a_prov
     test_db, seeded_conversation
 ):
     assert (
-        await retrieve(test_db, conversation_id=seeded_conversation.id, query_text="   ")
+        await retrieve(
+            test_db, conversation_ids=[seeded_conversation.id], query_text="   "
+        )
         == []
     )
 
@@ -451,7 +453,7 @@ async def test_retrieve_degrades_to_empty_when_the_embedding_provider_is_down(
     assert (
         await retrieve(
             test_db,
-            conversation_id=seeded_conversation.id,
+            conversation_ids=[seeded_conversation.id],
             query_text="deadline",
             config=RetrievalConfig(
                 strategy="message", use_rerank=False, use_lexical=False

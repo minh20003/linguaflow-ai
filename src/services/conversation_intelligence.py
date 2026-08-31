@@ -11,8 +11,8 @@ from src.agents.conversation_intelligence.observability import build_runnable_co
 from src.agents.conversation_intelligence.parsing import invoke_with_repair
 from src.config import Settings, get_settings
 from src.schemas.intelligence import ActionProposalResponse
-from src.services.agent_consent import require_consent
-from src.services.llm import get_llm
+from src.services.agent_consent import has_consent, require_consent
+from src.services.llm import get_intelligence_llm
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -25,7 +25,7 @@ class ConversationIntelligenceService:
 
     def get_model(self, provider: str | None = None) -> Any:
         """Get configured ChatModel instance."""
-        return get_llm(settings=self.settings, provider=provider)
+        return get_intelligence_llm(settings=self.settings, provider=provider)
 
     async def invoke_structured(
         self,
@@ -376,7 +376,13 @@ class ConversationIntelligenceService:
         from sqlalchemy import select
 
         from src.agents.conversation_intelligence.self_commitment import detect_self_commitments
-        from src.database.models import Conversation, ConversationMember, Message, User
+        from src.database.models import (
+            ActionProposal,
+            Conversation,
+            ConversationMember,
+            Message,
+            User,
+        )
         from src.services.action_proposals import ActionProposalService
         from src.services.chat import (
             ConversationMembershipError,
@@ -419,7 +425,14 @@ class ConversationIntelligenceService:
             if sender_user else "User"
         )
 
-        # 4. Detect self-commitments via LLM
+        # 4. Detect self-commitments via LLM.
+        #
+        # The sender's timezone goes in with the message. `msg.created_at` is
+        # UTC, and a model told only that resolves "mai" against the UTC date --
+        # which is the previous day for every message sent before 07:00 in
+        # Hanoi, so the appointment came out a day early with nothing to catch
+        # it. The model needs the date the sender was actually looking at.
+        sender_timezone = sender_user.timezone if sender_user else None
         candidates = await detect_self_commitments(
             message_text=msg.original_text,
             sender_id=msg.sender_id,
@@ -428,21 +441,90 @@ class ConversationIntelligenceService:
             conversation_id=conversation_id,
             message_id=message_id,
             settings=self.settings,
+            sender_timezone=sender_timezone,
         )
 
         if not candidates:
             return []
 
-        # 5. Persist proposals idempotently
-        prop_service = ActionProposalService(db)
-        proposals = await prop_service.create_proposals_from_candidates(
-            conversation_id=conversation_id,
-            source_message_id=message_id,
-            candidates=candidates,
-            owner_user_id=msg.sender_id,
-            source_mode="proactive",
-            created_by_user_id=None,
+        # 5. Persist one proposal per member, each deciding for themselves.
+        #
+        # An appointment the assistant noticed by itself is not the sender's
+        # private business: everybody in the conversation is party to it, so
+        # everybody is offered it, and approving or rejecting is each person's
+        # own act. One shared row could not express that -- a single `status`
+        # cannot say "confirmed by two of us and declined by the third" -- so
+        # each member gets their own row and their own decision. This is only
+        # true of the proactive path; a proposal somebody asked the assistant
+        # for stays with the person who asked (ADR-31).
+        #
+        # Every row resolves its time in the *sender's* timezone, not the
+        # owner's: "6h" is a wall clock belonging to whoever said it, and
+        # re-reading it on each recipient's clock would move the meeting by the
+        # offset between them.
+        #
+        # A private message is never fanned out. It is addressed to one account
+        # by construction, and its text is exactly what must not reach the rest
+        # of the conversation.
+        recipients = (
+            [msg.sender_id]
+            if msg.visibility != "public"
+            else await self._proactive_recipients(db, conversation_id, msg.sender_id)
         )
 
+        prop_service = ActionProposalService(db)
+        proposals: list[ActionProposal] = []
+        for owner_id in recipients:
+            proposals.extend(
+                await prop_service.create_proposals_from_candidates(
+                    conversation_id=conversation_id,
+                    source_message_id=message_id,
+                    candidates=candidates,
+                    owner_user_id=owner_id,
+                    source_mode="proactive",
+                    created_by_user_id=None,
+                    timezone_user_id=msg.sender_id,
+                )
+            )
+
         return [ActionProposalResponse.model_validate(p) for p in proposals]
+
+    @staticmethod
+    async def _proactive_recipients(
+        db: Any, conversation_id: str, sender_id: str
+    ) -> list[str]:
+        """Who is offered a proposal the assistant raised on its own.
+
+        The sender, plus every other member who has granted `proactive_scan`.
+
+        The sender is included unconditionally because the path that got here
+        has already cleared them: the manual endpoint is a request they typed,
+        which needs only `read_conversations`, and the background scanner checks
+        their `proactive_scan` before it calls at all. Re-checking here would
+        take the manual endpoint away from anyone who never turned scanning on,
+        which is a permission they were deliberately not asked for.
+
+        Every other member is checked, because nobody asked on their behalf --
+        a card in their chat is the assistant acting proactively at them, which
+        is exactly what `proactive_scan` governs. A member who never answered
+        has no row, and no row means not granted
+        (`docs/CONTRACT.md` §5 note 19), so silence produces no card.
+        """
+        from sqlalchemy import select as _select
+
+        from src.database.models import ConversationMember as _Member
+
+        member_ids = list(
+            (
+                await db.scalars(
+                    _select(_Member.user_id).where(
+                        _Member.conversation_id == conversation_id
+                    )
+                )
+            ).all()
+        )
+        others = [uid for uid in member_ids if uid != sender_id]
+        return [sender_id] + [
+            uid for uid in others if await has_consent(db, uid, "proactive_scan")
+        ]
 

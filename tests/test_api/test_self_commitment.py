@@ -124,7 +124,7 @@ async def test_detect_self_commitments_vietnamese_success_200(client: AsyncClien
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -173,7 +173,7 @@ async def test_detect_self_commitments_english_success_200(client: AsyncClient, 
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_en_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -204,7 +204,7 @@ async def test_detect_self_commitments_no_commitments_empty_list(client: AsyncCl
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         response = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_casual_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -241,7 +241,7 @@ async def test_detect_self_commitments_idempotency(client: AsyncClient, test_db:
         )
     )
 
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm", return_value=mock_llm):
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm", return_value=mock_llm):
         res1 = await client.post(
             f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
             headers={"Authorization": f"Bearer {token}"},
@@ -313,7 +313,7 @@ async def test_manual_detection_cannot_expose_another_members_private_proposal(c
     ],
 )
 async def test_semantic_negatives_never_invoke_detector_provider(text):
-    with patch("src.agents.conversation_intelligence.self_commitment.get_llm") as get_llm:
+    with patch("src.agents.conversation_intelligence.self_commitment.get_intelligence_llm") as get_llm:
         proposals = await detect_self_commitments(
             message_text=text,
             sender_id="sender-1",
@@ -324,3 +324,174 @@ async def test_semantic_negatives_never_invoke_detector_provider(text):
         )
     assert proposals == []
     get_llm.assert_not_called()
+
+
+def _candidate_llm(owner_id: str) -> MagicMock:
+    """One appointment candidate, so a test can watch where it is delivered."""
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(
+        return_value=MagicMock(
+            content=f'''{{
+  "candidates": [
+    {{
+      "owner_user_id": "{owner_id}",
+      "action_type": "appointment",
+      "title": "Hẹn ở quán cà phê",
+      "details": "Mai 6h",
+      "raw_time_expression": "mai 6h",
+      "scheduled_time": null,
+      "confidence_score": 0.9,
+      "clarification_prompt": null
+    }}
+  ]
+}}'''
+        )
+    )
+    return llm
+
+
+@pytest.mark.asyncio
+async def test_proactive_detection_offers_the_same_appointment_to_every_consenting_member(
+    client: AsyncClient, test_db: AsyncSession, commitment_setup
+):
+    alice = commitment_setup["alice"]
+    bob = commitment_setup["bob"]
+    conv_id = commitment_setup["conv_id"]
+    m_vi_id = commitment_setup["m_vi_id"]
+    await set_consents(test_db, bob.id, {"proactive_scan": True})
+
+    with patch(
+        "src.agents.conversation_intelligence.self_commitment.get_intelligence_llm",
+        return_value=_candidate_llm(alice.id),
+    ):
+        response = await client.post(
+            f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
+            headers={"Authorization": f"Bearer {create_access_token(subject=alice.id)}"},
+        )
+
+    assert response.status_code == 200
+    # The speaker is handed only their own row, never Bob's.
+    assert [row["owner_user_id"] for row in response.json()] == [alice.id]
+
+    owners = (
+        await test_db.scalars(
+            select(ActionProposal.owner_user_id).where(
+                ActionProposal.source_message_id == m_vi_id
+            )
+        )
+    ).all()
+    assert sorted(owners) == sorted([alice.id, bob.id])
+
+
+@pytest.mark.asyncio
+async def test_proactive_detection_skips_a_member_who_never_allowed_proactive_scan(
+    client: AsyncClient, test_db: AsyncSession, commitment_setup
+):
+    alice = commitment_setup["alice"]
+    conv_id = commitment_setup["conv_id"]
+    m_vi_id = commitment_setup["m_vi_id"]
+
+    with patch(
+        "src.agents.conversation_intelligence.self_commitment.get_intelligence_llm",
+        return_value=_candidate_llm(alice.id),
+    ):
+        response = await client.post(
+            f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
+            headers={"Authorization": f"Bearer {create_access_token(subject=alice.id)}"},
+        )
+
+    assert response.status_code == 200
+    owners = (
+        await test_db.scalars(
+            select(ActionProposal.owner_user_id).where(
+                ActionProposal.source_message_id == m_vi_id
+            )
+        )
+    ).all()
+    # Bob granted `read_conversations` only, so nothing is raised at him.
+    assert list(owners) == [alice.id]
+
+
+@pytest.mark.asyncio
+async def test_one_member_rejecting_leaves_the_other_members_copy_undecided(
+    client: AsyncClient, test_db: AsyncSession, commitment_setup
+):
+    alice = commitment_setup["alice"]
+    bob = commitment_setup["bob"]
+    conv_id = commitment_setup["conv_id"]
+    m_vi_id = commitment_setup["m_vi_id"]
+    await set_consents(test_db, bob.id, {"proactive_scan": True})
+
+    with patch(
+        "src.agents.conversation_intelligence.self_commitment.get_intelligence_llm",
+        return_value=_candidate_llm(alice.id),
+    ):
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
+            headers={"Authorization": f"Bearer {create_access_token(subject=alice.id)}"},
+        )
+
+    rows = (
+        await test_db.scalars(
+            select(ActionProposal).where(ActionProposal.source_message_id == m_vi_id)
+        )
+    ).all()
+    bobs_row = next(row for row in rows if row.owner_user_id == bob.id)
+    alices_row = next(row for row in rows if row.owner_user_id == alice.id)
+    # Whatever undecided state Alice's copy is in -- with no timezone on her
+    # account "mai 6h" cannot be resolved, so it is waiting on her for that --
+    # Bob's answer must not move it.
+    alices_status_before = alices_row.status
+    assert alices_status_before in {"pending_confirmation", "needs_clarification"}
+
+    rejected = await client.post(
+        f"/api/v1/action-proposals/{bobs_row.id}/reject",
+        json={},
+        headers={"Authorization": f"Bearer {create_access_token(subject=bob.id)}"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    await test_db.refresh(alices_row)
+    assert alices_row.status == alices_status_before
+
+    # And Bob's answer is only ever Bob's to give.
+    trespass = await client.post(
+        f"/api/v1/action-proposals/{alices_row.id}/reject",
+        json={},
+        headers={"Authorization": f"Bearer {create_access_token(subject=bob.id)}"},
+    )
+    assert trespass.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_every_members_copy_keeps_the_instant_the_speakers_clock_produced(
+    client: AsyncClient, test_db: AsyncSession, commitment_setup
+):
+    """The wall clock belongs to whoever said it, not to whoever reads it."""
+    alice = commitment_setup["alice"]
+    bob = commitment_setup["bob"]
+    conv_id = commitment_setup["conv_id"]
+    m_vi_id = commitment_setup["m_vi_id"]
+    alice.timezone = "Asia/Ho_Chi_Minh"
+    bob.timezone = "America/New_York"
+    await set_consents(test_db, bob.id, {"proactive_scan": True})
+    await test_db.commit()
+
+    with patch(
+        "src.agents.conversation_intelligence.self_commitment.get_intelligence_llm",
+        return_value=_candidate_llm(alice.id),
+    ):
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/messages/{m_vi_id}/detect-commitments",
+            headers={"Authorization": f"Bearer {create_access_token(subject=alice.id)}"},
+        )
+
+    rows = (
+        await test_db.scalars(
+            select(ActionProposal).where(ActionProposal.source_message_id == m_vi_id)
+        )
+    ).all()
+    assert len(rows) == 2
+    assert {row.resolved_timezone for row in rows} == {"Asia/Ho_Chi_Minh"}
+    assert len({row.scheduled_start_at for row in rows}) == 1

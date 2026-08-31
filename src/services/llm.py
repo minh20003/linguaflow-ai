@@ -282,6 +282,33 @@ def get_assistant_llm(settings: Settings | None = None) -> BaseChatModel:
     )
 
 
+def get_intelligence_llm(
+    settings: Settings | None = None, provider: str | None = None
+) -> BaseChatModel:
+    """The model the conversation-intelligence extractors run on.
+
+    Same provider as the translator -- these run on the message path and were
+    written against it -- but never its token ceiling. `LLM_MAX_TOKENS` is sized
+    for one translated chat message; these prompts carry a JSON schema and must
+    return structured JSON, so reaching the cap does not produce a shorter
+    answer, it produces a truncated one that will not parse. The repair attempt
+    then fails on the same cap, `detect_self_commitments` raises
+    `intelligence_invalid_output`, and the detached task swallows it -- which is
+    exactly how a conversation could go on producing no proposals at all with
+    nothing in the logs to say why.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    return get_llm(
+        settings=settings.model_copy(
+            update={"llm_max_tokens": settings.intelligence_llm_max_tokens}
+        ),
+        provider=provider,
+    )
+
+
 def get_assistant_judge_llm(settings: Settings | None = None) -> BaseChatModel:
     """The model that scores the Assistant Agent's output in evaluation runs.
 

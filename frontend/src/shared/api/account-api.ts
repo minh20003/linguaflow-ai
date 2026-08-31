@@ -61,3 +61,24 @@ export function updateInterfaceLanguage(
     "Unable to save your interface language.",
   );
 }
+
+
+/** Tell the server which timezone this browser is in.
+ *
+ *  Sent once when the app loads rather than asked for in settings: the browser
+ *  already knows, and a question nobody can answer wrongly is a question not
+ *  worth asking. The server needs it before a proposal can carry a real time —
+ *  "3 giờ chiều thứ Sáu" is a wall clock, and without an offset it reaches the
+ *  owner as an empty field they have to fill in again.
+ */
+export function updateTimezone(
+  accessToken: string,
+  timezone: string,
+): Promise<AuthUser> {
+  return updateAccount(
+    "/api/v1/auth/me/timezone",
+    accessToken,
+    { timezone },
+    "Unable to save your timezone.",
+  );
+}

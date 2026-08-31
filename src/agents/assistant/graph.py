@@ -149,6 +149,7 @@ def make_load_memory(
         """
         from src.services.agent_consent import has_consent
         from src.services.assistant_retrieval import retrieve
+        from src.services.assistant_scope import scope_for
         from src.services.chat import ChatService
 
         try:
@@ -181,9 +182,14 @@ def make_load_memory(
         recalled_lines: list[str] = []
         cited: set[str] = set()
         if await has_consent(db, state["user_id"], "store_memory"):
-            for chunk in await retrieve(
+            scope = await scope_for(
                 db,
                 conversation_id=state["conversation_id"],
+                user_id=state["user_id"],
+            )
+            for chunk in await retrieve(
+                db,
+                conversation_ids=await scope.conversation_ids(db),
                 query_text=state.get("request_text", ""),
             ):
                 # A chunk whose messages are all already in the recent window
@@ -253,16 +259,18 @@ def make_plan(
             build_registry,
             render_catalogue,
         )
+        from src.services.assistant_scope import scope_for
         from src.services.llm import extract_text, get_assistant_llm
 
+        scope = await scope_for(
+            db,
+            conversation_id=state["conversation_id"],
+            user_id=state["user_id"],
+        )
         registry = await available_tools(
             db,
             user_id=state["user_id"],
-            registry=build_registry(
-                db,
-                conversation_id=state["conversation_id"],
-                user_id=state["user_id"],
-            ),
+            registry=build_registry(db, scope=scope),
         )
         if not registry:
             # Every tool needs a permission this person has not granted. Saying
@@ -284,6 +292,8 @@ def make_plan(
             has_memory=bool(state.get("memory")),
             observations=observations,
             replans_left=max(MAX_REPLANS - replan_count - 1, 0),
+            sent_at=str(state.get("sent_at", "")),
+            personal_scope=scope.is_personal,
         )
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -424,11 +434,15 @@ def make_run_tools(db: AsyncSession) -> Callable[[AssistantState], Awaitable[dic
         after which the person gets neither an answer nor an explanation.
         """
         from src.agents.tools.registry import build_registry, call_tool
+        from src.services.assistant_scope import scope_for
 
         registry = build_registry(
             db,
-            conversation_id=state["conversation_id"],
-            user_id=state["user_id"],
+            scope=await scope_for(
+                db,
+                conversation_id=state["conversation_id"],
+                user_id=state["user_id"],
+            ),
         )
         source_message_id = (state.get("telemetry") or {}).get("source_message_id") or ""
 

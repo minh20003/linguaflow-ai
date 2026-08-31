@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation";
 import { WifiOff } from "lucide-react";
 import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/session";
-import { signOut, updateInterfaceLanguage, updatePreferredLanguage } from "@/shared/api/account-api";
+import { signOut, updateInterfaceLanguage, updatePreferredLanguage, updateTimezone } from "@/shared/api/account-api";
 import type { AppSettings, Conversation, Message, MessageAttachment, MessageMention, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
 import {
@@ -90,7 +90,6 @@ import { ContactsPanel } from "./ContactsPanel";
 import { GroupsPanel } from "./GroupsPanel";
 import { ChatView } from "./ChatView";
 import { NewConversationModal } from "./NewConversationModal";
-import { isAwaitingDecision } from "../proposal-approval";
 import { CreateGroupModal } from "./CreateGroupModal";
 import { SettingsModal } from "./SettingsModal";
 import { TaskInboxPanel } from "./TaskInboxPanel";
@@ -285,12 +284,14 @@ export const AppShell: React.FC = () => {
   const selectedConversation = conversations.find((item) => item.id === selectedConversationId) ?? null;
   const activeConversation = isAssistantChatOpen ? assistantConversation : selectedConversation;
   const activeConversationId = activeConversation?.id ?? null;
-  // Only the undecided ones, and only for the thread on screen. A proposal
-  // already approved from the inbox must not reappear here asking again.
+  // Everything the assistant raised in the thread on screen, decided or not.
+  //
+  // Decided ones are kept rather than filtered out because the card is a turn
+  // in the conversation: once it is answered it stops asking and the assistant
+  // says what it did with the answer instead. Dropping it there would delete
+  // half of an exchange the person just had.
   const currentProposals = activeConversationId
-    ? incomingProposals.filter(
-        (proposal) => proposal.conversation_id === activeConversationId && isAwaitingDecision(proposal),
-      )
+    ? incomingProposals.filter((proposal) => proposal.conversation_id === activeConversationId)
     : [];
   const currentMessages = activeConversationId ? messagesMap[activeConversationId] ?? [] : [];
   const currentAttachments = activeConversationId ? attachmentsMap[activeConversationId] ?? [] : [];
@@ -435,6 +436,13 @@ export const AppShell: React.FC = () => {
       const contacts = conversationUsers(visible).filter((contact) => contact.id !== user.id);
       setCurrentUser(user);
       setUsers(contacts);
+      // Report the browser's timezone once per load. The server cannot turn a
+      // wall clock like "3 giờ chiều thứ Sáu" into an instant without it, and
+      // it will not guess: before this the time reached the owner blank and
+      // they retyped it at approval. Best effort — a failure here costs that
+      // convenience, never the session.
+      void updateTimezone(accessToken, Intl.DateTimeFormat().resolvedOptions().timeZone)
+        .catch(() => undefined);
       const restoredSettings = {
         ...persistedSettings(savedSettings),
         preferredLanguage: user.nativeLanguage,
@@ -837,10 +845,11 @@ export const AppShell: React.FC = () => {
   // arriving translation can no longer disturb a search in progress.
   /** Decide on a proposal without leaving the conversation.
    *
-   *  The row is dropped from the in-chat list on success rather than left
-   *  showing a decided state: the card exists to ask a question, and once it is
-   *  answered the answer belongs on the calendar, not in the transcript. The
-   *  task inbox reloads from the server and shows the outcome there.
+   *  The decided proposal replaces the pending one in state rather than being
+   *  removed: the card stays in the thread and switches to reporting what
+   *  happened, so approving reads as the assistant answering "added it to your
+   *  calendar" and rejecting as "I have left it off". The task inbox reloads
+   *  from the server and shows the same outcome there.
    */
   const decideProposal = async (
     proposal: ApiActionProposal,
@@ -1337,7 +1346,7 @@ export const AppShell: React.FC = () => {
         onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
         onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
-        pendingProposals={currentProposals}
+        proposals={currentProposals}
         proposalBusyId={proposalBusyId}
         onApproveProposal={(proposal, corrections) => void decideProposal(
           proposal,

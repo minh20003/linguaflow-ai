@@ -30,6 +30,17 @@ class _ToolArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ListPeopleArguments(_ToolArguments):
+    """List the conversations in reach and who is in each.
+
+    No fields. How far this reaches is fixed before the planner sees the tool,
+    and there is nothing left for it to choose. An earlier version offered a
+    conversation id to narrow to; the planner supplied one it could not know,
+    which filtered everything away and came out to the person as the assistant
+    being unable to see their conversations.
+    """
+
+
 class SearchOldMessagesArguments(_ToolArguments):
     """Find earlier parts of this conversation by meaning."""
 

@@ -221,6 +221,21 @@ class User(Base):
         nullable=False,
         default="en",
     )
+    # IANA name, reported by the browser. The one thing that was missing before
+    # a proposal could carry a real time: "3 giờ chiều thứ Sáu" is a wall clock,
+    # and turning it into an instant needs an offset. `normalize_action_time`
+    # refuses to take one from model output -- rightly, since a guessed offset
+    # silently books a meeting at the wrong hour -- so with nowhere to read a
+    # trusted one, every extracted time landed in `missing_fields` and the owner
+    # had to type it again at approval.
+    #
+    # Nullable, and stays that way: an account that has never opened the web
+    # client has no browser to have reported one, and the approval step still
+    # collects it. This removes the common case, not the fallback.
+    timezone: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

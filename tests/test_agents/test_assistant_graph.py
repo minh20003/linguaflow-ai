@@ -417,6 +417,7 @@ async def test_semantic_recall_reaches_past_the_recent_window(monkeypatch) -> No
         AsyncMock(
             return_value=[
                 SimpleNamespace(
+                    conversation_id="c-1",
                     chunk_id="k-old",
                     chunk_index=0,
                     text=old.original_text,
@@ -490,6 +491,7 @@ async def test_a_recalled_message_already_in_the_window_is_not_repeated(
         AsyncMock(
             return_value=[
                 SimpleNamespace(
+                    conversation_id="c-1",
                     chunk_id="k-1",
                     chunk_index=0,
                     text=same.original_text,
@@ -557,6 +559,7 @@ async def test_a_chunk_reaching_past_the_window_is_kept_even_if_it_overlaps_it(
         AsyncMock(
             return_value=[
                 SimpleNamespace(
+                    conversation_id="c-1",
                     chunk_id="k-straddle",
                     chunk_index=0,
                     text="Chốt deadline là 30/9\nSáng nay họp lúc 9h",
@@ -659,10 +662,11 @@ async def test_the_planner_can_act_on_what_the_first_round_of_tools_returned(
     """
     seen: list[str] = []
 
-    async def fake_search(db, *, conversation_id, query_text, config=None, settings=None):
+    async def fake_search(db, *, conversation_ids, query_text, config=None, settings=None):
         seen.append(query_text)
         return [
             SimpleNamespace(
+                conversation_id="c-1",
                 chunk_id="k1", chunk_index=0, text="Chot deadline 13/9", message_ids=("m1",)
             )
         ]
@@ -736,7 +740,7 @@ async def test_a_run_stops_after_its_replan_budget_rather_than_looping(
     """
     calls = {"n": 0}
 
-    async def fake_search(db, *, conversation_id, query_text, config=None, settings=None):
+    async def fake_search(db, *, conversation_ids, query_text, config=None, settings=None):
         calls["n"] += 1
         return []
 
@@ -917,9 +921,10 @@ async def test_a_question_is_answered_from_what_the_tools_found(monkeypatch) -> 
     exactly what they asked for.
     """
 
-    async def fake_search(db, *, conversation_id, query_text, config=None, settings=None):
+    async def fake_search(db, *, conversation_ids, query_text, config=None, settings=None):
         return [
             SimpleNamespace(
+                conversation_id="c-1",
                 chunk_id="k1",
                 chunk_index=0,
                 text="U01: Chot deadline milestone la ngay 13/9",
@@ -982,9 +987,10 @@ async def test_an_answer_quoting_a_private_message_is_discarded(monkeypatch) -> 
         "Ban con no bao cao hieu nang tu tuan truoc va quan ly da hoi ve no hai lan roi"
     )
 
-    async def fake_search(db, *, conversation_id, query_text, config=None, settings=None):
+    async def fake_search(db, *, conversation_ids, query_text, config=None, settings=None):
         return [
             SimpleNamespace(
+                conversation_id="c-1",
                 chunk_id="k1", chunk_index=0, text="U01: khong lien quan", message_ids=("m1",)
             )
         ]
@@ -1050,9 +1056,10 @@ async def test_an_answer_quoting_a_private_message_is_discarded(monkeypatch) -> 
 async def test_a_failure_while_answering_still_produces_a_reply(monkeypatch) -> None:
     """A worse answer rather than no answer — the graph's rule, at its last node."""
 
-    async def fake_search(db, *, conversation_id, query_text, config=None, settings=None):
+    async def fake_search(db, *, conversation_ids, query_text, config=None, settings=None):
         return [
             SimpleNamespace(
+                conversation_id="c-1",
                 chunk_id="k1", chunk_index=0, text="U01: something", message_ids=("m1",)
             )
         ]

@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import (
     APIRouter,
@@ -80,6 +81,7 @@ from src.schemas.auth import (
     ResendRegisterOtpRequest,
     ResendRegisterOtpResponse,
     ResetPasswordRequest,
+    TimezoneUpdate,
     UpdateInterfaceLanguageRequest,
     UpdateLanguageRequest,
     UserProfileUpdate,
@@ -1531,6 +1533,37 @@ async def update_interface_language(
     return UserResponse.model_validate(current_user)
 
 
+@router.put("/auth/me/timezone", response_model=UserResponse)
+async def update_timezone(
+    request: TimezoneUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Record the caller's IANA timezone, as reported by their browser.
+
+    Stored so proposals can carry a real time. A wall clock like "3 giờ chiều
+    thứ Sáu" is not an instant without an offset, and `normalize_action_time`
+    will not take one from model output -- a guessed offset books the meeting at
+    the wrong hour and nothing says so. Before this the server had no trusted
+    source at all, so every extracted time reached the owner as an empty field.
+
+    Validated against the zone database rather than stored as typed: an
+    unknown name would be accepted here and then silently ignored at every read,
+    which is the failure that looks like the feature simply not working.
+    """
+    try:
+        ZoneInfo(request.timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown IANA timezone name",
+        ) from exc
+    current_user.timezone = request.timezone
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
 @router.get("/languages", response_model=list[str])
 async def list_supported_languages() -> list[str]:
     """Return the language codes the system accepts.
@@ -2630,15 +2663,23 @@ async def detect_message_self_commitments(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActionProposalResponse]:
-    """Detect proactive first-person self-commitments from a message (B-10)."""
+    """Detect proactive first-person self-commitments from a message (B-10).
+
+    Detection now writes one proposal per member, so the caller is handed only
+    their own. The other rows are real and their owners are told over the
+    socket; returning them here would put another member's proposal id in the
+    caller's hands, and a list endpoint that answers with rows the caller may
+    not act on invites exactly that confusion.
+    """
     service = ConversationIntelligenceService()
     try:
-        return await service.detect_self_commitments_from_message(
+        proposals = await service.detect_self_commitments_from_message(
             conversation_id=conversation_id,
             message_id=message_id,
             user_id=current_user.id,
             db=db,
         )
+        return [p for p in proposals if p.owner_user_id == current_user.id]
     except ConversationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

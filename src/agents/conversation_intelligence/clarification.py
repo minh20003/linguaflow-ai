@@ -18,7 +18,7 @@ from src.schemas.intelligence import (
     ClarificationAnalysisPayload,
     ClarificationAnalysisResponse,
 )
-from src.services.llm import get_llm
+from src.services.llm import get_intelligence_llm
 
 # Clarification is an on-demand, structured reasoning step.  A response is
 # still small, but Gemini can spend more than the translation budget preparing
@@ -63,7 +63,7 @@ async def analyze_message_ambiguity(
         HumanMessage(content=user_prompt),
     ]
 
-    llm = get_llm(settings=settings, provider=provider)
+    llm = get_intelligence_llm(settings=settings, provider=provider)
     timeout = max(float(settings.llm_timeout_seconds), _CLARIFICATION_TIMEOUT_FLOOR_SECONDS)
 
     runnable_config = build_runnable_config(

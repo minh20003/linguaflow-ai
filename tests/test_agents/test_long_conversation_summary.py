@@ -68,7 +68,7 @@ def stub_reduce(monkeypatch):
         return Payload()
 
     monkeypatch.setattr(summary_module, "invoke_with_repair", fake_invoke)
-    monkeypatch.setattr(summary_module, "get_llm", lambda **kwargs: object())
+    monkeypatch.setattr(summary_module, "get_intelligence_llm", lambda **kwargs: object())
     return seen
 
 

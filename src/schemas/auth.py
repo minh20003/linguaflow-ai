@@ -220,6 +220,11 @@ class UserResponse(BaseModel):
     role: str
     preferred_language: str
     interface_language: str
+    # Echoed back so a caller can see what was stored. `PUT /auth/me/timezone`
+    # answers with this model, and without the field it replied 200 while
+    # saying nothing about the one value the request was about -- leaving the
+    # client no way to tell a stored name from a silently dropped one.
+    timezone: str | None = None
     created_at: datetime
     # Not exposed in API responses — read from ORM object via from_attributes,
     # then excluded from JSON output. Declared here so Pydantic can extract it
@@ -267,6 +272,23 @@ class UpdateLanguageRequest(BaseModel):
     def validate_language(cls, v: str) -> str:
         """Validate that the language code is supported."""
         return normalize_language(v)
+
+
+class TimezoneUpdate(BaseModel):
+    """The caller's IANA timezone name, as their browser reports it.
+
+    A name rather than an offset: an offset is only correct until the next
+    daylight-saving change, and a meeting proposed in October for December would
+    land an hour out. `ZoneInfo` resolves the name at the moment it is used.
+    """
+
+    timezone: str = Field(
+        ...,
+        description="IANA timezone name",
+        min_length=1,
+        max_length=64,
+        examples=["Asia/Ho_Chi_Minh", "Europe/London"],
+    )
 
 
 class UpdateInterfaceLanguageRequest(BaseModel):
