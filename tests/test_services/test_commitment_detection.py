@@ -27,7 +27,13 @@ async def test_worker_opens_its_own_session_and_sends_only_to_owner(monkeypatch)
     # This test is about the worker's plumbing, not about permissions; the
     # session here is a bare sentinel that cannot answer a query.
     monkeypatch.setattr(commitment_detection, "has_consent", AsyncMock(return_value=True))
-    proposal = SimpleNamespace(model_dump=lambda **_kwargs: {"id": "proposal-1"})
+    # Each row now carries its own owner: the worker fans a proactive
+    # proposal out to every member, so it publishes to the owner written on
+    # the row rather than to whoever sent the message.
+    proposal = SimpleNamespace(
+        owner_user_id="owner-1",
+        model_dump=lambda **_kwargs: {"id": "proposal-1"},
+    )
     detector = AsyncMock(return_value=[proposal])
     monkeypatch.setattr(
         commitment_detection.ConversationIntelligenceService,
@@ -63,7 +69,10 @@ async def test_owner_event_publish_failure_does_not_fail_persisted_detection(mon
 
     monkeypatch.setattr(commitment_detection, "get_async_session_maker", lambda: SessionContext)
     monkeypatch.setattr(commitment_detection, "has_consent", AsyncMock(return_value=True))
-    proposal = SimpleNamespace(model_dump=lambda **_kwargs: {"id": "proposal-2"})
+    proposal = SimpleNamespace(
+        owner_user_id="owner-2",
+        model_dump=lambda **_kwargs: {"id": "proposal-2"},
+    )
     monkeypatch.setattr(
         commitment_detection.ConversationIntelligenceService,
         "detect_self_commitments_from_message",
@@ -107,3 +116,48 @@ async def test_proactive_scan_without_consent_never_reaches_the_detector(monkeyp
 
     detector.assert_not_awaited()
     publisher.send_to_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_each_members_proposal_is_published_to_that_member_not_to_the_sender(monkeypatch):
+    """Fan-out on the write side has to be matched on the publish side.
+
+    Sending every row to the sender would drop other people's cards into the
+    sender's chat and leave the members whose rows they are with nothing on
+    screen until they reload.
+    """
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(commitment_detection, "get_async_session_maker", lambda: SessionContext)
+    monkeypatch.setattr(commitment_detection, "has_consent", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        commitment_detection.ConversationIntelligenceService,
+        "detect_self_commitments_from_message",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    owner_user_id="speaker",
+                    model_dump=lambda **_kwargs: {"id": "for-speaker"},
+                ),
+                SimpleNamespace(
+                    owner_user_id="listener",
+                    model_dump=lambda **_kwargs: {"id": "for-listener"},
+                ),
+            ]
+        ),
+    )
+    publisher = MagicMock()
+    publisher.send_to_user = AsyncMock()
+
+    await commitment_detection._detect("message-1", "conversation-1", "speaker", publisher)
+
+    recipients = [call.args[0] for call in publisher.send_to_user.await_args_list]
+    payload_ids = [call.args[1]["proposal"]["id"] for call in publisher.send_to_user.await_args_list]
+    assert recipients == ["speaker", "listener"]
+    assert payload_ids == ["for-speaker", "for-listener"]

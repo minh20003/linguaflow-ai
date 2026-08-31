@@ -220,6 +220,11 @@ class UserResponse(BaseModel):
     role: str
     preferred_language: str
     interface_language: str
+    # Echoed back so a caller can see what was stored. `PUT /auth/me/timezone`
+    # answers with this model, and without the field it replied 200 while
+    # saying nothing about the one value the request was about -- leaving the
+    # client no way to tell a stored name from a silently dropped one.
+    timezone: str | None = None
     created_at: datetime
     # Not exposed in API responses — read from ORM object via from_attributes,
     # then excluded from JSON output. Declared here so Pydantic can extract it

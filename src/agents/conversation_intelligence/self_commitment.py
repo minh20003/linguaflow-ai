@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -21,6 +22,36 @@ from src.schemas.intelligence import (
 from src.services.llm import get_intelligence_llm
 
 
+def _local_reference(reference: datetime, sender_timezone: str | None) -> str:
+    """Describe when the message was sent, in the clock the sender was reading.
+
+    The model resolves "mai" by counting a day from this string, so the date in
+    it has to be the sender's date. Handing it the raw UTC instant was wrong for
+    every message sent between midnight and 07:00 in Hanoi: UTC is still on the
+    previous day there, so "mai" came back one day early and the appointment was
+    booked for today. Nothing downstream could catch it -- a date is a date, and
+    `normalize_action_time` only re-resolves the expressions in its own small
+    grammar.
+
+    An unknown timezone keeps UTC and says so, rather than silently implying the
+    sender was reading a clock nobody has claimed.
+    """
+    zone = _valid_zone(sender_timezone)
+    if zone is None:
+        return f"{reference.astimezone(UTC).isoformat()} (UTC; the sender's own timezone is unknown)"
+    local = reference.astimezone(zone)
+    return f"{local.isoformat()} (local time for the sender, timezone {zone.key})"
+
+
+def _valid_zone(name: str | None) -> ZoneInfo | None:
+    if not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
 async def detect_self_commitments(
     message_text: str,
     sender_id: str,
@@ -30,6 +61,7 @@ async def detect_self_commitments(
     message_id: str,
     settings: Settings | None = None,
     provider: str | None = None,
+    sender_timezone: str | None = None,
 ) -> list[ActionCandidateDTO]:
     """Detect proactive first-person commitments made by the sender (B-10)."""
     clean_text = message_text.strip()
@@ -65,7 +97,7 @@ async def detect_self_commitments(
 
     settings = settings or get_settings()
     ref_time = reference_timestamp or datetime.now(UTC)
-    ref_time_str = ref_time.isoformat()
+    ref_time_str = _local_reference(ref_time, sender_timezone)
 
     schema_json = json.dumps(ActionExtractionPayload.model_json_schema(), indent=2)
     system_prompt = SELF_COMMITMENT_SYSTEM_PROMPT.format(

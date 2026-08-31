@@ -351,11 +351,20 @@ class ActionProposalService:
         owner_user_id: str,
         source_mode: str,
         created_by_user_id: str | None = None,
+        timezone_user_id: str | None = None,
     ) -> list[ActionProposal]:
         """Persist candidates with one savepoint per insert conflict.
 
         A duplicate cannot roll back an earlier successful candidate in the same
         outer transaction.  Candidate-provided owners are deliberately ignored.
+
+        `timezone_user_id` names whose wall clock the times were spoken on, and
+        defaults to the owner.  It differs only when a proactive proposal is
+        offered to the whole conversation: "6h" belongs to the person who said
+        it, so every recipient's row must resolve on the sender's clock.
+        Resolving each row on its own owner's clock would move the meeting by
+        the offset between them -- and produce members holding the same
+        appointment at different instants, which is worse than asking.
         """
 
         source = await self.db.get(Message, source_message_id)
@@ -371,7 +380,7 @@ class ActionProposalService:
         # account that has never opened the web client still has none, which
         # falls back to asking exactly as before.
         owner_timezone = await self.db.scalar(
-            select(User.timezone).where(User.id == owner_user_id)
+            select(User.timezone).where(User.id == (timezone_user_id or owner_user_id))
         )
 
         saved: list[ActionProposal] = []

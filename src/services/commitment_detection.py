@@ -35,8 +35,13 @@ async def _detect(message_id: str, conversation_id: str, sender_id: str, publish
         proposals = await service.detect_self_commitments_from_message(
             conversation_id=conversation_id, message_id=message_id, user_id=sender_id, db=session
         )
+    # To each proposal's own owner, not to the sender. A proactive proposal is
+    # offered to every member of the conversation, so the fan-out that created
+    # the rows has to be matched here -- sending them all to the sender would
+    # put other people's cards in the sender's chat and leave the members whose
+    # rows they are with nothing on screen until a page reload.
     for proposal in proposals:
         try:
-            await publisher.send_to_user(sender_id, {"type": "action_proposal_created", "proposal": proposal.model_dump(mode="json")})
+            await publisher.send_to_user(proposal.owner_user_id, {"type": "action_proposal_created", "proposal": proposal.model_dump(mode="json")})
         except Exception:
             logger.warning("Action proposal event publish failed", exc_info=True)

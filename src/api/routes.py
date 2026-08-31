@@ -2650,15 +2650,23 @@ async def detect_message_self_commitments(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActionProposalResponse]:
-    """Detect proactive first-person self-commitments from a message (B-10)."""
+    """Detect proactive first-person self-commitments from a message (B-10).
+
+    Detection now writes one proposal per member, so the caller is handed only
+    their own. The other rows are real and their owners are told over the
+    socket; returning them here would put another member's proposal id in the
+    caller's hands, and a list endpoint that answers with rows the caller may
+    not act on invites exactly that confusion.
+    """
     service = ConversationIntelligenceService()
     try:
-        return await service.detect_self_commitments_from_message(
+        proposals = await service.detect_self_commitments_from_message(
             conversation_id=conversation_id,
             message_id=message_id,
             user_id=current_user.id,
             db=db,
         )
+        return [p for p in proposals if p.owner_user_id == current_user.id]
     except ConversationNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

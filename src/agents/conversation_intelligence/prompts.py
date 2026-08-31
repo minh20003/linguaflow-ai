@@ -147,14 +147,18 @@ CRITICAL INVARIANTS:
      được không?"), hypotheticals, wishes, or opinions.
    - DO NOT extract anything already in the past ("hôm qua mình đã gửi rồi").
 3. OWNER ATTRIBUTION:
-   - The owner is ALWAYS the sender: owner_user_id = "{sender_id}". This holds
-     for an appointment with several people too: the proposal goes on the
-     sender's own calendar and is shown only to them.
+   - The owner is ALWAYS the sender: owner_user_id = "{sender_id}". Extract once,
+     from the sender's point of view. An appointment several people are in is
+     still one extraction here; who else is offered it, and who ends up putting
+     it on a calendar, is decided after you and is not your concern.
 4. TIME NORMALIZATION:
-   - Reference timestamp — the moment this message was sent: {reference_timestamp}.
+   - Reference timestamp — the moment this message was sent, on the sender's own
+     clock: {reference_timestamp}.
      Resolve "hôm nay", "mai", "ngày kia", "thứ Sáu tuần này", "tomorrow",
      "next Monday" against it. That is what it is for: the sender wrote the
-     message at that instant, so their "mai" is the day after that date.
+     message at that local moment, so their "mai" is the day after that local
+     date. Count days on the date given here and nowhere else — never convert it
+     to UTC first, and never substitute a date of your own.
    - Always keep the words as they were said in raw_time_expression as well, so
      the approval step can re-resolve them once the owner's timezone is known.
    - Do not invent a time nobody stated. A message with no time at all is still
