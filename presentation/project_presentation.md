@@ -6,6 +6,17 @@
 **Bổ sung so với 2.0:** tin nhắn thoại & phiên âm, phạm vi đọc của trợ lý, đề xuất lịch fan-out cho cả nhóm, giao diện 14 ngôn ngữ, và định hướng thương mại hoá
 **Link demo**: https://c3-lingua-flow-217.dquangminh2003.id.vn/
 
+**Đội ngũ triển khai — nhóm 4U**
+
+| Thành viên | Vai trò chính | Vai trò phụ |
+|---|---|---|
+| Nguyễn Thị Trà My | Trưởng nhóm / AI | Backend |
+| Nguyễn Văn Hưởng | AI | Knowledge Base |
+| Nguyễn Ngọc Thuận | Frontend | Tester |
+| Đinh Quang Minh | Backend | Knowledge Base |
+
+Bốn người làm song song trong 6 tuần trên các nhánh riêng. Mỗi người giữ thêm một vai phụ ở lĩnh vực của người khác — đó là lý do `docs/CONTRACT.md` tồn tại và luôn được sửa **trước** khi viết code: bốn người cùng chạm vào một schema thì tên trường phải chốt trước, không phải hoà giải sau.
+
 ---
 
 ## Mục lục
@@ -53,18 +64,34 @@ graph LR
     Gap --> P4["Song Agent: Dịch real-time<br/>+ Trợ lý trích xuất Task/Lịch hẹn"]
 ```
 
-#### Bảng so sánh tính năng đối thủ & LinguaFlow:
+#### Vì sao bản dịch của công cụ phổ thông không dùng được cho chat công việc
 
-| Tiêu chí | Google Translate | DeepL | ChatGPT / Claude | LinguaFlow (P-217) |
-|---|:---:|:---:|:---:|:---:|
-| **Dịch Real-time WebSocket** | ✗ | ✗ | ✗ | **✓ (Streaming < 1.5s)** |
-| **Nhớ ngữ cảnh 3-5 tin gần nhất** | ✗ | ✗ | ✓ | **✓ (Context Injection)** |
-| **Glossary theo đối tượng đọc** | ✗ | △ (Tĩnh) | ✗ | **✓ (Internal vs Client)** |
-| **Tự khai phá thuật ngữ (Mining)** | ✗ | ✗ | ✗ | **✓ (Cosine Clustering + Admin Approval)** |
-| **Trợ lý trích xuất Task & Lịch** | ✗ | ✗ | △ (Hỏi riêng) | **✓ (Assistant Agent + Google Calendar)** |
-| **Bảo mật RAG & Consent Scope** | ✗ | ✗ | ✗ | **✓** |
+Không phải vì máy dịch của họ kém. DeepL và GPT dịch **từng câu** rất tốt — có khi tốt hơn chúng tôi. Vấn đề là **từng câu không phải là đơn vị đúng** khi người ta nhắn tin cho nhau.
 
-*(✓ = Tốt · △ = Hạn chế · ✗ = Chưa hỗ trợ)*
+Ba cơ chế, ba ví dụ có thể tự kiểm chứng:
+
+**1. Không có ngữ cảnh thì phải bịa ra chủ ngữ.** Tiếng Việt lược chủ ngữ liên tục.
+
+> — Anh gửi bản hợp đồng cho khách chưa?
+> — **Gửi rồi nhé.**
+
+Câu thứ hai không có chủ ngữ, không có thì, không có tân ngữ. Dịch riêng lẻ, công cụ phổ thông buộc phải đoán và thường ra *"Already sent"* hoặc *"I sent it"* — mất luôn thông tin **gửi cái gì, cho ai**. LinguaFlow nạp 3–5 tin gần nhất trước khi dịch, nên câu trả lời giữ được đối tượng của nó.
+
+**2. Xưng hô là thông tin, và tiếng Anh làm phẳng nó.** *Anh, em, chị, bác, cháu* — tiếng Anh gộp hết vào **"you"**. Dịch chiều ngược lại, công cụ phổ thông chọn ngẫu nhiên một cái. Gọi "em" một khách hàng lớn tuổi không phải lỗi ngữ pháp; đó là **lỗi xã giao**, và trong hội thoại với khách thì nó đắt hơn nhiều một câu dịch vụng. LinguaFlow suy ra vai vế từ chính hội thoại và giữ nguyên trục xưng hô đó.
+
+**3. Cùng một thuật ngữ phải ra hai bản khác nhau tuỳ người đọc.** Nói với đồng nghiệp thì *"con Jenkins nó đỏ rồi"*; nói với khách thì phải là *"pipeline CI hiện đang lỗi"*. Glossary tĩnh chỉ có một đáp án cho mỗi từ. LinguaFlow tra glossary **theo đối tượng đọc** (nội bộ hay khách hàng), và tự khai phá thuật ngữ mới từ chính những lần người dùng sửa bản dịch.
+
+#### Tóm lại, khoảng trống nằm ở đâu
+
+| | Công cụ dịch phổ thông | LinguaFlow |
+|:---|:---|:---|
+| Đơn vị dịch | Một câu, độc lập | Một lượt trong hội thoại, có 3–5 tin trước làm nền |
+| Xưng hô | Chọn một cách, giữ nguyên cả cuộc | Suy ra từ hội thoại, nhất quán theo vai vế |
+| Thuật ngữ | Một đáp án cho mỗi từ | Khác nhau theo đối tượng đọc; tự dày lên từ chỉnh sửa của chính doanh nghiệp |
+| Sau khi dịch xong | Hết việc | Cam kết trong tin nhắn thành lịch của từng người, chờ duyệt |
+| Khi dịch lỗi | Trả về gì đó, không nói gì | Chuyển nhà cung cấp dự phòng, cuối cùng trả nguyên văn và **đánh dấu là bản dự phòng** |
+
+Dòng cuối là chỗ dễ bị bỏ qua nhất nhưng quyết định nhất trong môi trường công việc: một bản dịch sai mà **trông như đúng** nguy hiểm hơn hẳn một chỗ trống có ghi chú.
 
 ---
 
@@ -243,8 +270,7 @@ Chạy trên `eval/golden_set.jsonl` (62 mẫu), chấm bằng LLM-as-judge (`mi
 | **Độ trễ p95** | < 5000ms | **4608ms** | **đạt** |
 | **Đúng ngôn ngữ đích** | 100% | **96,6%** | **chưa đạt** |
 
-### 5.4. Vì sao sản phẩm này sống được
-
+### 5.4. Tính khả thi
 Câu hỏi thẳng nhất mà một người mua sẽ đặt ra: **Zoom, Teams và Google Meet đều đã có dịch tự động, phần lớn miễn phí — vậy còn chỗ nào cho LinguaFlow?**
 
 **Vì việc cần làm không phải là dịch.** Zoom dịch xong cuộc họp rồi thôi. Không nền tảng nào biến câu *"mai 6h gặp ở quán cà phê"* thành **một mục lịch trên máy của từng người có mặt, bằng ngôn ngữ của từng người, để từng người tự duyệt**. Đó là chuỗi phát hiện → đề xuất → duyệt → lịch mà nhóm đã dựng, và nó nằm ở tầng khác hẳn tầng dịch.
@@ -270,7 +296,7 @@ Một phân tích khả thi chỉ liệt kê điểm mạnh thì không dùng đ
 
 1. **Nếu Zoom/Teams ship action item theo từng người kèm bước duyệt**, khoảng cách thu hẹp rất nhanh. Lợi thế hiện nay là *chưa ai làm*, không phải *khó làm*. Thứ khó sao chép hơn là glossary theo đối tượng đọc và dữ liệu chỉnh sửa của chính doanh nghiệp — càng dùng càng dày, và đó mới là chỗ nên đầu tư.
 2. **96,6% đúng ngôn ngữ đích là chính lời hứa cốt lõi.** Sai 1/30 tin thì lập luận "dịch chuẩn" mất hiệu lực trước khi nói tới lịch với nhắc việc.
-3. **Giới hạn một bản sao (ADR-18)** vừa là trần công suất vừa là điểm chết đơn lẻ. Chưa có backplane thì chưa mở rộng được, và một sự cố là mất toàn bộ dịch vụ.
+3. **Giới hạn một bản sao** vừa là trần công suất vừa là điểm chết đơn lẻ. Chưa có backplane thì chưa mở rộng được, và một sự cố là mất toàn bộ dịch vụ.
 4. **Containment 82% đến từ bộ eval, không từ người dùng.** Dưới 71,63% là mô hình giá hết lãi lành mạnh — nên đây là số phải đo lại đầu tiên khi có người dùng thật, không phải số để trích dẫn tiếp.
 
 ### 5.5. Phiên bản triển khai
