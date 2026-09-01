@@ -194,7 +194,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   <Area
                     type="monotone"
                     dataKey="translations"
-                    name="Lượt dịch thành công"
+                    name={ui("Successful translations")}
                     stroke="#2563EB"
                     strokeWidth={2}
                     fillOpacity={1}
@@ -203,7 +203,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   <Area
                     type="monotone"
                     dataKey="fallbackCount"
-                    name="Yêu cầu Fallback"
+                    name={ui("Fallback requests")}
                     stroke="#F59E0B"
                     strokeWidth={1.5}
                     fillOpacity={1}
@@ -234,7 +234,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   <Area
                     type="monotone"
                     dataKey="p50Latency"
-                    name="Độ trễ P50 (ms)"
+                    name={ui("P50 latency (ms)")}
                     stroke="#2563EB"
                     strokeWidth={2}
                     fillOpacity={1}
@@ -243,7 +243,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   <Area
                     type="monotone"
                     dataKey="p95Latency"
-                    name="Độ trễ P95 (ms)"
+                    name={ui("P95 latency (ms)")}
                     stroke="#F59E0B"
                     strokeWidth={1.5}
                     fill="transparent"
@@ -392,10 +392,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           <table className="w-full text-left">
             <thead className="bg-gray-50 text-[11px] text-gray-400 uppercase font-bold tracking-wider border-b border-gray-100">
               <tr>
-                <th className="px-6 py-3">{ui("Thời gian")}</th>
+                <th className="px-6 py-3">{ui(ui("Thời gian"))}</th>
                 <th className="px-6 py-3">{ui("Pair")}</th>
                 <th className="px-6 py-3">Model</th>
-                <th className="px-6 py-3">{ui("Nội dung")}</th>
+                <th className="px-6 py-3">{ui(ui("Nội dung"))}</th>
                 <th className="px-6 py-3 text-right">{ui("Latency")}</th>
                 <th className="px-6 py-3 text-right">Tokens</th>
                 <th className="px-6 py-3 text-center">{ui("Details")}</th>

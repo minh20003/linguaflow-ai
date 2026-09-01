@@ -127,7 +127,7 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
                 <button
                   type="button"
                   disabled={busy || !ready}
-                  title={ready ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+                  title={ready ? undefined : ui("Fill in the missing information above")}
                   onClick={() => onApprove(proposal, decisionCorrections(proposal, draft, chosen))}
                   className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                 >

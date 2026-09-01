@@ -81,7 +81,7 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <label className={label}>{ui("Tiêu đề")}</label>
+          <label className={label}>{ui(ui("Tiêu đề"))}</label>
           <input
             value={draft.title}
             onChange={(event) => onDraftChange({ title: event.target.value })}
@@ -99,7 +99,7 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
           />
         </div>
         <div>
-          <label className={label}>{ui("Địa điểm")}</label>
+          <label className={label}>{ui(ui("Địa điểm"))}</label>
           <input
             value={draft.location}
             onChange={(event) => onDraftChange({ location: event.target.value })}

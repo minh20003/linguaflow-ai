@@ -72,7 +72,7 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
       window.location.href = authorization_url;
     } catch (error) {
       onNotify?.(
-        "Không mở được trang cấp quyền Google",
+        ui("Unable to open Google authorization page"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -90,14 +90,14 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
         onNotify?.(ui(ui("Sync incomplete")), result.last_sync_error, "warning");
       } else {
         onNotify?.(
-          "Đã đồng bộ Google Calendar",
+          ui("Google Calendar synced"),
           `Đẩy lên ${result.pushed}, nhận về ${result.pulled}`,
           "success",
         );
       }
     } catch (error) {
       onNotify?.(
-        "Không đồng bộ được",
+        ui("Sync failed"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -114,13 +114,13 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
       // Said explicitly because it is the surprising half: unlinking removes
       // this app's access, it does not remove appointments already in Google.
       onNotify?.(
-        "Đã ngắt kết nối Google Calendar",
-        "Các sự kiện đã đẩy lên vẫn còn trong lịch Google của bạn.",
+        ui("Google Calendar disconnected"),
+        ui("Synced events will remain in your Google Calendar."),
         "success",
       );
     } catch (error) {
       onNotify?.(
-        "Không ngắt kết nối được",
+        ui("Unable to disconnect"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -161,12 +161,12 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
         title={
           status.last_synced_at
             ? `Lần cuối: ${new Date(status.last_synced_at).toLocaleString("vi-VN")}`
-            : "Chưa đồng bộ lần nào"
+            : ui("Never synced")
         }
         className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-300"
       >
         <RefreshCw className={`h-4 w-4 ${isBusy ? "animate-spin" : ""}`} />
-        {isBusy ? "Đang đồng bộ" : "Đồng bộ ngay"}
+        {isBusy ? "Đang đồng bộ" : ui("Sync now")}
       </button>
       <button
         type="button"

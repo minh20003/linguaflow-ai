@@ -147,7 +147,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui("Đã phê duyệt")}</span>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui(ui("Đã phê duyệt"))}</span>
             <div className="p-1 rounded bg-green-50 text-green-700">
               <CheckCircle className="w-4 h-4" />
             </div>

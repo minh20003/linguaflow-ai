@@ -231,7 +231,7 @@ export function generateMeetLink(): string {
   return `https://meet.google.com/${rand(3)}-${rand(4)}-${rand(3)}`;
 }
 
-export function formatVietnameseDate(date: Date, includeWeekday: boolean = true): string {
+export function formatVietnameseDate(date: Date, includeWeekday: boolean = true, ui: (value: string) => string): string {
   const weekday = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][date.getDay()];
   const day = date.getDate();
   const month = date.getMonth() + 1;
@@ -552,14 +552,14 @@ const defaultTasks = (): CalendarTask[] => {
   ];
 };
 
-function recurrenceLabel(rec?: RecurrenceFreq) {
-  if (!rec || rec === "none") return "Không lặp lại";
-  if (rec === "daily") return "Hằng ngày";
-  if (rec === "workdays") return "Thứ 2 đến Thứ 6"; // Đã bỏ "Ngày làm việc"
-  if (rec === "weekly") return "Hằng tuần vào ngày này";
-  if (rec === "monthly") return "Hằng tháng vào ngày này";
-  if (rec === "yearly") return "Hằng năm vào ngày này";
-  return "Không lặp lại";
+function recurrenceLabel(rec: RecurrenceFreq | undefined, ui: (value: string) => string) {
+  if (!rec || rec === "none") return ui("Does not repeat");
+  if (rec === "daily") return ui("Daily");
+  if (rec === "workdays") return ui("Monday to Friday"); // Đã bỏ ui("Weekdays")
+  if (rec === "weekly") return ui("Weekly on this day");
+  if (rec === "monthly") return ui("Monthly on this day");
+  if (rec === "yearly") return ui("Annually on this day");
+  return ui("Does not repeat");
 }
 
 /* ────────────────────────── DRAG TIME SELECTION STATE ────────────────────────── */
@@ -642,12 +642,12 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       hydrated.current = true;
     } catch (error) {
       onNotify?.(
-        "Không tải được lịch",
+        ui("Failed to load calendar"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
     }
-  }, [token, onNotify]);
+  }, [token, onNotify, ui]);
 
   useEffect(() => {
     void reload();
@@ -751,7 +751,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       await cancelCalendarEvent(token, task.id);
     } catch (error) {
       onNotify?.(
-        "Không xoá được",
+        ui("Failed to delete"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -782,7 +782,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       }
     } catch (error) {
       onNotify?.(
-        "Không lưu được",
+        ui("Failed to save"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -882,7 +882,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
   const currentPeriod = useMemo(() => {
     if (mode === "day") {
-      return formatVietnameseDate(cursor, true);
+      return formatVietnameseDate(cursor, true, ui);
     }
     if (mode === "week") {
       return `${weekStart.toLocaleDateString("vi-VN", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" })}`;
@@ -891,7 +891,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       return `Tháng ${cursor.getMonth() + 1} năm ${cursor.getFullYear()}`;
     }
     return `Lịch biểu (${cursor.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })})`;
-  }, [mode, cursor, weekStart, weekDays]);
+  }, [mode, cursor, weekStart, weekDays, ui]);
 
   return (
     <section className="flex h-screen min-w-0 flex-1 bg-[#F8FAFD] text-[#1F1F1F] select-none dark:bg-[#131314] dark:text-[#E3E3E3]" aria-label={ui("Google Calendar")}>
@@ -976,7 +976,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                       : "text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
                   }`}
                 >
-                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : "Lịch biểu"}
+                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : ui("Schedule")}
                 </button>
               ))}
             </div>
@@ -997,7 +997,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* ── LEFT SIDEBAR (GOOGLE CALENDAR STYLE) ── */}
           <aside className="hidden w-[260px] shrink-0 flex-col border-r border-[#DADCE0] bg-white dark:border-[#36373A] dark:bg-[#1E1F20] lg:flex">
-            {/* Nút "+ Tạo" */}
+            {/* Nút ui("+ Create") */}
             <div className="p-4" ref={createMenuRef}>
               <div className="relative">
                 <button
@@ -1021,7 +1021,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F0FE] text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">
                         <CalendarDays className="h-4 w-4" />
                       </span>
-                      <span className="font-medium">{ui("Sự kiện")}</span>
+                      <span className="font-medium">{ui(ui("Sự kiện"))}</span>
                     </button>
 
                     <button
@@ -1054,7 +1054,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
               />
             </div>
 
-            {/* "Lịch của tôi" Filter (Ô tích chọn màu trắng khi chưa tích) */}
+            {/* ui("My calendar") Filter (Ô tích chọn màu trắng khi chưa tích) */}
             <div className="flex-1 overflow-y-auto px-4 py-2 text-xs">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-semibold text-[#444746] dark:text-[#C4C7C5] tracking-wide uppercase text-[11px]">
@@ -1064,8 +1064,8 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
               <div className="space-y-1.5">
                 {[
-                  { key: "event", name: "Sự kiện", color: GOOGLE_PALETTE.sage },
-                  { key: "task", name: "Việc cần làm", color: GOOGLE_PALETTE.peacock },
+                  { key: "event", name: ui("Sự kiện"), color: GOOGLE_PALETTE.sage },
+                  { key: "task", name: ui("Task"), color: GOOGLE_PALETTE.peacock },
                   { key: "google", name: "Google Calendar Sync", color: GOOGLE_PALETTE.lavender },
                 ].map((item) => {
                   const isChecked = selectedFilters[item.key] !== false;
@@ -1881,7 +1881,7 @@ const ScheduleView: React.FC<{
                   </div>
                   <div>
                     <h4 className="font-semibold text-sm text-[#1F1F1F] dark:text-[#E3E3E3]">
-                      {formatVietnameseDate(date, true)}
+                      {formatVietnameseDate(date, true, ui)}
                     </h4>
                     <span className="text-[11px] text-[#70757A]">
                       {items.length} mục trong ngày
@@ -1934,7 +1934,7 @@ const ScheduleView: React.FC<{
                             className="rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0"
                             style={{ backgroundColor: color.light, color: color.bg }}
                           >
-                            {task.kind === "task" ? "Việc cần làm" : "Sự kiện"}
+                            {task.kind === "task" ? "Việc cần làm" : ui("Sự kiện")}
                           </span>
                         </div>
 
@@ -2144,7 +2144,7 @@ const QuickCreatePopover: React.FC<{
           required
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+          placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : ui("Add event title")}
           className="w-full border-0 border-b-2 border-[#1A73E8] bg-transparent px-0 py-1.5 text-base font-medium text-[#1F1F1F] outline-none placeholder:text-[#9AA0A6] dark:text-[#E3E3E3]"
         />
 
@@ -2185,7 +2185,7 @@ const QuickCreatePopover: React.FC<{
           <div className="flex items-center gap-2 min-w-0">
             <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
             <div className="min-w-0 truncate">
-              <span className="font-medium">{formatVietnameseDate(dateObj, true)}</span>
+              <span className="font-medium">{formatVietnameseDate(dateObj, true, ui)}</span>
               {!isAllDay && <span className="ml-1.5 font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">({startTime} – {endTime})</span>}
               {!isAllDay && <span className="ml-1 text-[11px] text-[#70757A]">({formatMinutesDuration(duration)})</span>}
             </div>
@@ -2412,11 +2412,11 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     const normalizedEmail = clean.toLowerCase();
     const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
     if (!isValidEmail) {
-      setGuestError("Nhập địa chỉ email hợp lệ.");
+      setGuestError(ui("Enter a valid email address."));
       return;
     }
     if (attendees.some((attendee) => attendee.email.toLowerCase() === normalizedEmail)) {
-      setGuestError("Email này đã có trong danh sách.");
+      setGuestError(ui("This email is already in the list."));
       return;
     }
 
@@ -2448,7 +2448,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
       setGroups(conversations.filter((conversation) => conversation.type === "group"));
       setShowGroupPicker(true);
     } catch {
-      setGroupError("Không tải được danh sách nhóm.");
+      setGroupError(ui("Failed to load group list."));
     }
   };
 
@@ -2463,7 +2463,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
       }));
 
     if (membersToAdd.length === 0) {
-      setGroupError("Nhóm này không có người tham gia mới.");
+      setGroupError(ui("This group has no new participants."));
       return;
     }
     setAttendees((current) => [...current, ...membersToAdd]);
@@ -2525,7 +2525,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
 
   return (
     <Modal
-      title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : "Chỉnh sửa sự kiện") : (kind === "task" ? "Tạo việc cần làm mới" : "Tạo sự kiện mới")}
+      title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : ui("Edit event")) : (kind === "task" ? "Tạo việc cần làm mới" : ui("Create new event"))}
       maxWidth="max-w-xl"
       popoverAnchor={popoverAnchor}
       onClose={onClose}
@@ -2548,7 +2548,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             }`}
           >
             <CalendarDays className="h-4 w-4" />
-            <span>{ui("Sự kiện")}</span>
+            <span>{ui(ui("Sự kiện"))}</span>
           </button>
           <button
             type="button"
@@ -2576,7 +2576,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+            placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : ui("Add event title")}
             className="w-full border-0 border-b border-[#DADCE0] bg-transparent px-0 py-2 text-xl font-normal text-[#202124] outline-none transition-colors placeholder:text-[#9AA0A6] focus:border-[#1A73E8] focus:ring-0 dark:border-[#5F6368] dark:text-[#E8EAED]"
           />
         </div>
@@ -2614,7 +2614,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <CalendarTimeField
                     value={startTime}
                     onChange={handleStartTimeChange}
-                    ariaLabel="Giờ bắt đầu"
+                    ariaLabel={ui("Start time")}
                     className="w-full"
                   />
                 </div>
@@ -2626,7 +2626,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <CalendarTimeField
                     value={endTime}
                     onChange={setEndTime}
-                    ariaLabel="Giờ kết thúc"
+                    ariaLabel={ui("End time")}
                     className="w-full"
                   />
                 </div>
@@ -2672,7 +2672,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                       : "bg-[#1A73E8] text-white hover:bg-[#1557B0]"
                   }`}
                 >
-                  {meetLink ? "Xoá Meet" : "+ Thêm Google Meet"}
+                  {meetLink ? "Xoá Meet" : ui("+ Add Google Meet")}
                 </button>
               </div>
 
@@ -2694,7 +2694,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             {/* Địa điểm */}
             <div>
               <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />{ui("Địa điểm")}</span>
+                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />{ui(ui("Địa điểm"))}</span>
               </label>
               <input
                 value={location}
@@ -2731,7 +2731,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                         onClick={() => handleAddGroup(group)}
                         className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
                       >
-                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || "Nhóm chưa đặt tên"}</span>
+                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || ui("Untitled group")}</span>
                         <span className="shrink-0 text-[11px] text-[#70757A]">{group.members.length} người</span>
                       </button>
                     ))
@@ -2816,9 +2816,9 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
               <Clock3 className="h-3.5 w-3.5 text-[#1A73E8]" /> Thời hạn
             </label>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_auto] sm:justify-start">
-              <CalendarDateField value={date} onChange={setDate} ariaLabel="Ngày thời hạn" containerClassName="w-48" />
+              <CalendarDateField value={date} onChange={setDate} ariaLabel={ui("Due date")} containerClassName="w-48" />
               {!isAllDay && (
-                <CalendarTimeField value={endTime} onChange={setEndTime} ariaLabel="Giờ thời hạn" />
+                <CalendarTimeField value={endTime} onChange={setEndTime} ariaLabel={ui("Due time")} />
               )}
             </div>
           </div>
@@ -2908,13 +2908,13 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
         {/* ── GHI CHÚ / MÔ TẢ ── */}
         <div>
           <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : "Mô tả sự kiện"}</span>
+            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : ui("Event description")}</span>
           </label>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            placeholder={kind === "task" ? "Thêm mô tả hoặc chi tiết việc cần thực hiện..." : "Thêm mô tả cho sự kiện..."}
+            placeholder={kind === "task" ? "Thêm mô tả hoặc chi tiết việc cần thực hiện..." : ui("Add event description...")}
             className="w-full rounded-xl border border-[#DADCE0] bg-white p-2.5 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
           />
         </div>
@@ -2932,7 +2932,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             type="submit"
             className="rounded-full bg-[#1A73E8] px-6 py-2 text-xs font-medium text-white transition-all hover:bg-[#1557B0] shadow-sm active:scale-95"
           >
-            {initialTask ? "Lưu thay đổi" : "Lưu"}
+            {initialTask ? "Lưu thay đổi" : ui("Save")}
           </button>
         </div>
       </form>
@@ -2964,7 +2964,7 @@ const EventDetailsModal: React.FC<{
               className="rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
               style={{ backgroundColor: color.light, color: color.bg }}
             >
-              {isTask ? "Việc cần làm" : "Sự kiện"}
+              {isTask ? "Việc cần làm" : ui("Sự kiện")}
             </span>
             {task.status === "done" && (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
@@ -3006,7 +3006,7 @@ const EventDetailsModal: React.FC<{
               {task.title}
             </h3>
             <p className="text-xs text-[#70757A] mt-0.5">
-              {formatVietnameseDate(taskDateObj, true)}
+              {formatVietnameseDate(taskDateObj, true, ui)}
             </p>
           </div>
         </div>
@@ -3017,14 +3017,14 @@ const EventDetailsModal: React.FC<{
             <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
             <span>
               {isAllDayTask(task)
-                ? "Sự kiện cả ngày"
+                ? ui("All-day event")
                 : `${task.startTime || toTimeString(new Date(task.dueAt))} – ${task.endTime || (task.endAt ? toTimeString(new Date(task.endAt)) : "")} (${formatMinutesDuration(task.duration)})`}
             </span>
           </div>
           {task.recurrence && task.recurrence !== "none" && (
             <div className="flex items-center gap-1 text-[11px] text-[#1A73E8] font-medium pl-6 dark:text-[#A8C7FA]">
               <RotateCw className="h-3 w-3" />
-              {recurrenceLabel(task.recurrence)}
+              {recurrenceLabel(task.recurrence, ui)}
             </div>
           )}
         </div>
@@ -3099,7 +3099,7 @@ const EventDetailsModal: React.FC<{
             }`}
           >
             <Check className="h-3.5 w-3.5" />
-            {task.status === "done" ? "Đánh dấu chưa xong" : "Đánh dấu hoàn thành"}
+            {task.status === "done" ? "Đánh dấu chưa xong" : ui("Mark as completed")}
           </button>
 
           <button

@@ -578,7 +578,7 @@ export const AppShell: React.FC = () => {
           const reminder = payload.reminder as { title?: string; starts_at?: string } | undefined;
           if (reminder) {
             addToast(
-              "Sắp đến giờ",
+              ui("Starting soon"),
               reminder.title,
               "info",
             );
@@ -692,10 +692,10 @@ export const AppShell: React.FC = () => {
             setActiveCall((current) => current?.id === call.call_id ? null : current);
             addToast(
               eventType === "call_rejected"
-                ? "Cuộc gọi bị từ chối"
+                ? ui("Call declined")
                 : eventType === "call_failed"
-                  ? "Cuộc gọi thất bại"
-                  : "Cuộc gọi đã kết thúc",
+                  ? ui("Call failed")
+                  : ui("Call ended"),
               undefined,
               "info",
             );
@@ -875,7 +875,7 @@ export const AppShell: React.FC = () => {
       addToast(success, proposal.title, "success");
     } catch (error) {
       addToast(
-        "Không thực hiện được",
+        ui("Unable to complete"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -1305,7 +1305,7 @@ export const AppShell: React.FC = () => {
           setMessagesMap((previous) => ({ ...previous, [assistant.id]: messages }));
           setAttachmentsMap((previous) => ({ ...previous, [assistant.id]: attachments.map(toMessageAttachment) }));
         }).catch((error: unknown) => addToast(ui(ui("Unable to open Assistant")), error instanceof Error ? error.message : undefined, "warning"));
-      }} assistantLastMessage={assistantConversation?.lastMessage || "Chào bạn! Tôi có thể hỗ trợ gì?"} assistantLastMessageTime={assistantConversation?.lastMessageTime || "Bây giờ"} language={settings.interfaceLanguage} />}
+      }} assistantLastMessage={assistantConversation?.lastMessage || ui("Hello! How can I help you?")} assistantLastMessageTime={assistantConversation?.lastMessageTime || ui("Now")} language={settings.interfaceLanguage} />}
       {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.interfaceLanguage} />}
       {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.interfaceLanguage} />}
     </div>}
@@ -1367,12 +1367,12 @@ export const AppShell: React.FC = () => {
         onApproveProposal={(proposal, corrections) => void decideProposal(
           proposal,
           () => confirmActionProposal(token.current!, proposal.id, corrections),
-          "Đã duyệt và thêm vào lịch",
+          ui("Approved and added to calendar"),
         )}
         onRejectProposal={(proposal) => void decideProposal(
           proposal,
           () => rejectActionProposal(token.current!, proposal.id),
-          "Đã từ chối",
+          ui("Rejected"),
         )}
         onStartCall={(type) => void initiateCall(type)}
         language={settings.interfaceLanguage}

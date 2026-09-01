@@ -126,14 +126,14 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       setProposals(await listActionProposals(token));
     } catch (error) {
       onNotify?.(
-        "Không tải được hộp nhiệm vụ",
+        ui("Failed to load task box"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
     } finally {
       setIsLoading(false);
     }
-  }, [token, onNotify]);
+  }, [token, onNotify, ui]);
 
   useEffect(() => {
     void load();
@@ -231,8 +231,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
         updated.missing_fields === proposal.missing_fields
       ) {
         onNotify?.(
-          "Chưa dùng được câu trả lời đó",
-          "Bạn điền trực tiếp vào ô Bắt đầu ở trên rồi bấm Duyệt.",
+          ui("That answer cannot be used yet"),
+          ui("Fill in the Start box above directly, then click Approve."),
           "warning",
         );
       } else {
@@ -240,7 +240,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       }
     } catch (error) {
       onNotify?.(
-        "Không thực hiện được",
+        ui("Unable to complete"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -285,14 +285,14 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         }`}
                       >
                         {proposal.status === "confirmed"
-                    ? "Đã duyệt"
+                    ? ui("Đã duyệt")
                     : proposal.status === "rejected"
-                      ? "Đã từ chối"
+                      ? ui("Rejected")
                       : proposal.status === "stale"
-                        ? "Đã lỗi thời"
+                        ? ui("Outdated")
                         : needsAnswer
-                          ? "Cần trả lời"
-                          : "Chờ duyệt"}
+                          ? ui("Response required")
+                          : ui("Pending")}
                       </span>
                     </div>
                     <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
@@ -316,8 +316,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       <button
                         type="button"
                         disabled={busy || !canApprove(proposal, draftFor(proposal))}
-                        title={canApprove(proposal, draftFor(proposal)) ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
-                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id))), "Đã duyệt và thêm vào lịch")}
+                        title={canApprove(proposal, draftFor(proposal)) ? undefined : ui("Fill in the missing information above")}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id))), ui("Approved and added to calendar"))}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                       >
                         <Check className="h-3.5 w-3.5" /> Duyệt
@@ -325,7 +325,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void act(proposal, () => rejectActionProposal(token, proposal.id), "Đã từ chối")}
+                        onClick={() => void act(proposal, () => rejectActionProposal(token, proposal.id), ui("Rejected"))}
                         className="rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#62687B] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:text-[#C6CAD6] dark:hover:bg-[#232630]"
                       >{ui("Reject")}</button>
                     </div>
@@ -361,8 +361,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                   missing field is the time, the form above already has a
                   datetime input, and a free-text answer there was worse than
                   useless: the server understands a deliberately tiny grammar
-                  ("mai 14h", "sáng mai", "next friday") and silently resolves
-                  nothing else, so a perfectly reasonable "9h sáng thứ năm" left
+                  ("mai 14h", ui("tomorrow morning"), "next friday") and silently resolves
+                  nothing else, so a perfectly reasonable ui("9 AM Thursday") left
                   the card unchanged and looked like a dead button. */}
               {needsAnswer && !missingFields(proposal).includes("time") && (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
@@ -370,7 +370,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                     <MessageSquareQuote className="mt-0.5 h-3 w-3 flex-none" />
                     {proposal.clarification_question ||
                       proposal.clarification_prompt ||
-                      "Trợ lý cần thêm thông tin để lên lịch."}
+                      ui("Assistant needs more information to schedule.")}
                   </p>
                   <div className="mt-2 flex gap-2">
                     <input
@@ -397,7 +397,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                               (answers[proposal.id] ?? "").trim(),
                               Intl.DateTimeFormat().resolvedOptions().timeZone,
                             ),
-                          "Đã gửi câu trả lời",
+                          ui("Response sent"),
                         )
                       }
                       className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
@@ -422,7 +422,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                             proposal.id,
                             decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id)),
                           ),
-                        "Đã duyệt và thêm vào lịch",
+                        ui("Approved and added to calendar"),
                       )
                     }
                     className="inline-flex items-center justify-center gap-1 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
@@ -437,7 +437,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                       void act(
                         proposal,
                         () => rejectActionProposal(token, proposal.id),
-                        "Đã từ chối",
+                        ui("Rejected"),
                       )
                     }
                     className="inline-flex items-center gap-1 rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#74798C] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:hover:bg-[#2E3342]"
@@ -495,8 +495,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             grows without bound, so merged it buries the first. */}
         <div className="flex items-center gap-1 rounded-2xl border border-[#E8EAF0] bg-white p-1.5 shadow-sm dark:border-[#2A2E3D] dark:bg-[#1C1F27]">
           {([
-            ["awaiting", "Cần duyệt", awaiting.length],
-            ["decided", "Đã xử lý", decidedList.length],
+            ["awaiting", ui("Needs approval"), awaiting.length],
+            ["decided", ui("Processed"), decidedList.length],
           ] as const).map(([key, caption, count]) => (
             <button
               key={key}
@@ -530,7 +530,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
 
         {!isLoading && (tab === "awaiting" ? awaiting : decidedList).length === 0 && (
           <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-5 py-12 text-center text-xs text-[#74798C] dark:border-[#3A3F50] dark:bg-[#1C1F27] dark:text-[#9DA3B4]">
-            {tab === "awaiting" ? "Không có việc nào đang chờ bạn duyệt." : "Chưa có việc nào đã được xử lý."}
+            {tab === "awaiting" ? "Không có việc nào đang chờ bạn duyệt." : ui("No tasks have been processed yet.")}
           </div>
         )}
           </>
@@ -545,7 +545,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             void act(
               editingProposal,
               () => confirmActionProposal(token, editingProposal.id, corrections),
-              "Đã duyệt và thêm vào lịch",
+              ui("Approved and added to calendar"),
             );
             setEditingProposal(null);
           }}
@@ -583,8 +583,8 @@ const ProposalEditModal: React.FC<{
           });
         }}
       >
-        <div className="mb-5 flex items-center justify-between"><div><h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chỉnh sửa {proposal.action_type === "appointment" ? "sự kiện" : "việc cần làm"}</h3><p className="mt-1 text-xs text-[#74798C]">{ui("Check details before adding to calendar.")}</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-[#74798C] hover:bg-[#F1F3F4] dark:hover:bg-[#2A2E3D]"><X className="h-5 w-5" /></button></div>
-        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Tiêu đề")}<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
+        <div className="mb-5 flex items-center justify-between"><div><h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chỉnh sửa {proposal.action_type === "appointment" ? "sự kiện" : ui("to-do")}</h3><p className="mt-1 text-xs text-[#74798C]">{ui("Check details before adding to calendar.")}</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-[#74798C] hover:bg-[#F1F3F4] dark:hover:bg-[#2A2E3D]"><X className="h-5 w-5" /></button></div>
+        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui(ui("Tiêu đề"))}<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Start")}<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("End")}<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label></div>
         <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Location or meeting link")}<input value={location} onChange={(event) => setLocation(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
         <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Description")}<textarea value={details} onChange={(event) => setDetails(event.target.value)} rows={4} className="mt-1.5 w-full resize-none rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
