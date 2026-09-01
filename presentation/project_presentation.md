@@ -280,7 +280,7 @@ Về mặt kỹ thuật, các nền tảng lớn **có đủ năng lực triển
 
 #### 5.4.4. Tính khả thi kinh tế
 
-Số liệu lấy từ mô hình chi phí Track 1 — Day 25, đối chiếu giá API tại thời điểm 27/08/2026.
+Số liệu lấy từ mô hình chi phí đã nêu, đối chiếu giá API tại thời điểm 27/08/2026.
 
 | Chỉ tiêu | Giá trị | Nguồn |
 |---|---:|---|
@@ -297,7 +297,7 @@ Biên độ an toàn hiện tại là 10,37 điểm phần trăm trên ngưỡng
 | Rủi ro | Mức độ | Trạng thái hiện tại |
 |---|:---:|---|
 | Tỷ lệ đúng ngôn ngữ đích 96,6% (§5.3) — sai khoảng 1/30 tin nhắn, ảnh hưởng trực tiếp cam kết cốt lõi | Cao | Nút `validate_output` đã phát hiện và ghi nhận `wrong_language`; chưa chốt hành vi khi phát hiện — thử lại hay trả nguyên văn |
-| Hệ thống chỉ chạy được một bản sao (ADR-18) — vừa là trần công suất, vừa là điểm chết đơn lẻ | Cao | Cần backplane dùng chung trước khi mở rộng |
+| Hệ thống chỉ chạy được một bản sao — vừa là trần công suất, vừa là điểm chết đơn lẻ | Cao | Cần backplane dùng chung trước khi mở rộng |
 | Tỷ lệ tự xử lý 82% đo trên bộ eval, chưa đo trên người dùng thật | Trung bình | Là chỉ số phải đo lại đầu tiên khi có lưu lượng thật |
 | Nền tảng lớn bổ sung chức năng trích cam kết theo từng người | Trung bình | Phụ thuộc dữ liệu tích luỹ (5.4.3) để giữ khác biệt |
 | Luồng phát hiện cam kết timeout ở 10 giây, thất bại không phát tín hiệu | Trung bình | Quan sát được khi chạy thử 01/09; chưa có retry hoặc chỉ báo |
