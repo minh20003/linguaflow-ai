@@ -955,6 +955,12 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
           {/* Right: Search & View Mode Switcher */}
           <div className="flex items-center gap-2">
+            <GoogleCalendarControls
+              token={token}
+              onSynced={() => void reload()}
+              onNotify={onNotify}
+            />
+
             {/* Instant Search Bar */}
             <div className="relative hidden md:block">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#747775]" />
@@ -993,7 +999,10 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
             <button
               type="button"
-              onClick={() => setNow(new Date())}
+              onClick={() => {
+                setNow(new Date());
+                void reload();
+              }}
               aria-label={ui("Refresh calendar")}
               title={ui("Refresh")}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
