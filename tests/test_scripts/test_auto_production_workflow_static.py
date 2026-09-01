@@ -9,6 +9,7 @@ WRAPPER = (ROOT / "scripts/production_release_wrapper.sh").read_text(
     encoding="utf-8"
 )
 DEPLOY_RELEASE = (ROOT / "scripts/deploy_release.sh").read_text(encoding="utf-8")
+FRONTEND_DOCKERFILE = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
 
 
 def _job(name: str, next_name: str | None = None) -> str:
@@ -175,3 +176,8 @@ def test_rehearsal_requires_existing_lkg_and_preserves_container_ids() -> None:
     assert "rehearsal changed PostgreSQL container identity" in WRAPPER
     assert "rehearsal changed Caddy container identity" in WRAPPER
     assert "ALREADY_DEPLOYED|mode=rehearse" in WRAPPER
+
+
+def test_frontend_dockerfile_copies_public_assets_into_runner_stage() -> None:
+    assert "COPY --from=builder --chown=nextjs:nodejs /app/public ./public" in FRONTEND_DOCKERFILE
+
