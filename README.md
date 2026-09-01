@@ -2,6 +2,8 @@
 
 Realtime multilingual chat with context-aware AI translation. Users chat in their preferred language while the system automatically translates messages between participants.
 
+![LinguaFlow Product Interface](presentation/thumbnail.png)
+
 ## 📦 Deliverables nộp bài Demo Day (10/10 Deliverables)
 
 Dự án hoàn thành đầy đủ **10/10 deliverables** theo quy định của BTC AI20K ([docs/guide/chapter-09.md](docs/guide/chapter-09.md)):
