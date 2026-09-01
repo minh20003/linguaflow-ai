@@ -656,6 +656,12 @@ export interface ApiActionProposal {
   confidence_score: number;
   source_mode: "on_demand" | "proactive";
   created_at: string;
+  confirmed_at?: string | null;
+  rejected_at?: string | null;
+  stale_at?: string | null;
+  source_sender_name?: string | null;
+  source_conversation_type?: "direct" | "group" | null;
+  source_conversation_name?: string | null;
   /** JSON array of the required fields the extractor could not fill. The
    *  server refuses to confirm while any remain, so the approval form uses it
    *  to know what it must collect. */

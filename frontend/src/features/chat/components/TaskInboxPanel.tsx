@@ -82,9 +82,9 @@ function formatProposalTimestamp(value: string | null | undefined, fallback: str
 }
 
 function processedAt(proposal: ApiActionProposal): string | null {
-  if (proposal.status === "confirmed") return proposal.confirmed_at;
-  if (proposal.status === "rejected") return proposal.rejected_at;
-  if (proposal.status === "stale") return proposal.stale_at;
+  if (proposal.status === "confirmed") return proposal.confirmed_at ?? null;
+  if (proposal.status === "rejected") return proposal.rejected_at ?? null;
+  if (proposal.status === "stale") return proposal.stale_at ?? null;
   return null;
 }
 

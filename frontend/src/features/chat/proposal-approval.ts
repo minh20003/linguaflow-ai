@@ -10,6 +10,8 @@
  *  either — `ProposeCalendarEventArguments` says as much where it declines to
  *  accept them, and leaves both to the approval step.
  */
+import { interactionText } from "./i18n";
+import type { LanguageCode } from "./types";
 import type { ApiActionProposal } from "./api/chat-api";
 
 export interface ApprovalOptions {
@@ -48,8 +50,21 @@ export const REMINDER_CHOICES: Array<{ value: number | null; label: string }> = 
   { value: null, label: "Không nhắc" },
 ];
 
-export function durationLabel(minutes: number): string {
-  return minutes < 60 ? `${minutes} phút` : `${minutes / 60} giờ`;
+export function durationLabel(minutes: number, language: LanguageCode = "vi"): string {
+  const [value, unit] = minutes < 60
+    ? [minutes, "minute" as const]
+    : minutes < 1440
+      ? [minutes / 60, "hour" as const]
+      : [minutes / 1440, "day" as const];
+  try {
+    return new Intl.NumberFormat(language, {
+      style: "unit",
+      unit,
+      unitDisplay: "long",
+    }).format(value);
+  } catch {
+    return `${value} ${unit}`;
+  }
 }
 
 /** Whether this proposal is still waiting on a decision. */
@@ -83,10 +98,13 @@ export function approvalCorrections(
 }
 
 /** Render a proposal's time the way both surfaces show it. */
-export function formatProposalWhen(proposal: ApiActionProposal): string {
+export function formatProposalWhen(
+  proposal: ApiActionProposal,
+  language: LanguageCode = "vi",
+): string {
   const at = proposal.scheduled_start_at || proposal.due_at;
-  if (!at) return "Chưa có thời gian";
-  return new Date(at).toLocaleString("vi-VN", {
+  if (!at) return interactionText(language, "No time set yet");
+  return new Date(at).toLocaleString(language, {
     weekday: "short",
     day: "numeric",
     month: "numeric",
@@ -196,18 +214,21 @@ export function decisionCorrections(
 }
 
 /** Assistant-facing confirmation copy for an already decided inline proposal. */
-export function decisionReply(proposal: ApiActionProposal): string | null {
+export function decisionReply(
+  proposal: ApiActionProposal,
+  language: LanguageCode = "vi",
+  dateLanguage: LanguageCode = language,
+): string | null {
+  const when = proposal.scheduled_start_at || proposal.due_at
+    ? ` — ${formatProposalWhen(proposal, dateLanguage)}`
+    : "";
   switch (proposal.status) {
     case "confirmed":
-      return `Đã thêm "${proposal.title}" vào Lịch cá nhân${
-        proposal.scheduled_start_at || proposal.due_at
-          ? ` — ${formatProposalWhen(proposal)}`
-          : ""
-      }.`;
+      return `${interactionText(language, "Added to your personal calendar")}: "${proposal.title}"${when}.`;
     case "rejected":
-      return `Đã từ chối đề xuất "${proposal.title}". Tôi sẽ không đưa việc này vào lịch.`;
+      return `${interactionText(language, "Turned down, and left off your calendar")}: "${proposal.title}".`;
     case "stale":
-      return `Đề xuất "${proposal.title}" đã quá hạn nên tôi bỏ qua.`;
+      return `${interactionText(language, "This suggestion expired, so it was skipped")}: "${proposal.title}".`;
     default:
       return null;
   }

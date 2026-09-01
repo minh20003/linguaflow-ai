@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, update
 
+from src.core.rate_limit import reset_rate_limits
 from src.core.security import get_password_hash, verify_password
 from src.database.models import PendingRegistration, RefreshSession, User
 from src.services.email import EMAIL_TEMPLATES, _memory_sender
@@ -1181,6 +1182,12 @@ async def test_secret_logging_proof_password_otp_and_raw_exception_absent(client
 async def test_actual_14_language_email_routing_and_resend_preservation(client, test_db):
     """Every supported language receives its correct localized template on register and resend."""
     for lang in ["en", "vi", "zh", "ja", "ko", "fr", "de", "es", "th", "id", "pt", "ru", "ar", "hi"]:
+        # This test verifies template routing, not throttling. Each iteration is
+        # logically a different visitor but ASGITransport gives every request
+        # the same synthetic client IP, so the production 5/minute guard would
+        # otherwise turn the sixth language into an unrelated 429. Rate-limit
+        # behavior itself is covered in tests/test_rate_limit.py.
+        reset_rate_limits()
         _memory_sender.clear()
         email = f"user_{lang}@example.com"
         username = f"user_{lang}"
