@@ -1,5 +1,6 @@
 """API routes for the application."""
 
+import asyncio
 import logging
 import math
 import mimetypes
@@ -48,6 +49,7 @@ from src.core.security import (
 from src.database import get_db
 from src.database.models import (
     AGENT_CONSENT_POLICY_VERSION,
+    ActionProposal,
     Attachment,
     BlockedUser,
     CalendarEvent,
@@ -199,6 +201,7 @@ from src.services.connection_manager import ConnectionManager
 from src.services.conversation_intelligence import ConversationIntelligenceService
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
+from src.services.display_language import render, render_many
 from src.services.email import (
     EmailDeliveryError,
     send_password_reset_email,
@@ -296,6 +299,13 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ) -> PendingRegisterResponse:
     """Start registration by sending an OTP; the account is created after verification."""
+    # The interface language for an account that does not exist yet. The
+    # registration form offers one language, and it becomes both settings;
+    # naming it here keeps the two `PendingRegistration` builds and the OTP
+    # email from drifting apart, which is how the resend already ended up
+    # reading a different field from the first send.
+    pending_interface_language = request.preferred_language
+
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
@@ -336,7 +346,7 @@ async def register(
                 display_name=display_name,
                 password_hash=password_hash,
                 preferred_language=request.preferred_language,
-                interface_language=request.preferred_language,
+                interface_language=pending_interface_language,
                 otp_hash=otp_hash,
                 attempts=0,
                 expires_at=now + timedelta(minutes=5),
@@ -393,7 +403,7 @@ async def register(
             display_name=display_name,
             password_hash=password_hash,
             preferred_language=request.preferred_language,
-            interface_language=request.preferred_language,
+            interface_language=pending_interface_language,
             otp_hash=otp_hash,
             expires_at=now + timedelta(minutes=5),
             attempts=0,
@@ -436,7 +446,13 @@ async def register(
         await send_registration_otp_email(
             to_email=request.email,
             otp=otp,
-            language=request.preferred_language,
+            # System email follows the interface language, like every other
+            # notification. At first registration there is no account yet and
+            # the form offers only one language, which line 392 also stores as
+            # the interface language -- so this is that value, named for what it
+            # is rather than for where it came from. The resend path reads the
+            # stored `interface_language` and now agrees with this one.
+            language=pending_interface_language,
         )
     except EmailDeliveryError as exc:
         logger.error("Email delivery failed for pending registration %s: %s", pending_id, type(exc).__name__)
@@ -1223,7 +1239,25 @@ async def list_calendar_events(
         starts_before=starts_before,
         include_cancelled=include_cancelled,
     )
-    return [CalendarEventResponse.model_validate(event) for event in events]
+    # Same reason as the task inbox, with one extra condition: only an event the
+    # assistant created is known to be stored in the owner's translation
+    # language. A manually typed title holds whatever they typed and a synced
+    # one holds whatever Google had, so translating those would be answering a
+    # question nobody asked -- and feeding an English title to the translator as
+    # Vietnamese returns it mangled.
+    rows = [CalendarEventResponse.model_validate(event) for event in events]
+    assistant_titles = [
+        row.title if row.source == "assistant" else None for row in rows
+    ]
+    rendered = await render_many(
+        assistant_titles,
+        stored_language=current_user.preferred_language,
+        interface_language=current_user.interface_language,
+    )
+    return [
+        row.model_copy(update={"display_title": title})
+        for row, title in zip(rows, rendered, strict=True)
+    ]
 
 
 @router.post(
@@ -2749,6 +2783,31 @@ async def detect_message_self_commitments(
         ) from exc
 
 
+
+async def _proposal_for_reader(proposal: "ActionProposal", reader: User) -> ActionProposalResponse:
+    """One proposal, with the wording the reader's screens should show.
+
+    Every endpoint that answers with a single proposal goes through here. They
+    used to return the stored row while the list endpoint returned a rendered
+    one, so approving from the inbox pushed the raw row back into the list and
+    the title visibly changed language mid-flow.
+    """
+    row = ActionProposalResponse.model_validate(proposal)
+    title, details = await asyncio.gather(
+        render(
+            row.title,
+            stored_language=reader.preferred_language,
+            interface_language=reader.interface_language,
+        ),
+        render(
+            row.details,
+            stored_language=reader.preferred_language,
+            interface_language=reader.interface_language,
+        ),
+    )
+    return row.model_copy(update={"display_title": title, "display_details": details})
+
+
 @router.get(
     "/me/action-proposals",
     response_model=list[ActionProposalResponse],
@@ -2763,7 +2822,34 @@ async def list_conversation_proposals(
     service = ActionProposalService(db)
     try:
         proposals = await service.list_for_owner(current_user.id, status_filter, conversation_id)
-        return [ActionProposalResponse.model_validate(p) for p in proposals]
+        # The inbox is chrome, so its rows read in the interface language even
+        # though the title was stored in the owner's translation language --
+        # which is the right language for the card in the chat thread, beside
+        # the message it came from, and the wrong one for a screen whose labels
+        # are all in the other setting.
+        #
+        # Into `display_*`, never over `title`: the client sends `title` back on
+        # approval, so rewriting it here persisted the machine translation over
+        # what the person said.
+        rows = [ActionProposalResponse.model_validate(p) for p in proposals]
+        titles, details = await asyncio.gather(
+            render_many(
+                [row.title for row in rows],
+                stored_language=current_user.preferred_language,
+                interface_language=current_user.interface_language,
+            ),
+            render_many(
+                [row.details for row in rows],
+                stored_language=current_user.preferred_language,
+                interface_language=current_user.interface_language,
+            ),
+        )
+        return [
+            row.model_copy(
+                update={"display_title": title, "display_details": detail}
+            )
+            for row, title, detail in zip(rows, titles, details, strict=True)
+        ]
     except ConversationMembershipError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2804,7 +2890,7 @@ async def dismiss_action_proposal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action proposal belongs to someone else",
         ) from exc
-    return ActionProposalResponse.model_validate(dismissed)
+    return await _proposal_for_reader(dismissed, current_user)
 
 
 @router.post("/me/action-proposals/dismiss-decided")
@@ -2855,7 +2941,7 @@ async def confirm_action_proposal(
         )
         if scheduled:
             schedule_calendar_push(event_id=scheduled, user_id=current_user.id)
-        return ActionProposalResponse.model_validate(confirmed)
+        return await _proposal_for_reader(confirmed, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2886,7 +2972,7 @@ async def reject_action_proposal(
     service = ActionProposalService(db)
     try:
         rejected = await service.reject_proposal(proposal_id=proposal_id, user_id=current_user.id)
-        return ActionProposalResponse.model_validate(rejected)
+        return await _proposal_for_reader(rejected, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2927,7 +3013,7 @@ async def clarify_action_proposal(
     service = ActionProposalService(db)
     try:
         proposal = await service.clarify(proposal_id, current_user.id, payload.answer, payload.timezone)
-        return ActionProposalResponse.model_validate(proposal)
+        return await _proposal_for_reader(proposal, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action proposal was not found") from exc
     except ActionProposalOwnershipError as exc:

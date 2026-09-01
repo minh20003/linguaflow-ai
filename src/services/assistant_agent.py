@@ -35,7 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.assistant import build_assistant_graph
-from src.database.models import Message
+from src.database.models import Message, User
 from src.services.assistant_telemetry import record_attempt
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,14 @@ class AssistantAgentService:
             )
             if written is not None:
                 sent_at = written
+        # The reader's own language, not the message's. `summarize_conversation`
+        # has always resolved it this way; the rest of the assistant answered in
+        # whatever language the question happened to be in, and its fixed
+        # replies were Vietnamese for everybody.
+        reply_language = await self._db.scalar(
+            select(User.preferred_language).where(User.id == user_id)
+        )
+
         graph = build_assistant_graph(db=self._db, checkpointer=_CHECKPOINTER)
         started = time.perf_counter()
         state = await graph.ainvoke(
@@ -137,6 +145,10 @@ class AssistantAgentService:
                 "user_id": user_id,
                 "request_text": request_text,
                 "sent_at": sent_at.isoformat(),
+                # English, not Vietnamese, when the account has no language on it --
+                # the same last resort `fixed_reply` documents. "vi" here
+                # made the stated invariant false.
+                "reply_language": reply_language or "en",
                 "telemetry": {"source_message_id": source_message_id},
             },
             # The thread id and the trace callback travel in the same config.

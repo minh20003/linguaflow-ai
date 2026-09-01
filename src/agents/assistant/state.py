@@ -74,6 +74,14 @@ class AssistantState(TypedDict, total=False):
     # can be resolved at all, and never guessed: `normalize_action_time` refuses
     # rather than inventing an offset.
     timezone: str | None
+    # The account's translation language, used only by the graph's *fixed*
+    # replies -- a missing permission, a failed run, the empty prompt. A real
+    # answer follows the language of the question instead, which is the reader's
+    # own choice made by typing in it; but when the model produced nothing there
+    # is no question language to read, and the account setting is the best
+    # remaining guess. Anything unrecognised falls back to English, never to
+    # Vietnamese, which is what these sentences used to be for everybody.
+    reply_language: str
 
     # --- Produced by the nodes ---
     # Set when `check_consent` stops the run; names the scope the user must

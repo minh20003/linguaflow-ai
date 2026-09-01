@@ -69,6 +69,7 @@ from src.agents.assistant.prompts import (
     PLANNER_SYSTEM_PROMPT,
     build_answer_user_prompt,
     build_planner_user_prompt,
+    fixed_reply,
 )
 from src.agents.assistant.state import MAX_REPLANS, AssistantState, PlannedStep
 from src.services.agent_consent import ConsentRequiredError, require_consent
@@ -643,10 +644,7 @@ def ask_permission(state: AssistantState) -> dict[str, Any]:
     """Explain which permission is missing, in words rather than a status code."""
     scope = state.get("missing_consent") or "read_conversations"
     return {
-        "reply": (
-            "Mình cần bạn cho phép trước đã. Hãy bật quyền tương ứng trong phần "
-            f"Cài đặt → Trợ lý ({scope}), rồi nhờ mình lại nhé."
-        )
+        "reply": fixed_reply(state.get("reply_language"), "missing_consent", scope=scope)
     }
 
 
@@ -673,14 +671,19 @@ def make_respond(
         executed = state.get("executed") or []
         if executed:
             titles = ", ".join(item["title"] for item in executed)
-            return {"reply": f"Đã thêm vào lịch của bạn: {titles}."}
+            return {
+                "reply": fixed_reply(
+                    state.get("reply_language"), "executed", titles=titles
+                )
+            }
 
         proposals = state.get("proposals") or []
         if proposals:
             return {
-                "reply": (
-                    f"Mình tìm thấy {len(proposals)} việc cần làm trong hội thoại này. "
-                    "Bạn xem lại rồi duyệt giúp mình nhé."
+                "reply": fixed_reply(
+                    state.get("reply_language"),
+                    "proposals_pending",
+                    count=len(proposals),
                 )
             }
 
@@ -701,14 +704,9 @@ def make_respond(
                 return {"reply": answer, "telemetry": _note(state, outcome="answered")}
 
         if state.get("error"):
-            return {
-                "reply": (
-                    "Mình chưa xử lý được yêu cầu này ngay lúc này. "
-                    "Bạn thử lại, hoặc nói rõ hơn điều bạn muốn mình hỗ trợ."
-                )
-            }
+            return {"reply": fixed_reply(state.get("reply_language"), "run_failed")}
 
-        return {"reply": "Bạn muốn mình hỗ trợ điều gì trong cuộc trò chuyện này?"}
+        return {"reply": fixed_reply(state.get("reply_language"), "no_request")}
 
     return respond
 

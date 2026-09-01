@@ -595,3 +595,24 @@ def mock_llm() -> AsyncMock:
     mock = AsyncMock()
     mock.ainvoke.return_value = AsyncMock(content="Mocked LLM response")
     return mock
+
+
+@pytest.fixture(autouse=True)
+def _no_secondary_translator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite off the network.
+
+    `fallback_translator_enabled` defaults to true, and rendering a proposal or
+    a calendar row for a reader whose two language settings differ now calls the
+    provider. Several fixtures set `preferred_language` to something other than
+    the `interface_language` default, so a plain `pytest tests/` was reaching a
+    public endpoint over the internet -- slow, flaky, and failing outright on a
+    machine with no route out.
+
+    Autouse and unconditional. A test that wants to observe the rendering stubs
+    `translate_with_secondary_provider` itself and gets a deterministic answer;
+    a test that does not should never depend on one.
+    """
+    monkeypatch.setattr(
+        "src.services.fallback_translator.get_settings",
+        lambda: get_settings().model_copy(update={"fallback_translator_enabled": False}),
+    )

@@ -10,6 +10,7 @@ import {
   UsersRound,
   Globe
 } from 'lucide-react';
+import { useT } from "../language-context";
 
 interface ChatHeaderProps {
   conversation: Conversation;
@@ -32,6 +33,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   language,
   assistantMode = false,
 }) => {
+  const ui = useT();
   const isGroup = conversation.type === 'group' && !assistantMode;
 
   return (
@@ -87,7 +89,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
 
           <div className="flex items-center gap-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
             {assistantMode ? (
-              <span>Không gian riêng tư của bạn</span>
+              <span>{ui("Your private space")}</span>
             ) : isGroup ? (
               <span>{conversation.memberCount || 8} {tx(language, 'Members').toLowerCase()}</span>
             ) : conversation.isTyping ? (
