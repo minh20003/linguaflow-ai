@@ -186,7 +186,14 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const mentionQuery = mentionMatch?.[2].toLocaleLowerCase() ?? '';
   const mentionOptions = mentionMatch ? [
     ...mentionCandidates.filter((user) => `${user.name} ${user.username}`.toLocaleLowerCase().includes(mentionQuery)).map((user) => ({ type: 'user' as const, user })),
-    ...('trợ lý thông minh assistant ai'.includes(mentionQuery) ? [{ type: 'assistant' as const }] : []),
+    // Offered once something has been typed after the "@". On an empty
+    // query `''.includes` is true, so a bare "@" listed the assistant and
+    // Enter -- which now completes the highlighted entry -- inserted
+    // "@assistant " instead of sending. A message ending in a bare "@"
+    // should still be sendable.
+    ...(mentionQuery && 'trợ lý thông minh assistant ai'.includes(mentionQuery)
+      ? [{ type: 'assistant' as const }]
+      : []),
   ] : [];
   const insertMention = (option: typeof mentionOptions[number]) => {
     const cursor = textareaRef.current?.selectionStart ?? text.length;

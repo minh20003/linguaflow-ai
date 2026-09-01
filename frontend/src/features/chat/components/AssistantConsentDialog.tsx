@@ -62,11 +62,10 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-bold text-[#1E2230] dark:text-[#F5F6FA]">
-              Bạn cho phép trợ lý làm gì?
+              {ui("What may the assistant do?")}
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-[#74798C] dark:text-[#9DA3B4]">
-              Trợ lý chỉ làm được những việc bạn tích chọn dưới đây. Bạn đổi lại hoặc rút
-              hẳn bất cứ lúc nào trong phần Cài đặt.
+              {ui("The assistant can only do what you tick below. You can change or withdraw this at any time in Settings.")}
             </p>
           </div>
           <button
@@ -106,7 +105,7 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
                   </span>
                   {index === 0 && (
                     <span className="mt-1 block text-xs font-medium text-[#2563EB] dark:text-[#93C5FD]">
-                      Không có quyền này thì trợ lý không làm được gì cả.
+                      {ui("Without this one the assistant can do nothing at all.")}
                     </span>
                   )}
                 </span>
@@ -118,7 +117,7 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
         <footer className="flex items-center justify-between gap-3 border-t border-[#E8EAF0] p-5 dark:border-[#2A2E3D]">
           <p className="flex items-center gap-1.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">
             <ShieldCheck className="h-3.5 w-3.5 flex-none" />
-            Đã chọn {chosen}/{items.length}
+            {ui("Selected")} {chosen}/{items.length}
           </p>
           <div className="flex gap-2">
             <button
@@ -133,7 +132,7 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
               onClick={confirm}
               className="rounded-xl bg-[#2563EB] px-4 py-2 text-xs font-bold text-white hover:bg-[#1D4FD7]"
             >
-              Xác nhận
+              {ui("Confirm")}
             </button>
           </div>
         </footer>

@@ -27,6 +27,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,13 +68,41 @@ _REMINDER_PHRASES: dict[str, tuple[str, str]] = {
 }
 
 
-def _reminder_text(event: Any, language: str | None = None) -> str:
+def _reminder_zone(event: Any, account_timezone: str | None) -> ZoneInfo:
+    """Whose clock the reminder should quote.
+
+    The event's own timezone first: `calendar_events.timezone` holds the one the
+    person actually said, which is the answer even after they have travelled.
+    Then the account's. UTC only when neither is known, and then the sentence is
+    at least honest about being a stored instant rather than quietly two hours
+    out.
+    """
+    for name in (getattr(event, "timezone", None), account_timezone):
+        if not name:
+            continue
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return UTC
+
+
+def _reminder_text(
+    event: Any, language: str | None = None, account_timezone: str | None = None
+) -> str:
     """The sentence the assistant says when a reminder falls due.
 
     Plain text with no Markdown, for the reason the answering prompt gives: the
     chat shows it verbatim.
+
+    `starts_at` is a UTC instant. Formatting it directly told a Hanoi reader
+    their 09:00 appointment started at 02:00 -- a number that looks like a
+    working reminder and is wrong by the offset, in every one of the fourteen
+    sentences below.
     """
-    when = event.starts_at.strftime("%H:%M %d/%m/%Y")
+    when = event.starts_at.astimezone(_reminder_zone(event, account_timezone)).strftime(
+        "%H:%M %d/%m/%Y"
+    )
     sentence, place = _REMINDER_PHRASES.get(
         (language or "").lower(), _REMINDER_PHRASES["en"]
     )
@@ -115,9 +144,12 @@ async def _post_reminder_message(
             language = await session.scalar(
                 select(User.preferred_language).where(User.id == user_id)
             )
+            account_timezone = await session.scalar(
+                select(User.timezone).where(User.id == user_id)
+            )
             posted = await ChatService(session).post_assistant_notice(
                 user_id=user_id,
-                text=_reminder_text(event, language),
+                text=_reminder_text(event, language, account_timezone),
                 idempotency_key=f"reminder:{reminder_id}",
             )
             if posted is None:
