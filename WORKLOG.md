@@ -179,24 +179,110 @@ BOM nằm trước `#!` khiến git không nhận ra shebang → pre-push hook k
 
 ---
 
-## 17/08/2026 - 31/08/2026 — Đóng góp trọng yếu của Nguyễn Ngọc Thuận
+> Các mục dưới đây chỉ ghi commit của **Nguyễn Ngọc Thuận** có thay đổi chức năng hoặc ảnh hưởng kiến trúc lâu dài; không liệt kê commit merge, revert, đồng bộ nhánh hoặc chỉnh sửa nhỏ. Thời lượng là **ước tính** theo phạm vi commit, phần mã thay đổi và các bước kiểm thử/tích hợp đi kèm; không phải dữ liệu chấm công thực tế.
 
-> Chỉ ghi các commit có thay đổi chức năng hoặc ảnh hưởng kiến trúc lâu dài; không liệt kê commit merge, revert, đồng bộ nhánh hoặc chỉnh sửa nhỏ.
+---
 
-| Ngày | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+## 17/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
 |---|---|---|---|---|
-| 17/08 | Chuẩn hoá proxy API/WebSocket, tinh chỉnh dịch chat và điều khiển tài khoản | Hoàn thành | commit `b5ebe7a`, `4f5f0f8` | — |
-| 18/08 | Bản địa hoá giao diện chat và hỗ trợ forward message có provenance | Hoàn thành | commit `af2fe69` | — |
-| 19/08 | Bổ sung Google Sign-In đã xác thực, gồm migration, backend API, UI và kiểm thử | Hoàn thành | commit `41733ff` | — |
-| 21/08 | Tái cấu trúc frontend chat/auth theo component dùng chung | Hoàn thành | commit `858c947` | — |
-| 21/08 | Tích hợp Supabase Storage cho tệp đính kèm, giữ kiểm tra truy cập theo hội thoại | Hoàn thành | commit `b4e6e56` | — |
-| 21/08 | Bổ sung quản trị nhóm ở backend và frontend, cùng cơ chế session bền vững | Hoàn thành | commit `352df10`, `d2f8471` | — |
-| 24/08 | Lưu thay đổi glossary qua backend và cải thiện dữ liệu metric liên quan | Hoàn thành | commit `f236d91` | — |
-| 26/08 | Tích hợp live translation, dữ liệu quản trị và telemetry cho admin/chat | Hoàn thành | commit `3c61fd1`, `dfe2b1d` | — |
-| 28/08 | Hoàn thiện personal calendar, Task Inbox và private assistant messages/visibility | Hoàn thành | commit `d0a6290` | — |
-| 29/08 | Làm mới UI calendar, admin, auth; tinh chỉnh Task Inbox và assistant settings | Hoàn thành | commit `933b186`, `df06385` | — |
-| 31/08 | Bổ sung tài liệu runtime reliability và feature operations | Hoàn thành | commit `8439a10` | — |
+| Nguyễn Ngọc Thuận | Chuẩn hoá proxy API/WebSocket, tinh chỉnh dịch chat và điều khiển tài khoản | Hoàn thành | commit `b5ebe7a`, `4f5f0f8` | 5 giờ |
 
-**Tổng kết:** Các commit trên tập trung vào nền tảng trải nghiệm người dùng, xác thực/tích hợp, quản trị dữ liệu dịch, calendar/task inbox và tài liệu vận hành. Chi tiết commit không trọng yếu hoặc commit tích hợp được truy vết trực tiếp trong Git history.
+**Tổng kết:** Ổn định kết nối chat giữa frontend và backend, đồng thời hoàn thiện các điều khiển dịch và tài khoản.
+
+---
+
+## 18/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Bản địa hoá giao diện chat và hỗ trợ forward message có provenance | Hoàn thành | commit `af2fe69` | 5 giờ |
+
+**Tổng kết:** Bổ sung khả năng hiển thị đa ngôn ngữ cho chat và bảo toàn thông tin nguồn khi chuyển tiếp tin nhắn.
+
+---
+
+## 19/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Bổ sung Google Sign-In đã xác thực, gồm migration, backend API, UI và kiểm thử | Hoàn thành | commit `41733ff` | 8 giờ |
+
+**Tổng kết:** Hoàn thiện luồng đăng nhập Google có xác thực xuyên suốt từ cơ sở dữ liệu đến giao diện.
+
+---
+
+## 21/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Tái cấu trúc frontend chat/auth theo component dùng chung | Hoàn thành | commit `858c947` | 7 giờ |
+| Nguyễn Ngọc Thuận | Tích hợp Supabase Storage cho tệp đính kèm, giữ kiểm tra truy cập theo hội thoại | Hoàn thành | commit `b4e6e56` | 5 giờ |
+| Nguyễn Ngọc Thuận | Bổ sung quản trị nhóm ở backend và frontend, cùng cơ chế session bền vững | Hoàn thành | commit `352df10`, `d2f8471` | 7 giờ |
+
+**Tổng kết:** Củng cố nền tảng frontend, lưu trữ tệp an toàn và các luồng quản trị nhóm/xác thực.
+
+---
+
+## 24/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Lưu thay đổi glossary qua backend và cải thiện dữ liệu metric liên quan | Hoàn thành | commit `f236d91` | 4 giờ |
+
+**Tổng kết:** Glossary có thể được lưu bền vững và dữ liệu quản trị liên quan được cải thiện.
+
+---
+
+## 26/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Tích hợp live translation, dữ liệu quản trị và telemetry cho admin/chat | Hoàn thành | commit `3c61fd1`, `dfe2b1d` | 7 giờ |
+
+**Tổng kết:** Bổ sung quan sát dữ liệu và các cải tiến dịch thời gian thực cho chat và trang quản trị.
+
+---
+
+## 28/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Hoàn thiện personal calendar, Task Inbox và private assistant messages/visibility | Hoàn thành | commit `d0a6290` | 8 giờ |
+
+**Tổng kết:** Hoàn thiện các luồng lịch cá nhân, duyệt đề xuất và quyền riêng tư của trợ lý.
+
+---
+
+## 29/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Làm mới UI calendar, admin, auth; tinh chỉnh Task Inbox và assistant settings | Hoàn thành | commit `933b186`, `df06385` | 6 giờ |
+
+**Tổng kết:** Đồng bộ trải nghiệm giao diện giữa các khu vực Calendar, Admin, xác thực và Assistant.
+
+---
+
+## 31/08/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Bổ sung tài liệu runtime reliability và feature operations | Hoàn thành | commit `8439a10` | 4 giờ |
+
+**Tổng kết:** Bổ sung hướng dẫn kỹ thuật và vận hành cho các tính năng trọng yếu.
+
+---
+
+## 01/09/2026
+
+| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| Nguyễn Ngọc Thuận | Tăng cường độ ổn định runtime; khôi phục UI Calendar/Task Inbox và bổ sung kiểm thử | Hoàn thành | commit `70c94ae` | 8 giờ |
+
+**Tổng kết:** Bổ sung các cơ chế độ tin cậy runtime, khôi phục giao diện cần thiết và mở rộng kiểm thử hồi quy.
+
+**Tổng thời lượng ước tính, 17/08–01/09:** **74 giờ**.
 
 <!-- Bổ sung theo mẫu trên cho mỗi ngày làm việc -->
