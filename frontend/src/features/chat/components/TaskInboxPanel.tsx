@@ -179,7 +179,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       setProposals((current) => current.filter((item) => item.id !== proposal.id));
       onProposalChanged?.(proposal, true);
     } catch (error) {
-      onNotify?.(ui(ui("Failed to delete")), error instanceof Error ? error.message : undefined, "warning");
+      onNotify?.(ui("Failed to delete"), error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setBusyId(null);
     }
@@ -190,9 +190,9 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       await dismissDecidedActionProposals(token);
       setProposals((current) => current.filter(
         (item) => item.status === "pending_confirmation" || item.status === "needs_clarification"));
-      onNotify?.(ui(ui("Removed from list")), ui(ui("Calendar and reminders remain unchanged")), "success");
+      onNotify?.(ui("Removed from list"), ui("Calendar and reminders remain unchanged"), "success");
     } catch (error) {
-      onNotify?.(ui(ui("Failed to delete")), error instanceof Error ? error.message : undefined, "warning");
+      onNotify?.(ui("Failed to delete"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
   const pendingCount = useMemo(
@@ -236,7 +236,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
           "warning",
         );
       } else {
-        onNotify?.(success, proposal.title, "success");
+        onNotify?.(success, proposal.display_title || proposal.title, "success");
       }
     } catch (error) {
       onNotify?.(
@@ -273,7 +273,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-bold leading-snug text-[#1E2230] dark:text-[#F5F6FA]">
-                        {proposal.title}
+                        {proposal.display_title || proposal.title}
                       </h3>
                       <span
                         className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
@@ -285,7 +285,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         }`}
                       >
                         {proposal.status === "confirmed"
-                    ? ui("Đã duyệt")
+                    ? ui("Approved")
                     : proposal.status === "rejected"
                       ? ui("Rejected")
                       : proposal.status === "stale"
@@ -584,7 +584,7 @@ const ProposalEditModal: React.FC<{
         }}
       >
         <div className="mb-5 flex items-center justify-between"><div><h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chỉnh sửa {proposal.action_type === "appointment" ? "sự kiện" : ui("to-do")}</h3><p className="mt-1 text-xs text-[#74798C]">{ui("Check details before adding to calendar.")}</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-[#74798C] hover:bg-[#F1F3F4] dark:hover:bg-[#2A2E3D]"><X className="h-5 w-5" /></button></div>
-        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui(ui("Tiêu đề"))}<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
+        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Title")}<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Start")}<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("End")}<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label></div>
         <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Location or meeting link")}<input value={location} onChange={(event) => setLocation(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
         <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Description")}<textarea value={details} onChange={(event) => setDetails(event.target.value)} rows={4} className="mt-1.5 w-full resize-none rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>

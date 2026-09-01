@@ -138,7 +138,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
 
       setMessages((prev) => [...prev, botMessage]);
       if (result.is_fallback) {
-        onNotify(ui(ui("Agent used fallback translation. Please check the results.")), 'info');
+        onNotify(ui("Agent used fallback translation. Please check the results."), 'info');
       }
     } catch (error) {
       setMessages((prev) => prev.filter((message) => message.id !== userMessage.id));
@@ -179,10 +179,10 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
         userEmail: 'admin.tester@linguaflow.ai',
         reason: userReason || 'Đề xuất từ phiên thử nghiệm trực tiếp trên giao diện Chat.',
       });
-      onNotify(ui(ui("Edit proposal sent to Admin Center!")), 'success');
+      onNotify(ui("Edit proposal sent to Admin Center!"), 'success');
       setSuggestingMessage(null);
     } catch {
-      onNotify(ui(ui("Could not save proposal to server.")), 'error');
+      onNotify(ui("Could not save proposal to server."), 'error');
     }
   };
 

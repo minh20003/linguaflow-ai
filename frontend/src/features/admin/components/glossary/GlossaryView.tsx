@@ -122,7 +122,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
       setModalOpen(false);
       setEditing(null);
     } catch {
-      onNotify(ui(ui("Unable to save term. Please check data or duplicates.")), 'error');
+      onNotify(ui("Unable to save term. Please check data or duplicates."), 'error');
     } finally {
       setBusy(false);
     }
@@ -138,7 +138,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
         onNotify(`Đã khôi phục “${term.sourceTerm}”`, 'success');
       }
     } catch {
-      onNotify(ui(ui("Unable to change term status.")), 'error');
+      onNotify(ui("Unable to change term status."), 'error');
     }
   };
 
@@ -151,7 +151,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
       onNotify(`Đã xóa vĩnh viễn “${term?.sourceTerm ?? ''}”`, 'info');
       setConfirmingDelete(null);
     } catch {
-      onNotify(ui(ui("Unable to permanently delete term.")), 'error');
+      onNotify(ui("Unable to permanently delete term."), 'error');
     } finally {
       setBusy(false);
     }
@@ -239,7 +239,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
           </div>
           <div className="hidden overflow-x-auto lg:block">
             <table className="w-full text-left text-xs">
-              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">{ui("Source")}</th><th className="px-5 py-3">{ui("Translation")}</th><th className="px-5 py-3">{ui("Pair")}</th><th className="px-5 py-3">{ui(ui("Phạm vi"))}</th><th className="px-5 py-3">{ui("Status")}</th><th className="px-5 py-3">{ui("Update")}</th><th className="px-5 py-3 text-right">{ui("Actions")}</th></tr></thead>
+              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">{ui("Source")}</th><th className="px-5 py-3">{ui("Translation")}</th><th className="px-5 py-3">{ui("Pair")}</th><th className="px-5 py-3">{ui("Scope")}</th><th className="px-5 py-3">{ui("Status")}</th><th className="px-5 py-3">{ui("Update")}</th><th className="px-5 py-3 text-right">{ui("Actions")}</th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredTerms.map((term) => {
                   const retired = term.status === 'retired';
@@ -281,7 +281,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
               <Field label={ui("Source term")}><input required maxLength={200} value={draft.sourceTerm} onChange={(event) => changeDraft('sourceTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900" /></Field>
               <Field label={ui("Target term")}><input required maxLength={200} value={draft.targetTerm} disabled={draft.keepVerbatim} onChange={(event) => changeDraft('targetTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100" /></Field>
               <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
-                <div className="mb-3"><h4 className="font-semibold text-gray-800">{ui(ui("Phạm vi áp dụng"))}</h4><p className="mt-1 text-gray-500">{ui("Select the domain and user group where this term is prioritized.")}</p></div>
+                <div className="mb-3"><h4 className="font-semibold text-gray-800">{ui("Applies to")}</h4><p className="mt-1 text-gray-500">{ui("Select the domain and user group where this term is prioritized.")}</p></div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <ScopeSelect label="Domain" value={draft.domain} options={DOMAIN_OPTIONS} onChange={(value) => changeDraft('domain', value)} />
                   <ScopeSelect label="Audience" value={draft.audience} options={AUDIENCE_OPTIONS} onChange={(value) => changeDraft('audience', value)} />

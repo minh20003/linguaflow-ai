@@ -392,10 +392,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           <table className="w-full text-left">
             <thead className="bg-gray-50 text-[11px] text-gray-400 uppercase font-bold tracking-wider border-b border-gray-100">
               <tr>
-                <th className="px-6 py-3">{ui(ui("Thời gian"))}</th>
+                <th className="px-6 py-3">{ui("Time")}</th>
                 <th className="px-6 py-3">{ui("Pair")}</th>
                 <th className="px-6 py-3">Model</th>
-                <th className="px-6 py-3">{ui(ui("Nội dung"))}</th>
+                <th className="px-6 py-3">{ui("Content")}</th>
                 <th className="px-6 py-3 text-right">{ui("Latency")}</th>
                 <th className="px-6 py-3 text-right">Tokens</th>
                 <th className="px-6 py-3 text-center">{ui("Details")}</th>

@@ -268,7 +268,7 @@ export const AppShell: React.FC = () => {
   }, []);
 
   const handleCallMediaError = useCallback((message: string) => {
-    addToast(ui(ui("Calls")), message, "warning");
+    addToast(ui("Calls"), message, "warning");
   }, [addToast, ui]);
 
   const handleLogout = useCallback(async () => {
@@ -317,14 +317,14 @@ export const AppShell: React.FC = () => {
   const initiateCall = async (type: "voice" | "video") => {
     if (!token.current || !selectedConversation) return;
     if (selectedConversation.type !== "direct") {
-      addToast(ui(ui("Calling unavailable")), ui(ui("Currently only 1-on-1 calls are supported.")), "warning");
+      addToast(ui("Calling unavailable"), ui("Currently only 1-on-1 calls are supported."), "warning");
       return;
     }
     try {
       const call = await startRtcCall(token.current, selectedConversation.id, type);
       setActiveCall(toActiveCall(call, "outgoing"));
     } catch (error) {
-      addToast(ui(ui("Unable to call")), error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Unable to call"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -334,7 +334,7 @@ export const AppShell: React.FC = () => {
       const call = await acceptCall(token.current, activeCall.id);
       setActiveCall(toActiveCall(call, "active"));
     } catch (error) {
-      addToast(ui(ui("Unable to accept call")), error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Unable to accept call"), error instanceof Error ? error.message : undefined, "warning");
       setActiveCall(null);
     }
   };
@@ -344,7 +344,7 @@ export const AppShell: React.FC = () => {
     try {
       await rejectCall(token.current, activeCall.id);
     } catch (error) {
-      addToast(ui(ui("Unable to decline call")), error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Unable to decline call"), error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setActiveCall(null);
     }
@@ -355,7 +355,7 @@ export const AppShell: React.FC = () => {
     try {
       await endCall(token.current, activeCall.id);
     } catch (error) {
-      addToast(ui(ui("Unable to end call")), error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Unable to end call"), error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setActiveCall(null);
     }
@@ -568,7 +568,7 @@ export const AppShell: React.FC = () => {
           const proposal = payload.proposal as ApiActionProposal | undefined;
           if (proposal) {
             setIncomingProposals((current) => [proposal, ...current].slice(0, 50));
-            addToast(ui(ui("Assistant suggested a task")), proposal.title, "info");
+            addToast(ui("Assistant suggested a task"), proposal.title, "info");
           }
         }
         // A reminder came due. Kept as a toast rather than anything modal: it
@@ -684,7 +684,7 @@ export const AppShell: React.FC = () => {
             void joinCall(token.current, call.call_id)
               .then((join) => setActiveCall(toActiveCall(join, "active")))
               .catch((error: unknown) => {
-                addToast(ui(ui("Unable to connect call")), error instanceof Error ? error.message : undefined, "warning");
+                addToast(ui("Unable to connect call"), error instanceof Error ? error.message : undefined, "warning");
                 setActiveCall(null);
               });
           }
@@ -702,7 +702,7 @@ export const AppShell: React.FC = () => {
           }
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
-        if (eventType === "mention") addToast(ui(ui("You were mentioned")), ui(ui("You have a new message mentioning you.")), "info");
+        if (eventType === "mention") addToast(ui("You were mentioned"), ui("You have a new message mentioning you."), "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
           if (eventType === "message_deleted") cancelVoiceStatusRefresh(messageId);
@@ -1304,7 +1304,7 @@ export const AppShell: React.FC = () => {
           }
           setMessagesMap((previous) => ({ ...previous, [assistant.id]: messages }));
           setAttachmentsMap((previous) => ({ ...previous, [assistant.id]: attachments.map(toMessageAttachment) }));
-        }).catch((error: unknown) => addToast(ui(ui("Unable to open Assistant")), error instanceof Error ? error.message : undefined, "warning"));
+        }).catch((error: unknown) => addToast(ui("Unable to open Assistant"), error instanceof Error ? error.message : undefined, "warning"));
       }} assistantLastMessage={assistantConversation?.lastMessage || ui("Hello! How can I help you?")} assistantLastMessageTime={assistantConversation?.lastMessageTime || ui("Now")} language={settings.interfaceLanguage} />}
       {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.interfaceLanguage} />}
       {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.interfaceLanguage} />}

@@ -73,7 +73,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
       onNotify(`Đã duyệt và áp dụng thuật ngữ "${approvingItem.suggestedTranslation.slice(0, 30)}..."`, 'success');
       setApprovingItem(null);
     } catch {
-      onNotify(ui(ui("Failed to approve suggestion. Please try again.")), 'error');
+      onNotify(ui("Failed to approve suggestion. Please try again."), 'error');
     }
   };
 
@@ -89,7 +89,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
       onNotify(`Đã từ chối đề xuất của ${rejectingItem.user}`, 'info');
       setRejectingItem(null);
     } catch {
-      onNotify(ui(ui("Failed to reject suggestion. Please try again.")), 'error');
+      onNotify(ui("Failed to reject suggestion. Please try again."), 'error');
     }
   };
 
@@ -147,7 +147,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui(ui("Đã phê duyệt"))}</span>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui("Confirmed")}</span>
             <div className="p-1 rounded bg-green-50 text-green-700">
               <CheckCircle className="w-4 h-4" />
             </div>

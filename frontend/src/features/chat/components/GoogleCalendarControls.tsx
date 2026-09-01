@@ -87,7 +87,7 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
       onSynced?.();
       await refresh();
       if (result.last_sync_error) {
-        onNotify?.(ui(ui("Sync incomplete")), result.last_sync_error, "warning");
+        onNotify?.(ui("Sync incomplete"), result.last_sync_error, "warning");
       } else {
         onNotify?.(
           ui("Google Calendar synced"),
@@ -166,7 +166,7 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
         className="inline-flex items-center gap-1.5 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-400/30 dark:bg-sky-500/10 dark:text-sky-300"
       >
         <RefreshCw className={`h-4 w-4 ${isBusy ? "animate-spin" : ""}`} />
-        {isBusy ? "Đang đồng bộ" : ui("Sync now")}
+        {isBusy ? ui("Syncing") : ui("Sync now")}
       </button>
       <button
         type="button"

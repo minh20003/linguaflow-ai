@@ -1,5 +1,6 @@
 """API routes for the application."""
 
+import asyncio
 import logging
 import math
 import mimetypes
@@ -46,6 +47,7 @@ from src.core.security import (
 from src.database import get_db
 from src.database.models import (
     AGENT_CONSENT_POLICY_VERSION,
+    ActionProposal,
     Attachment,
     BlockedUser,
     CalendarEvent,
@@ -194,7 +196,7 @@ from src.services.connection_manager import ConnectionManager
 from src.services.conversation_intelligence import ConversationIntelligenceService
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
-from src.services.display_language import in_interface_language
+from src.services.display_language import render, render_many
 from src.services.email import (
     EmailDeliveryError,
     send_password_reset_email,
@@ -1232,24 +1234,25 @@ async def list_calendar_events(
         starts_before=starts_before,
         include_cancelled=include_cancelled,
     )
-    # Same reason as the task inbox: the calendar screen is chrome, and a title
-    # stored in the translation language would be the only thing on it reading
-    # in another language.
-    rendered = []
-    for event in events:
-        row = CalendarEventResponse.model_validate(event)
-        rendered.append(
-            row.model_copy(
-                update={
-                    "title": await in_interface_language(
-                        row.title,
-                        stored_language=current_user.preferred_language,
-                        interface_language=current_user.interface_language,
-                    )
-                }
-            )
-        )
-    return rendered
+    # Same reason as the task inbox, with one extra condition: only an event the
+    # assistant created is known to be stored in the owner's translation
+    # language. A manually typed title holds whatever they typed and a synced
+    # one holds whatever Google had, so translating those would be answering a
+    # question nobody asked -- and feeding an English title to the translator as
+    # Vietnamese returns it mangled.
+    rows = [CalendarEventResponse.model_validate(event) for event in events]
+    assistant_titles = [
+        row.title if row.source == "assistant" else None for row in rows
+    ]
+    rendered = await render_many(
+        assistant_titles,
+        stored_language=current_user.preferred_language,
+        interface_language=current_user.interface_language,
+    )
+    return [
+        row.model_copy(update={"display_title": title})
+        for row, title in zip(rows, rendered, strict=True)
+    ]
 
 
 @router.post(
@@ -2743,6 +2746,31 @@ async def detect_message_self_commitments(
         ) from exc
 
 
+
+async def _proposal_for_reader(proposal: "ActionProposal", reader: User) -> ActionProposalResponse:
+    """One proposal, with the wording the reader's screens should show.
+
+    Every endpoint that answers with a single proposal goes through here. They
+    used to return the stored row while the list endpoint returned a rendered
+    one, so approving from the inbox pushed the raw row back into the list and
+    the title visibly changed language mid-flow.
+    """
+    row = ActionProposalResponse.model_validate(proposal)
+    title, details = await asyncio.gather(
+        render(
+            row.title,
+            stored_language=reader.preferred_language,
+            interface_language=reader.interface_language,
+        ),
+        render(
+            row.details,
+            stored_language=reader.preferred_language,
+            interface_language=reader.interface_language,
+        ),
+    )
+    return row.model_copy(update={"display_title": title, "display_details": details})
+
+
 @router.get(
     "/me/action-proposals",
     response_model=list[ActionProposalResponse],
@@ -2761,28 +2789,30 @@ async def list_conversation_proposals(
         # though the title was stored in the owner's translation language --
         # which is the right language for the card in the chat thread, beside
         # the message it came from, and the wrong one for a screen whose labels
-        # are all in the other setting. Does nothing when the two agree, which
-        # is the usual case.
-        rendered = []
-        for proposal in proposals:
-            row = ActionProposalResponse.model_validate(proposal)
-            rendered.append(
-                row.model_copy(
-                    update={
-                        "title": await in_interface_language(
-                            row.title,
-                            stored_language=current_user.preferred_language,
-                            interface_language=current_user.interface_language,
-                        ),
-                        "details": await in_interface_language(
-                            row.details,
-                            stored_language=current_user.preferred_language,
-                            interface_language=current_user.interface_language,
-                        ),
-                    }
-                )
+        # are all in the other setting.
+        #
+        # Into `display_*`, never over `title`: the client sends `title` back on
+        # approval, so rewriting it here persisted the machine translation over
+        # what the person said.
+        rows = [ActionProposalResponse.model_validate(p) for p in proposals]
+        titles, details = await asyncio.gather(
+            render_many(
+                [row.title for row in rows],
+                stored_language=current_user.preferred_language,
+                interface_language=current_user.interface_language,
+            ),
+            render_many(
+                [row.details for row in rows],
+                stored_language=current_user.preferred_language,
+                interface_language=current_user.interface_language,
+            ),
+        )
+        return [
+            row.model_copy(
+                update={"display_title": title, "display_details": detail}
             )
-        return rendered
+            for row, title, detail in zip(rows, titles, details, strict=True)
+        ]
     except ConversationMembershipError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -2823,7 +2853,7 @@ async def dismiss_action_proposal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This action proposal belongs to someone else",
         ) from exc
-    return ActionProposalResponse.model_validate(dismissed)
+    return await _proposal_for_reader(dismissed, current_user)
 
 
 @router.post("/me/action-proposals/dismiss-decided")
@@ -2874,7 +2904,7 @@ async def confirm_action_proposal(
         )
         if scheduled:
             schedule_calendar_push(event_id=scheduled, user_id=current_user.id)
-        return ActionProposalResponse.model_validate(confirmed)
+        return await _proposal_for_reader(confirmed, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2905,7 +2935,7 @@ async def reject_action_proposal(
     service = ActionProposalService(db)
     try:
         rejected = await service.reject_proposal(proposal_id=proposal_id, user_id=current_user.id)
-        return ActionProposalResponse.model_validate(rejected)
+        return await _proposal_for_reader(rejected, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2946,7 +2976,7 @@ async def clarify_action_proposal(
     service = ActionProposalService(db)
     try:
         proposal = await service.clarify(proposal_id, current_user.id, payload.answer, payload.timezone)
-        return ActionProposalResponse.model_validate(proposal)
+        return await _proposal_for_reader(proposal, current_user)
     except ActionProposalNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action proposal was not found") from exc
     except ActionProposalOwnershipError as exc:

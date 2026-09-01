@@ -145,7 +145,10 @@ class AssistantAgentService:
                 "user_id": user_id,
                 "request_text": request_text,
                 "sent_at": sent_at.isoformat(),
-                "reply_language": reply_language or "vi",
+                # English, not Vietnamese, when the account has no language on it --
+                # the same last resort `fixed_reply` documents. "vi" here
+                # made the stated invariant false.
+                "reply_language": reply_language or "en",
                 "telemetry": {"source_message_id": source_message_id},
             },
             # The thread id and the trace callback travel in the same config.

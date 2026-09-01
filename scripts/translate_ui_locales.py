@@ -17,8 +17,9 @@ else derives from the **Vietnamese**, not the English, so a generated language i
 one translation from the source rather than two.
 
 Resumable, because it will be interrupted. A row still equal to its English
-source counts as never translated and is retried on the next run, so the script
-can be run again until `--check` reports nothing left.
+source counts as never translated and is retried on the next run. See
+`outstanding` for what that costs: `--check` never reaches zero, because a few
+dozen words are simply the same in both languages.
 
 Usage:
     python scripts/translate_ui_locales.py --check
@@ -152,9 +153,18 @@ async def translate(chunk: list[str], language: str) -> dict[str, str]:
 
 
 def outstanding(table: dict[str, dict[str, str]], language: str) -> list[str]:
+    """Keys this language still needs.
+
+    A row equal to its English source counts as never translated, which is what
+    makes the script resumable after the provider drops a batch. The cost is
+    that it cannot tell that apart from a word which is simply the same in both
+    languages -- "Original" in French, "Color" in Spanish, "Actions" -- so a few
+    dozen rows are re-requested on every run and never settle. `--check` will
+    therefore never print zero; a couple of dozen outstanding is the floor, not
+    a gap.
+    """
     english = table.get("en", {})
     rows = table.get(language, {})
-    # A row equal to its English source is a translation that never happened.
     return [key for key in english if rows.get(key) in (None, english[key])]
 
 
