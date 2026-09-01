@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from src.config import get_settings
 from src.core.deps import get_user_by_token
+from src.core.rate_limit import WebSocketRateLimitError, check_websocket_message_rate
 from src.database import get_db
 from src.schemas.chat import (
     AttachmentResponse,
@@ -22,17 +23,32 @@ from src.schemas.chat import (
     MessageReceivedEvent,
     RealtimeMessage,
     SendMessageEvent,
+    SendVoiceMessageEvent,
     TypingEvent,
     TypingNotificationEvent,
 )
+from src.services.agent_consent import has_consent
+from src.services.assistant_mentions import schedule_assistant_mention
+from src.services.blocking import DirectMessagingBlockedError
 from src.services.chat import (
     ChatService,
     ClientMessageIdConflictError,
     ConversationMembershipError,
     ConversationNotFoundError,
+    VoiceAttachmentClaimedError,
+    VoiceAttachmentConversationError,
+    VoiceAttachmentNotAudioError,
+    VoiceAttachmentNotFoundError,
+    VoiceAttachmentOwnershipError,
+    VoiceMessageIdConflictError,
+    message_mentions,
 )
 from src.services.connection_manager import ConnectionManager
+from src.services.message_memory import schedule_message_embedding
+from src.services.message_postprocessing import schedule_text_dependent_work
+from src.services.profile_inference import schedule_profile_inference
 from src.services.translation import schedule_translations
+from src.services.voice_transcription import schedule_voice_transcription
 
 AUTH_TIMEOUT_SECONDS = 10
 
@@ -139,6 +155,138 @@ async def _relay_typing(
     )
 
 
+async def _handle_voice_message(
+    *,
+    websocket: WebSocket,
+    db: AsyncSession,
+    manager: ConnectionManager,
+    user_id: str,
+    raw_event: dict,
+) -> None:
+    """Persist/fan out pending voice, then start only detached STT work."""
+    try:
+        event = SendVoiceMessageEvent.model_validate(raw_event)
+    except ValidationError:
+        await _send_error(
+            websocket,
+            "invalid_event",
+            "The send_voice_message event is invalid",
+        )
+        return
+
+    service = ChatService(db)
+    try:
+        result = await service.send_voice_message(
+            sender_id=user_id,
+            conversation_id=event.conversation_id,
+            client_message_id=event.client_message_id,
+            attachment_id=event.attachment_id,
+            reply_to_message_id=event.reply_to_message_id,
+        )
+    except ConversationNotFoundError:
+        await db.rollback()
+        await _send_error(websocket, "conversation_not_found", "Conversation was not found")
+        return
+    except ConversationMembershipError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "not_conversation_member",
+            "You are not a member of this conversation",
+        )
+        return
+    except DirectMessagingBlockedError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "direct_messaging_blocked",
+            "Direct messaging is unavailable",
+        )
+        return
+    except VoiceMessageIdConflictError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "client_message_id_conflict",
+            "client_message_id was already used for a different voice request",
+        )
+        return
+    except VoiceAttachmentNotFoundError:
+        await db.rollback()
+        await _send_error(websocket, "voice_attachment_not_found", "Voice attachment was not found")
+        return
+    except VoiceAttachmentConversationError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_wrong_conversation",
+            "Voice attachment belongs to a different conversation",
+        )
+        return
+    except VoiceAttachmentOwnershipError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_not_owned",
+            "Voice attachment belongs to a different uploader",
+        )
+        return
+    except VoiceAttachmentClaimedError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_already_claimed",
+            "Voice attachment is already claimed",
+        )
+        return
+    except VoiceAttachmentNotAudioError:
+        await db.rollback()
+        await _send_error(
+            websocket,
+            "voice_attachment_not_audio",
+            "Voice attachment is not supported audio",
+        )
+        return
+    except SQLAlchemyError:
+        await db.rollback()
+        await _send_error(websocket, "internal_error", "Voice message could not be persisted")
+        return
+
+    realtime_message = RealtimeMessage.model_validate(result.message)
+    attachments = await service.get_attachments_by_message(
+        message_ids=[result.message.id]
+    )
+    attachment = attachments.get(result.message.id)
+    if attachment is None:
+        # The atomic service contract says this cannot happen. Fail closed if a
+        # future persistence change violates it: never fan out an unplayable
+        # voice message.
+        await db.rollback()
+        await _send_error(websocket, "internal_error", "Voice message could not be delivered")
+        return
+    realtime_message.attachment = AttachmentResponse.model_validate(attachment)
+
+    await manager.send_to_user(
+        user_id,
+        MessageCreatedEvent(
+            client_message_id=event.client_message_id,
+            message=realtime_message,
+        ).model_dump(mode="json"),
+    )
+    if not result.created:
+        return
+
+    await manager.send_to_users(
+        result.recipient_ids,
+        MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
+    )
+    schedule_voice_transcription(
+        message_id=result.message.id,
+        conversation_id=result.message.conversation_id,
+        publisher=manager,
+    )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -240,8 +388,29 @@ async def websocket_endpoint(
                 await _send_error(websocket, "invalid_event", "Unsupported event type")
                 continue
 
+            if raw_event.get("type") in {"send_message", "send_voice_message"}:
+                try:
+                    check_websocket_message_rate(user_id)
+                except WebSocketRateLimitError as exc:
+                    await _send_error(
+                        websocket,
+                        "rate_limited",
+                        f"Too many messages. Retry after {exc.retry_after} seconds.",
+                    )
+                    continue
+
             if raw_event.get("type") == "typing":
                 await _relay_typing(
+                    websocket=websocket,
+                    db=db,
+                    manager=manager,
+                    user_id=user_id,
+                    raw_event=raw_event,
+                )
+                continue
+
+            if raw_event.get("type") == "send_voice_message":
+                await _handle_voice_message(
                     websocket=websocket,
                     db=db,
                     manager=manager,
@@ -317,9 +486,61 @@ async def websocket_endpoint(
                     result.recipient_ids,
                     MessageReceivedEvent(message=realtime_message).model_dump(mode="json"),
                 )
-                # Fire and forget. Guarded by `created` so an idempotent resend
-                # does not translate the same message twice.
-                schedule_translations(message=result.message, publisher=manager)
+                mentioned_user_ids = tuple(
+                    mention["user_id"]
+                    for mention in realtime_message.mentions
+                    if mention.get("type") == "user" and mention.get("user_id")
+                )
+                if mentioned_user_ids:
+                    await manager.send_to_users(
+                        mentioned_user_ids,
+                        MentionNotificationEvent(
+                            message_id=result.message.id,
+                            conversation_id=result.message.conversation_id,
+                            sender_id=user_id,
+                        ).model_dump(mode="json"),
+                    )
+                # Same predicate `ChatService` used when it decided to keep this
+                # message private. The two must agree: a message hidden from the
+                # conversation but not answered would simply disappear.
+                if result.for_assistant and await has_consent(
+                    db, user_id, "read_conversations"
+                ):
+                    # The reply itself reads recent conversation content and
+                    # sends it to an LLM, so it needs the same permission the
+                    # extraction path does. Without it the tag is simply an
+                    # ordinary message: no reply, no proposals, and nothing
+                    # about the conversation leaves the database.
+                    assistant_result = await service.create_assistant_reply(
+                        trigger_message=result.message,
+                    )
+                    assistant_message = RealtimeMessage.model_validate(assistant_result.message)
+                    assistant_message.mentions = message_mentions(assistant_result.message)
+                    assistant_message.assistant_generated = True
+                    await manager.send_to_users(
+                        assistant_result.recipient_ids,
+                        MessageReceivedEvent(message=assistant_message).model_dump(mode="json"),
+                    )
+                    schedule_assistant_mention(
+                        message_id=result.message.id,
+                        conversation_id=result.message.conversation_id,
+                        requester_id=user_id,
+                        request_text=result.message.original_text,
+                        publisher=manager,
+                    )
+                # Guarded by `created`, preserving the existing exactly-once
+                # text-send seam while sharing the same post-text work with a
+                # durably completed voice transcript.
+                schedule_text_dependent_work(
+                    message=result.message,
+                    publisher=manager,
+                    # Pass the module aliases so existing socket tests and
+                    # integrations that replace these seams keep working.
+                    translation_scheduler=schedule_translations,
+                    commitment_scheduler=schedule_commitment_detection,
+                    profile_scheduler=schedule_profile_inference,
+                    embedding_scheduler=schedule_message_embedding,
+                )
     except WebSocketDisconnect:
         return
     finally:

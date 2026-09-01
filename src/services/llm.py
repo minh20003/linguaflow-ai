@@ -6,14 +6,22 @@ throttles mid-demo has to be swapped quickly.
 """
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.config import Settings, get_settings
+from src.core.circuit_breaker import CircuitBreaker, llm_breaker
 
-# Model used when LLM_MODEL is left empty
+# Model used when LLM_MODEL is left empty.
+#
+# These go stale without warning. `llama-3.3-70b-versatile` sat here until Groq
+# withdrew it, and because a failed LLM call is a fallback by design (NFR-02)
+# the symptom was not an error but every message quietly arriving untranslated.
+# Verified against each provider's own model listing on 28/08; when a whole run
+# reports `is_fallback`, check these names before reading any other code.
 DEFAULT_MODELS: dict[str, str] = {
-    "groq": "llama-3.3-70b-versatile",
+    "groq": "openai/gpt-oss-120b",
     "deepseek": "deepseek-chat",
     "gemini": "gemini-2.5-flash",
     "openai": "gpt-4o-mini",
@@ -41,6 +49,20 @@ class LLMConfigError(RuntimeError):
 # key is deliberately not part of the key: it would put the secret in a
 # module-level structure that any traceback dumping locals would render.
 _CLIENTS: dict[tuple[str, str, float, int, int], BaseChatModel] = {}
+
+
+class _CircuitProtectedChatModel:
+    """Transparent model proxy that guards the provider's actual async call."""
+
+    def __init__(self, model: BaseChatModel, breaker: CircuitBreaker) -> None:
+        self._model = model
+        self._breaker = breaker
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._breaker.call(lambda: self._model.ainvoke(*args, **kwargs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
 
 
 def extract_text(response: object) -> str:
@@ -229,7 +251,7 @@ def get_llm(
     if provider == settings.llm_provider and settings.llm_model:
         model = settings.llm_model
 
-    return _build_llm(
+    model_client = _build_llm(
         provider,
         model,
         settings.llm_temperature,
@@ -237,3 +259,70 @@ def get_llm(
         settings.llm_max_tokens,
         api_key,
     )
+    return cast(BaseChatModel, _CircuitProtectedChatModel(model_client, llm_breaker))
+
+
+def get_assistant_llm(settings: Settings | None = None) -> BaseChatModel:
+    """The chat model the Assistant Agent generates with (ADR-39).
+
+    A thin wrapper over `get_llm`, and worth having: resolving the pair and
+    unpacking it at every call site is how one of them ends up passing only the
+    provider, which then silently runs that provider's default model while the
+    evaluation report claims otherwise.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_llm()
+    # Its own token ceiling, not the translator's. See the comment on
+    # `assistant_llm_max_tokens`.
+    return get_llm(
+        settings=settings.model_copy(
+            update={"llm_max_tokens": settings.assistant_llm_max_tokens}
+        ),
+        provider=provider,
+        model=model,
+    )
+
+
+def get_intelligence_llm(
+    settings: Settings | None = None, provider: str | None = None
+) -> BaseChatModel:
+    """The model the conversation-intelligence extractors run on.
+
+    Same provider as the translator -- these run on the message path and were
+    written against it -- but never its token ceiling. `LLM_MAX_TOKENS` is sized
+    for one translated chat message; these prompts carry a JSON schema and must
+    return structured JSON, so reaching the cap does not produce a shorter
+    answer, it produces a truncated one that will not parse. The repair attempt
+    then fails on the same cap, `detect_self_commitments` raises
+    `intelligence_invalid_output`, and the detached task swallows it -- which is
+    exactly how a conversation could go on producing no proposals at all with
+    nothing in the logs to say why.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    return get_llm(
+        settings=settings.model_copy(
+            update={"llm_max_tokens": settings.intelligence_llm_max_tokens}
+        ),
+        provider=provider,
+    )
+
+
+def get_assistant_judge_llm(settings: Settings | None = None) -> BaseChatModel:
+    """The model that scores the Assistant Agent's output in evaluation runs.
+
+    Never used on a request path — a judge is an evaluation instrument, and one
+    that ran in production would double the cost of every reply to produce a
+    number nobody reads.
+
+    Raises:
+        LLMConfigError: unknown provider, or its API key is missing.
+    """
+    settings = settings or get_settings()
+    provider, model = settings.resolve_assistant_judge()
+    return get_llm(settings=settings, provider=provider, model=model)

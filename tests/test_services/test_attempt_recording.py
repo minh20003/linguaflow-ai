@@ -157,14 +157,10 @@ async def test_a_raising_graph_is_recorded_as_an_error(
 
 
 @pytest.mark.asyncio
-async def test_a_passthrough_is_recorded(
+async def test_a_passthrough_is_not_recorded_as_a_translation(
     test_db, test_user, test_user_two, conversation_factory
 ):
-    """A reader who already speaks the source language is a real outcome.
-
-    It produces no `translation_results` row, so counting only that table would
-    treat this as a translation that never happened.
-    """
+    """A same-language reader gets the original without a translation log row."""
     message = await setup_message(test_db, test_user, test_user_two, conversation_factory)
 
     await run_translations(
@@ -182,10 +178,7 @@ async def test_a_passthrough_is_recorded(
     )
 
     attempts = await attempts_for(test_db, message.id)
-    english = next(a for a in attempts if a.target_language == "en")
-
-    assert english.outcome == "passthrough"
-    assert english.source_language_detected == "en"
+    assert all(attempt.target_language != "en" for attempt in attempts)
 
 
 @pytest.mark.asyncio

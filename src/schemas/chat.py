@@ -16,6 +16,8 @@ from pydantic import (
 from src.schemas.auth import fallback_profile_names
 
 ConversationType = Literal["direct", "group"]
+MessageType = Literal["text", "voice"]
+TranscriptionStatus = Literal["pending", "completed", "failed"]
 
 
 def _utc_isoformat(value: datetime) -> str:
@@ -33,6 +35,34 @@ def _utc_isoformat(value: datetime) -> str:
 
 # Every timestamp crossing the API boundary, so no caller has to guess a zone.
 UtcDatetime = Annotated[datetime, PlainSerializer(_utc_isoformat, return_type=str)]
+
+
+def validate_message_lifecycle(
+    *,
+    message_type: MessageType,
+    transcription_status: TranscriptionStatus | None,
+    original_text: str,
+    allow_redacted_completed_text: bool = False,
+) -> None:
+    """Validate the durable text/voice state machine shared by chat schemas.
+
+    REST redacts the original text of deleted messages. That wire-level privacy
+    rule is the sole exception to requiring completed voice text in a response;
+    the database still retains and constrains the canonical transcript.
+    """
+    if message_type == "text":
+        if transcription_status is not None:
+            raise ValueError("text messages cannot have a transcription status")
+        return
+
+    if transcription_status is None:
+        raise ValueError("voice messages require a transcription status")
+    if transcription_status == "completed":
+        if not original_text.strip() and not allow_redacted_completed_text:
+            raise ValueError("completed voice messages require a full transcript")
+        return
+    if original_text != "":
+        raise ValueError("pending and failed voice messages must keep original_text empty")
 
 
 class ConversationCreateRequest(BaseModel):
@@ -70,9 +100,7 @@ class ConversationMemberSummary(BaseModel):
     @model_validator(mode="after")
     def fill_legacy_profile_names(self) -> "ConversationMemberSummary":
         """Apply the same fallback as UserDTO, so one member never renders blank."""
-        self.username, self.display_name = fallback_profile_names(
-            self.email, self.username, self.display_name
-        )
+        self.username, self.display_name = fallback_profile_names(self.email, self.username, self.display_name)
         return self
 
 
@@ -94,6 +122,11 @@ class ConversationResponse(BaseModel):
     # (docs/CONTRACT.md §3.5). Null until the conversation has a message.
     last_message: str | None = None
     last_message_at: UtcDatetime | None = None
+    # Lifecycle metadata lets the client distinguish an intentionally blank
+    # pending/failed voice preview from a conversation with no messages. The
+    # localized "Voice message" label remains presentation-only client copy.
+    last_message_type: MessageType | None = None
+    last_message_transcription_status: TranscriptionStatus | None = None
     # Members holding a live socket right now, read from the in-process
     # connection registry rather than from storage (docs/CONTRACT.md §3.5).
     online_member_ids: list[str] = []
@@ -166,7 +199,16 @@ class MessageResponse(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
+    message_type: MessageType = "text"
+    transcription_status: TranscriptionStatus | None = None
     source_language: str
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
+    # Only ever `private` on a row the caller is entitled to, because the query
+    # that produced it already filtered by visibility. It is here so the client
+    # can label the message as visible to nobody else, not so the client can
+    # decide whether to show it — that decision was made in SQL (ADR-31).
+    visibility: str = "public"
     # Carrying translations here is what makes a socket that dropped mid
     # translation a non-event: the client recovers them on reconnect rather
     # than waiting for a `translation_completed` that was already sent.
@@ -178,6 +220,111 @@ class MessageResponse(BaseModel):
     # The file this message carries, and the message it answers (§3.7).
     attachment: AttachmentResponse | None = None
     reply_to_message_id: str | None = None
+    forwarded_from_message_id: str | None = None
+    is_saved: bool = False
+    reactions: list["MessageReactionSummary"] = []
+
+    @model_validator(mode="after")
+    def lifecycle_must_be_consistent(self) -> "MessageResponse":
+        validate_message_lifecycle(
+            message_type=self.message_type,
+            transcription_status=self.transcription_status,
+            original_text=self.original_text,
+            allow_redacted_completed_text=self.deleted_at is not None,
+        )
+        return self
+
+
+class MessageHistoryResponse(BaseModel):
+    """One deterministic page of conversation history."""
+
+    items: list[MessageResponse]
+    has_more: bool = False
+    next_cursor: str | None = None
+
+
+class SavedMessageStateResponse(BaseModel):
+    message_id: str
+    is_saved: bool
+
+
+class SavedMessagesResponse(BaseModel):
+    items: list[MessageResponse]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class MessageReactionSummary(BaseModel):
+    emoji: str
+    count: int
+    user_ids: list[str]
+
+
+class ReactionUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    emoji: str = Field(min_length=1, max_length=32)
+
+    @field_validator("emoji")
+    @classmethod
+    def emoji_must_not_be_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("emoji must not be blank")
+        return cleaned
+
+
+class ReactionStateResponse(BaseModel):
+    message_id: str
+    reactions: list[MessageReactionSummary]
+
+
+class MessageSearchResult(BaseModel):
+    message: MessageResponse
+    matched_in: Literal["original", "translation"]
+    snippet: str
+
+
+class MessageSearchResponse(BaseModel):
+    items: list[MessageSearchResult]
+    has_more: bool = False
+    next_before_created_at: UtcDatetime | None = None
+    next_before_id: str | None = None
+
+
+class TranslationRetryResponse(BaseModel):
+    message_id: str
+    status: Literal["scheduled"] = "scheduled"
+
+
+class VoiceTranscriptionRetryResponse(BaseModel):
+    """A failed voice message whose existing attachment was re-queued."""
+
+    message_id: str
+    conversation_id: str
+    transcription_status: Literal["pending"] = "pending"
+    status: Literal["scheduled"] = "scheduled"
+
+
+class CallStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    call_type: Literal["voice", "video"]
+
+
+class CallResponse(BaseModel):
+    call_id: str
+    conversation_id: str
+    caller_id: str
+    callee_id: str
+    call_type: Literal["voice", "video"]
+    status: Literal["ringing", "accepted", "rejected", "ended", "missed", "failed"]
+    room_url: str | None = None
+    join_token: str | None = None
+    created_at: UtcDatetime
+    answered_at: UtcDatetime | None = None
+    ended_at: UtcDatetime | None = None
 
 
 class EditMessageRequest(BaseModel):
@@ -286,11 +433,25 @@ class RealtimeMessage(BaseModel):
     conversation_id: str
     sender_id: str
     original_text: str
+    message_type: MessageType = "text"
+    transcription_status: TranscriptionStatus | None = None
     created_at: UtcDatetime
+    mentions: list[MentionSummary] = []
+    assistant_generated: bool = False
+    visibility: str = "public"
     # Carried live so a recipient renders the quote and the file without
     # refetching history (docs/CONTRACT.md §3.7).
     reply_to_message_id: str | None = None
     attachment: AttachmentResponse | None = None
+
+    @model_validator(mode="after")
+    def lifecycle_must_be_consistent(self) -> "RealtimeMessage":
+        validate_message_lifecycle(
+            message_type=self.message_type,
+            transcription_status=self.transcription_status,
+            original_text=self.original_text,
+        )
+        return self
 
 
 class AuthEvent(BaseModel):
@@ -329,6 +490,25 @@ class SendMessageEvent(BaseModel):
         """Reject whitespace-only messages without changing persisted text."""
         if not value.strip():
             raise ValueError("text must not be blank")
+        return value
+
+
+class SendVoiceMessageEvent(BaseModel):
+    """Authenticated request to claim stored audio as a voice message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["send_voice_message"]
+    client_message_id: str = Field(min_length=1, max_length=128)
+    conversation_id: str = Field(min_length=1, max_length=36)
+    attachment_id: str = Field(min_length=1, max_length=255)
+    reply_to_message_id: str | None = Field(default=None, max_length=36)
+
+    @field_validator("client_message_id", "conversation_id", "attachment_id", "reply_to_message_id")
+    @classmethod
+    def identifiers_must_not_be_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("identifier must not be blank")
         return value
 
 
@@ -394,6 +574,45 @@ class TranslationCompletedEvent(BaseModel):
     model: str
     latency_ms: int
     is_fallback: bool
+
+
+class VoiceTranscriptionCompletedEvent(BaseModel):
+    """A full original-language transcript has been durably persisted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["voice_transcription_completed"] = "voice_transcription_completed"
+    message_id: str = Field(min_length=1, max_length=36)
+    conversation_id: str = Field(min_length=1, max_length=36)
+    original_text: str = Field(min_length=1)
+    source_language: str = Field(min_length=1, max_length=10)
+    transcription_status: Literal["completed"] = "completed"
+
+    @field_validator("message_id", "conversation_id", "original_text", "source_language")
+    @classmethod
+    def values_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value
+
+
+class VoiceTranscriptionFailedEvent(BaseModel):
+    """Transcription ended without changing the voice message's empty text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["voice_transcription_failed"] = "voice_transcription_failed"
+    message_id: str = Field(min_length=1, max_length=36)
+    conversation_id: str = Field(min_length=1, max_length=36)
+    transcription_status: Literal["failed"] = "failed"
+    retryable: bool
+
+    @field_validator("message_id", "conversation_id")
+    @classmethod
+    def identifiers_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("identifier must not be blank")
+        return value
 
 
 class MessageUpdatedEvent(BaseModel):

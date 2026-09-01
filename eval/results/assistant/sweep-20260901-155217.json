@@ -1,0 +1,200 @@
+{
+ "run_id": "20260901-155217",
+ "started_at": "2026-09-01T15:52:17.876044+00:00",
+ "offline": true,
+ "embedding_override": "",
+ "top_k": 8,
+ "top_n": 4,
+ "rows": [
+  {
+   "tier": "XS",
+   "strategy": "message",
+   "arrangement": "vector",
+   "chunks": 10,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 0.4,
+   "chance_hit_rate": 0.4,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 106,
+   "query_ms": 13
+  },
+  {
+   "tier": "XS",
+   "strategy": "message",
+   "arrangement": "hybrid",
+   "chunks": 10,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 0.4,
+   "chance_hit_rate": 0.4,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 106,
+   "query_ms": 15
+  },
+  {
+   "tier": "XS",
+   "strategy": "turn_window",
+   "arrangement": "vector",
+   "chunks": 2,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.625,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 19,
+   "query_ms": 6
+  },
+  {
+   "tier": "XS",
+   "strategy": "turn_window",
+   "arrangement": "hybrid",
+   "chunks": 2,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.625,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 19,
+   "query_ms": 14
+  },
+  {
+   "tier": "XS",
+   "strategy": "token_window",
+   "arrangement": "vector",
+   "chunks": 1,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 1.0,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 17,
+   "query_ms": 5
+  },
+  {
+   "tier": "XS",
+   "strategy": "token_window",
+   "arrangement": "hybrid",
+   "chunks": 1,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 1.0,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 17,
+   "query_ms": 13
+  },
+  {
+   "tier": "XS",
+   "strategy": "semantic_split",
+   "arrangement": "vector",
+   "chunks": 9,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 0.444,
+   "chance_hit_rate": 0.444,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 106,
+   "query_ms": 10
+  },
+  {
+   "tier": "XS",
+   "strategy": "semantic_split",
+   "arrangement": "hybrid",
+   "chunks": 9,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 0.444,
+   "chance_hit_rate": 0.444,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 106,
+   "query_ms": 13
+  },
+  {
+   "tier": "XS",
+   "strategy": "parent_child",
+   "arrangement": "vector",
+   "chunks": 3,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 1.0,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 17,
+   "query_ms": 12
+  },
+  {
+   "tier": "XS",
+   "strategy": "parent_child",
+   "arrangement": "hybrid",
+   "chunks": 3,
+   "queries": 4,
+   "recall": 1.0,
+   "precision": 1.0,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "single_hop": 1.0
+   },
+   "index_ms": 17,
+   "query_ms": 14
+  }
+ ]
+}

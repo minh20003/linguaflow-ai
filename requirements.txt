@@ -1,6 +1,9 @@
 # Core
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
+# In-memory rate limiting for FastAPI.  The deployment remains single-process,
+# so no Redis-backed storage is required.
+slowapi>=0.1.9,<0.2.0
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
 python-dotenv>=1.0.0
@@ -13,8 +16,23 @@ langgraph>=0.2.0
 langchain-openai>=0.3.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
-# Observability cho Agent (F-03.4). API CallbackHandler khác nhau giữa các major
-# version — module src/agents/observability.py viết theo v4.
+# Direct dependency for the Files + Interactions APIs used by the dedicated
+# Gemini 3.5 Transcribe adapter. It is also pulled transitively by recent
+# langchain-google-genai releases, but older compatible releases do not expose
+# the Interactions API contract this service requires.
+google-genai==2.18.1
+# Platform wheels bundle the FFmpeg executable (~25-31 MiB) used only for
+# bounded STT preprocessing of browser-native WebM/Opus, OGG/Opus and MP4/AAC.
+# This avoids the much larger Debian multimedia dependency closure while
+# keeping local and container behavior identical.
+imageio-ffmpeg>=0.6.0,<0.7.0
+langchain-mistralai>=0.2.0
+# Observability cho Agent (F-03.4). Backend chon bang OBSERVABILITY_PROVIDER;
+# mac dinh la Braintrust (ADR-29). Tich hop LangChain nam trong chinh goi
+# braintrust — goi rieng braintrust-langchain da bi khai tu.
+braintrust>=0.34.0
+# Langfuse van giu de chon lai duoc. API CallbackHandler khac nhau giua cac major
+# version — module src/agents/observability.py viet theo v4.
 langfuse>=4.0.0,<5.0.0
 # Nhan dien ngon ngu cuc bo (~1ms), giam so lan goi LLM detect
 langdetect>=1.0.9
@@ -24,6 +42,9 @@ deep-translator>=1.11.0
 # Database
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
+# Windows does not ship the IANA timezone database required for securely
+# resolving user-confirmed schedule times such as Asia/Ho_Chi_Minh.
+tzdata>=2025.2
 # Migrations — bat buoc tu khi trien khai that: create_all khong ALTER duoc bang
 # da ton tai, xoa co so du lieu de doi schema la mat du lieu nguoi dung (ADR-06).
 alembic>=1.14.0
@@ -33,6 +54,15 @@ asyncpg>=0.30.0
 
 # Vector Store (uncomment as needed)
 # chromadb>=0.5.0
+
+# Dong ho cho hang doi nhac viec (ADR-33). Chi la bo dinh thi: hang doi nam o
+# bang `reminders` trong PostgreSQL, khong dung job store cua APScheduler — mot
+# bang thi tu bat kip sau khi tien trinh tat, con job store thi khong. De bai
+# goi y BullMQ nhung do la thu vien Node; day la thu tuong duong ben Python.
+apscheduler>=3.10.0
+# Cross-platform RSS metric for the admin system-health endpoint. Linux still
+# uses /proc first, while Windows relies on this portable fallback.
+psutil>=6.0.0
 
 # Authentication
 python-jose[cryptography]>=3.3.0

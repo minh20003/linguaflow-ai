@@ -17,7 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.context_provider import DEFAULT_CONTEXT_SIZE
-from src.database.models import Message
+from src.config import Settings, get_settings
+from src.database.models import Message, MessageEmbedding
+from src.services.message_visibility import public_only
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,19 @@ class DatabaseContextProvider:
         # a sort over the whole conversation.
         query = (
             select(Message)
-            .where(Message.conversation_id == conversation_id)
+            .where(
+                Message.conversation_id == conversation_id,
+                # Withdrawn: nobody can read it in the app any more, so nothing
+                # of it may reach the model either.
+                Message.deleted_at.is_(None),
+                # Same reasoning, one step further: this context is built once
+                # and shapes a translation delivered to every member, so a
+                # message kept from some of them must not influence it.
+                public_only(),
+                # Attachment-only messages carry no text; an empty line would
+                # cost tokens and tell the model nothing.
+                Message.original_text != "",
+            )
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(limit)
         )
@@ -78,7 +92,88 @@ class DatabaseContextProvider:
             logger.warning("Reading conversation context failed: %s", exc)
             return []
 
-        return _format_context_lines(reversed(rows))
+        remembered: list[Message] = []
+        if self._settings.rag_context_enabled:
+            remembered = await self._nearest_by_meaning(
+                conversation_id=conversation_id,
+                exclude_ids={row.id for row in rows},
+            )
+
+        # Merged and sorted as one history. The model is told the block is
+        # oldest-first and nothing else about it; which path a line arrived by
+        # is not something a translation should be reasoning about.
+        merged = sorted(
+            [*rows, *remembered], key=lambda row: (row.created_at, row.id)
+        )
+        return _format_context_lines(merged)
+
+    async def _nearest_by_meaning(
+        self,
+        *,
+        conversation_id: str,
+        exclude_ids: set[str],
+    ) -> list[Message]:
+        """Find older messages closest in meaning to the one being translated.
+
+        The query vector is the stored embedding of the message itself, so
+        nothing is embedded here: this sits on the request path, and the vector
+        was written in the background when the message arrived.
+
+        Scoped to the conversation, which is not an optimisation. Retrieval
+        reaching across conversations would take text from a thread the reader
+        was never part of and put it in front of the model — the exact leak
+        ADR-21 exists to catch on the way out, introduced on the way in.
+
+        Returns an empty list on any failure, and whenever the message has no
+        stored vector — which is every message sent before the flag was turned
+        on.
+        """
+        if self._before_message_id is None:
+            return []
+
+        try:
+            vector = await self._session.scalar(
+                select(MessageEmbedding.embedding).where(
+                    MessageEmbedding.message_id == self._before_message_id
+                )
+            )
+            if vector is None:
+                return []
+
+            query = (
+                select(Message)
+                .join(MessageEmbedding, MessageEmbedding.message_id == Message.id)
+                .where(
+                    Message.conversation_id == conversation_id,
+                    Message.deleted_at.is_(None),
+                    Message.original_text != "",
+                    Message.id != self._before_message_id,
+                    MessageEmbedding.embedding.is_not(None),
+                    public_only(),
+                )
+                .order_by(MessageEmbedding.embedding.cosine_distance(vector))
+                .limit(self._settings.rag_top_k + len(exclude_ids))
+            )
+            candidates = (await self._session.scalars(query)).all()
+        except Exception as exc:
+            logger.warning("Retrieving context by meaning failed: %s", exc)
+            return []
+
+        # Excluded after the query rather than inside it: the recent window is
+        # usually among the nearest neighbours too, and a NOT IN over it would
+        # have to be re-planned for every message. Over-fetching by its size and
+        # filtering here costs one comparison per row.
+        found = [row for row in candidates if row.id not in exclude_ids]
+        chosen = found[: self._settings.rag_top_k]
+        if chosen:
+            # Count only, never content: server logs are read by people the
+            # conversation never included.
+            logger.info(
+                "Context: %d recent lines joined by %d recalled by meaning",
+                len(exclude_ids),
+                len(chosen),
+            )
+        return chosen
 
 
 def _format_context_lines(messages) -> list[str]:

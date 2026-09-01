@@ -10,7 +10,9 @@ harness can run without a `.env` file.
 """
 
 import logging
+import sys
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator
@@ -22,13 +24,17 @@ _PLACEHOLDER_JWT_SECRETS = frozenset(
     {"your-secret-key-here", "change-me", "changeme", "secret", "dev-secret"}
 )
 _MIN_PRODUCTION_JWT_SECRET_LENGTH = 32
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env file."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Resolve from this module rather than the caller's working directory.
+        # Commands such as pytest may run from `frontend/`, but must still load
+        # the repository's shared local configuration.
+        env_file=_PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -62,11 +68,118 @@ class Settings(BaseSettings):
     # the model explaining itself, which validate_output rejects anyway.
     llm_max_tokens: int = Field(default=1024, ge=64, le=8192)
 
+    # Who scores the evaluation runs, and with which model. Both empty means
+    # "the same provider that did the translating", which the report then flags
+    # as self-judging (ADR-17). They live in configuration rather than only as
+    # command-line flags because the judge is what a score is comparable
+    # against: two runs judged by different models are not the same measurement,
+    # and a flag typed differently on two days is the easiest way to end up with
+    # exactly that without noticing.
+    llm_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    judge_model: str = ""  # Empty = the judge provider's default model
+
+    # The Assistant Agent picks its own models, independently of translation.
+    # Not a convenience: the two agents are judged on different things. A
+    # translation is scored against a reference sentence and must answer inside
+    # NFR-01, while the assistant reads long threads, plans several steps and is
+    # scored on whether it invented anything — so the model that is right for one
+    # is routinely wrong for the other, and the retrieval accuracy this agent
+    # needs is far higher than the translation path ever required (ADR-37).
+    #
+    # Empty means "inherit the translation setting", so a deployment that has
+    # configured nothing behaves exactly as it does today. Same arrangement as
+    # `stt_provider` / `stt_model` below: an independent role whose configuration
+    # never mutates another role's.
+    assistant_llm_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    assistant_llm_model: str = ""
+    assistant_judge_provider: Literal["", "groq", "deepseek", "gemini", "openai", "mistral"] = ""
+    assistant_judge_model: str = ""
+    assistant_embedding_provider: Literal["", "gemini", "openai", "local"] = ""
+    assistant_embedding_model: str = ""
+
+    # Assistant retrieval is always on — there is deliberately no flag to turn it
+    # off. `RAG_CONTEXT_ENABLED` governs the *translation* agent's semantic
+    # context and stays off (ADR-27); the assistant cannot answer "what did we
+    # decide about the deadline" without reaching past the recent window, so for
+    # it retrieval is the feature rather than an optimisation. What still gates
+    # it is the user's `store_memory` consent, which is a permission, not a
+    # configuration switch.
+    #
+    # Two numbers because retrieval runs in two stages: `top_k` is how many
+    # candidates the hybrid search hands to the reranker, `top_n` how many
+    # survive into the prompt. Widening the first costs a cheap vector scan;
+    # widening the second costs context and invites the model to pad the answer
+    # with near-misses.
+    assistant_retrieval_top_k: int = Field(default=8, ge=1, le=50)
+    assistant_rerank_top_n: int = Field(default=4, ge=1, le=20)
+    # The assistant writes longer than the translator does, and needs its own
+    # ceiling for it. `LLM_MAX_TOKENS` is sized for one translated chat message
+    # -- the comment on it says so -- and sharing it truncated summaries and
+    # task lists in the middle of a sentence, which reads as the assistant
+    # trailing off rather than as a limit being hit.
+    assistant_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
+    # The conversation-intelligence extractors need the same room, for a sharper
+    # reason: their prompts embed a JSON schema and they must emit structured
+    # JSON, so hitting the cap does not shorten the answer, it truncates the
+    # JSON mid-string and the parse fails. Measured on one ordinary commitment
+    # ("Mình sẽ gửi bản thiết kế... trước 5 giờ chiều mai"): at 1024 the reply
+    # stopped with finish_reason=MAX_TOKENS after 1020 tokens and was
+    # unparseable, so the repair attempt failed too and no proposal was ever
+    # created. At 4096 the same call finished cleanly. That is why nothing was
+    # ever detected in a conversation.
+    intelligence_llm_max_tokens: int = Field(default=4096, ge=256, le=8192)
+    # The reranker is the one part of this stack that runs a local model, so it
+    # is also the one part an operator may need to switch off without editing
+    # code: `sentence-transformers` pulls torch into the process, and a host
+    # that cannot load it took the whole server down rather than degrading.
+    # False keeps the fused hybrid ranking, which is the same fallback a
+    # deployment without the package already gets.
+    assistant_rerank_enabled: bool = True
+
     # API key per provider — only the one matching LLM_PROVIDER needs a value
     groq_api_key: str = ""
     deepseek_api_key: str = ""
     google_api_key: str = ""
     openai_api_key: str = ""
+    mistral_api_key: str = ""
+
+    # Speech-to-text is configured independently from LLM_PROVIDER. Gemini STT
+    # reuses the existing GOOGLE_API_KEY/GEMINI_API_KEY resolution above, but
+    # changing either provider/model role must never mutate the other.
+    stt_provider: Literal["gemini"] = "gemini"
+    stt_model: str = "gemini-3.5-transcribe"
+    stt_timeout_seconds: int = Field(default=60, ge=1, le=300)
+    stt_retry_attempts: int = Field(default=3, ge=1, le=5)
+
+    # Google Identity Services authentication, and Google Calendar (ADR-35).
+    #
+    # The client ID is not a secret — the browser needs the same value to
+    # request an ID token. Declared once here; it used to appear twice in this
+    # file, the later one silently shadowing the earlier, which was harmless
+    # only until a second Google field was added beside one of them.
+    #
+    # Obtain both from Google Cloud Console → APIs & Services → Credentials →
+    # OAuth client ID (Web application).
+    google_oauth_client_id: str = ""
+    # Required for Calendar and nothing else. Sign-In verifies an ID token
+    # locally and never exchanges a code, so it needs no secret; Calendar runs a
+    # full authorization-code flow and cannot work without one.
+    google_oauth_client_secret: str = ""
+    # Where Google sends the user back. Must match the Console entry exactly,
+    # including scheme and any trailing path — a mismatch fails at Google with
+    # `redirect_uri_mismatch` before the application sees the request.
+    google_oauth_redirect_uri: str = ""
+    # How often the incoming half of calendar sync runs. Minutes rather than the
+    # reminder loop's seconds: this one costs a Google API call per linked
+    # account, and a calendar edited on a phone is not urgent to mirror
+    # (ADR-36).
+    calendar_sync_interval_seconds: int = Field(default=300, ge=60, le=3600)
+    # Fernet key protecting stored Google refresh tokens. Empty disables the
+    # Calendar link entirely rather than storing tokens in the clear: leaking a
+    # refresh token leaks standing access to somebody's real calendar, which is
+    # a different order of harm from leaking data held in this application.
+    # Generate with `Fernet.generate_key()`.
+    token_encryption_key: str = ""
 
     # Agent — number of recent messages used as translation context (PRD: 3-5)
     agent_context_size: int = Field(default=5, ge=0, le=20)
@@ -74,6 +187,15 @@ class Settings(BaseSettings):
     # and the secondary provider. The per-call timeouts below do not bound the
     # total, so this is what stops a background task running forever (ADR-14).
     translation_timeout_seconds: int = Field(default=30, ge=5, le=300)
+    # How often the reminder queue is polled (ADR-33). Sixty seconds is the
+    # resolution a reminder is worth — nobody can tell 14:45:00 from 14:45:40 —
+    # and a tighter loop is a query per second against a usually empty table.
+    reminder_scan_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    # Set to false to stop the background scheduler without removing the code
+    # path. Tests need it off: a loop firing mid-suite would deliver another
+    # test's reminders and make failures depend on timing (ADR-15's rule about
+    # every background flow having a switch).
+    reminder_scheduler_enabled: bool = True
 
     # Secondary translation provider tried when the LLM path fails (ADR-07).
     # Disable to go straight back to returning the untranslated message.
@@ -100,6 +222,19 @@ class Settings(BaseSettings):
     # to be sized against concurrent sockets rather than requests per second.
     database_pool_size: int = Field(default=5, ge=1, le=50)
     database_max_overflow: int = Field(default=10, ge=0, le=50)
+    # Managed PostgreSQL poolers can leave an idle TCP connection stale. Recycle
+    # it before the provider-side idle timeout and fail a saturated pool rather
+    # than making an API request wait indefinitely.
+    database_pool_recycle_seconds: int = Field(default=900, ge=60, le=86_400)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # SQLAlchemy echo includes bound parameters. Leaving it implicitly on in
+    # development therefore writes message text and completed voice transcripts
+    # to the console. Keep it opt-in in every environment.
+    database_echo: bool = False
+    # The first managed-PostgreSQL connection can take longer than a pooled
+    # request during a cold start. Keep readiness strict, but avoid reporting a
+    # healthy database as unavailable before its TLS/pooler handshake finishes.
+    database_readiness_timeout_seconds: int = Field(default=30, ge=5, le=120)
 
     # Vector Store
     chroma_persist_dir: str = "./data/chroma"
@@ -112,6 +247,17 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = Field(default=1440, ge=1, le=10080)  # 24h default, max 7 days
     refresh_expire_days: int = Field(default=30, ge=1, le=90)
     password_reset_expire_minutes: int = Field(default=30, ge=5, le=120)
+
+    # Email & OTP Verification (Batch F)
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "LinguaFlow"
+    smtp_use_tls: bool = True
+    smtp_timeout_seconds: int = Field(default=15, ge=3, le=60)
+    email_provider: Literal["smtp", "console", "memory"] = "memory"
 
     @field_validator("database_url")
     @classmethod
@@ -176,6 +322,186 @@ class Settings(BaseSettings):
                 )
         return v
 
+    @field_validator("frontend_url")
+    @classmethod
+    def validate_frontend_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("FRONTEND_URL must be an absolute http(s) URL")
+        return normalized
+
+    @model_validator(mode="after")
+    def _warn_unmeasured_embedding_model(self) -> "Settings":
+        """Say so when semantic matching is on for a model nobody has measured.
+
+        Not an error: the table in `services/embeddings.py` answers with a
+        threshold that admits almost nothing, so an unmeasured model degrades to
+        exact matching rather than to random terms. But silence would leave a
+        team believing a feature is working when it is deliberately inert.
+        """
+        if self.semantic_glossary_enabled and self.glossary_similarity_threshold == 0:
+            from src.services.embeddings import (  # noqa: PLC0415
+                DEFAULT_MODELS,
+                GLOSSARY_THRESHOLDS,
+            )
+
+            model = self.embedding_model or DEFAULT_MODELS.get(
+                self.embedding_provider, ""
+            )
+            if model not in GLOSSARY_THRESHOLDS:
+                logging.getLogger(__name__).warning(
+                    "SEMANTIC_GLOSSARY_ENABLED is on but %r has no measured "
+                    "threshold, so it will match almost nothing. Measure it and add "
+                    "a row to GLOSSARY_THRESHOLDS, or set "
+                    "GLOSSARY_SIMILARITY_THRESHOLD to override.",
+                    model,
+                )
+        return self
+
+    @model_validator(mode="after")
+    def validate_production_and_email_config(self) -> "Settings":
+        """Enforce production email safety and validate required SMTP fields."""
+        if self.app_env == "production":
+            if urlparse(self.frontend_url).scheme != "https":
+                raise ValueError("FRONTEND_URL must use https in production")
+            if self.email_provider in ("memory", "console"):
+                raise ValueError(
+                    f"EMAIL_PROVIDER='{self.email_provider}' is not allowed in production. "
+                    "Production requires EMAIL_PROVIDER='smtp' with valid SMTP credentials."
+                )
+            if self.email_provider == "smtp":
+                missing = []
+                if not self.smtp_host or not self.smtp_host.strip():
+                    missing.append("SMTP_HOST")
+                if not self.smtp_port:
+                    missing.append("SMTP_PORT")
+                if not self.smtp_user or not self.smtp_user.strip():
+                    missing.append("SMTP_USER")
+                if not self.smtp_password or not self.smtp_password.strip():
+                    missing.append("SMTP_PASSWORD")
+                if not self.smtp_from_email or not self.smtp_from_email.strip():
+                    missing.append("SMTP_FROM_EMAIL")
+                if missing:
+                    raise ValueError(
+                        f"Production SMTP configuration is missing required fields: {', '.join(missing)}"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_assistant_judges_itself(self) -> "Settings":
+        """Say so when the assistant's judge is the model it is judging.
+
+        Not an error, for the reason ADR-17 already gives about the translation
+        judge: a self-scored run is still a run, and refusing to start would make
+        a quick local measurement impossible. But a model asked to grade its own
+        output scores it generously and consistently, so a number produced this
+        way is not comparable with one produced any other way — and the whole
+        point of the assistant eval harness is comparing runs.
+        """
+        provider, model = self.resolve_assistant_llm()
+        judge_provider, judge_model = self.resolve_assistant_judge()
+        if (provider, model) == (judge_provider, judge_model):
+            logging.getLogger(__name__).warning(
+                "The Assistant Agent's judge is the same model that generates "
+                "(%s/%s). Scores from this configuration are self-judged and are "
+                "not comparable with other runs. Set ASSISTANT_JUDGE_PROVIDER.",
+                judge_provider,
+                judge_model or "<provider default>",
+            )
+        return self
+
+    def resolve_assistant_llm(self) -> tuple[str, str]:
+        """Which provider and model the Assistant Agent generates with.
+
+        Empty assistant settings inherit the translation ones, so a deployment
+        that configured nothing keeps working. The pair is resolved here rather
+        than at each call site because "empty means inherit" is exactly the kind
+        of rule that gets applied in three places and forgotten in a fourth —
+        and the fourth then silently runs the wrong model while the report says
+        otherwise.
+
+        Returns:
+            ``(provider, model)``. The model may be empty, which every caller
+            passes to `get_llm` as "use that provider's default".
+        """
+        provider = self.assistant_llm_provider or self.llm_provider
+        # The model only carries over when the provider did. `LLM_MODEL` names a
+        # model *on the translation provider*, so inheriting it onto a different
+        # provider would ask, say, Mistral for a Gemini model and fail at the
+        # first call.
+        if self.assistant_llm_model:
+            return provider, self.assistant_llm_model
+        return provider, (self.llm_model if provider == self.llm_provider else "")
+
+    def resolve_assistant_judge(self) -> tuple[str, str]:
+        """Which provider and model score the Assistant Agent's output.
+
+        Falls back to the generating model rather than to the translation judge:
+        a judge chosen for scoring sentence-level translation has no standing to
+        grade a multi-step plan, so inheriting it would look configured while
+        measuring something else. Falling back to the generator is at least an
+        honest self-judge, which `_warn_assistant_judges_itself` then reports.
+        """
+        if self.assistant_judge_provider:
+            return self.assistant_judge_provider, self.assistant_judge_model
+        return self.resolve_assistant_llm()
+
+    def resolve_assistant_embedding(self) -> tuple[str, str]:
+        """Which provider and model embed the assistant's chunks and queries.
+
+        Both halves must travel together to every caller. Vectors from two models
+        occupy different spaces, so `assistant_chunks.embedding_model` records
+        which one produced each row and retrieval filters on it — a query
+        embedded by one model and compared against another's rows returns a
+        confidently wrong ranking rather than an error.
+        """
+        provider = self.assistant_embedding_provider or self.embedding_provider
+        if self.assistant_embedding_model:
+            return provider, self.assistant_embedding_model
+        return provider, (
+            self.embedding_model if provider == self.embedding_provider else ""
+        )
+
+
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr able to carry every language the agent translates.
+
+    On Windows the console defaults to the cp1252 code page, which can encode
+    only Western European text. A single Vietnamese, Chinese, Japanese, Korean,
+    Thai, Arabic, Hindi, Russian, Greek, Turkish or Polish character in a log
+    record — a translated message quoted back in an exception, a `%r` of the
+    detected text — then raises ``UnicodeEncodeError`` inside the logging
+    handler instead of being written. Since that happens while reporting an
+    earlier failure, the original error is lost as well.
+
+    Both halves are needed: ``reconfigure`` makes Python emit UTF-8 bytes, and
+    ``SetConsoleOutputCP(65001)`` makes the console read them as UTF-8 rather
+    than as mojibake. ``errors="backslashreplace"`` is the last line of defence
+    for a stream that cannot be switched at all (a pipe opened by another tool),
+    so an unencodable character degrades to an escape rather than to a crash.
+
+    Everything here is best-effort: a redirected or already-wrapped stream may
+    expose neither method, and no logging setup is worth failing a process over.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:  # noqa: BLE001 - console code page is cosmetic
+            pass
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:  # noqa: BLE001 - a detached stream cannot be fixed
+            pass
+
 
 def configure_logging(settings: Settings | None = None) -> None:
     """Apply LOG_LEVEL to the root logger.
@@ -189,6 +515,10 @@ def configure_logging(settings: Settings | None = None) -> None:
     emits one request line per LLM call, which would bury the evaluation
     harness's own progress output.
 
+    Also switches stdout/stderr to UTF-8, so a log line carrying non-Western
+    text cannot raise ``UnicodeEncodeError`` on a Windows console — see
+    `_force_utf8_streams`.
+
     Safe to call more than once: the handler is replaced rather than stacked, so
     repeated calls cannot duplicate every line.
 
@@ -196,6 +526,10 @@ def configure_logging(settings: Settings | None = None) -> None:
         settings: Configuration to read. Defaults to the process settings.
     """
     settings = settings or get_settings()
+
+    # Before any handler is attached: a cp1252 console turns a Vietnamese log
+    # line into UnicodeEncodeError rather than into output.
+    _force_utf8_streams()
 
     handler = logging.StreamHandler()
     handler.setFormatter(

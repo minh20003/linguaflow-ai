@@ -44,6 +44,11 @@ def test_the_sqlite_default_is_left_alone():
     assert settings().database_url.startswith("sqlite+aiosqlite:///")
 
 
+def test_database_sql_echo_is_opt_in_to_protect_bound_message_text():
+    assert Settings.model_fields["database_echo"].default is False
+    assert settings(database_echo=True).database_echo is True
+
+
 def test_cors_origins_are_split_and_stripped():
     """A list written the way a human writes one must still match an Origin."""
     resolved = settings(cors_origins="http://localhost:3000, https://app.example.com ")

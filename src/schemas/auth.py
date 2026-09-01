@@ -1,5 +1,6 @@
 """Pydantic schemas for authentication endpoints."""
 
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -163,9 +164,16 @@ class UserResponse(BaseModel):
     email: str
     username: str | None = None
     display_name: str | None = None
+    avatar_url: str | None = None
+    bio: str | None = None
     role: str
     preferred_language: str
     interface_language: str
+    # Echoed back so a caller can see what was stored. `PUT /auth/me/timezone`
+    # answers with this model, and without the field it replied 200 while
+    # saying nothing about the one value the request was about -- leaving the
+    # client no way to tell a stored name from a silently dropped one.
+    timezone: str | None = None
     created_at: datetime
 
     @model_validator(mode="after")
@@ -202,6 +210,23 @@ class UpdateLanguageRequest(BaseModel):
         return normalize_language(v)
 
 
+class TimezoneUpdate(BaseModel):
+    """The caller's IANA timezone name, as their browser reports it.
+
+    A name rather than an offset: an offset is only correct until the next
+    daylight-saving change, and a meeting proposed in October for December would
+    land an hour out. `ZoneInfo` resolves the name at the moment it is used.
+    """
+
+    timezone: str = Field(
+        ...,
+        description="IANA timezone name",
+        min_length=1,
+        max_length=64,
+        examples=["Asia/Ho_Chi_Minh", "Europe/London"],
+    )
+
+
 class UpdateInterfaceLanguageRequest(BaseModel):
     """Request schema for updating the language of the interface (§1.2).
 
@@ -224,3 +249,104 @@ class UpdateInterfaceLanguageRequest(BaseModel):
     def validate_interface_language(cls, v: str) -> str:
         """Validate that the language code is supported."""
         return normalize_language(v)
+
+
+class UserProfileUpdate(BaseModel):
+    """Partial, self-service profile fields only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=100)
+    avatar_url: str | None = Field(default=None, max_length=700_000)
+    bio: str | None = Field(default=None, max_length=500)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("display_name must not be blank")
+        return cleaned
+
+    @field_validator("avatar_url")
+    @classmethod
+    def validate_avatar_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}", value):
+            raise ValueError("avatar_url must be a PNG, JPEG, or WebP data URL")
+        return value
+
+    @field_validator("bio")
+    @classmethod
+    def normalize_bio(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "UserProfileUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one profile field must be provided")
+        return self
+
+
+class UserSettingsResponse(BaseModel):
+    """Canonical persisted settings returned for the current account."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    auto_translate: bool
+    show_original_by_default: bool
+    translation_tone: Literal["natural", "formal", "casual", "friendly"]
+    sound_enabled: bool
+    read_receipts: bool
+    ai_smart_assistance: bool
+    updated_at: datetime | None = None
+
+
+class UserSettingsUpdate(BaseModel):
+    """Partial update; explicit fields preserve PATCH idempotency."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    auto_translate: bool | None = None
+    show_original_by_default: bool | None = None
+    translation_tone: Literal["natural", "formal", "casual", "friendly"] | None = None
+    sound_enabled: bool | None = None
+    read_receipts: bool | None = None
+    ai_smart_assistance: bool | None = None
+
+    @model_validator(mode="after")
+    def require_a_change(self) -> "UserSettingsUpdate":
+        if not self.model_fields_set:
+            raise ValueError("At least one setting must be provided")
+        for field in self.model_fields_set:
+            if getattr(self, field) is None:
+                raise ValueError(f"Setting '{field}' cannot be null")
+        return self
+
+
+# ----------------------------------------------------------------------
+# Google Sign-In schemas (Batch G)
+# ----------------------------------------------------------------------
+
+
+class GoogleLinkResponse(BaseModel):
+    """Response after linking or unlinking a Google account."""
+
+    google_linked: bool
+    message: str
+
+
+class GoogleErrorResponse(BaseModel):
+    """Error response when Google Sign-In fails."""
+
+    detail: str = Field(
+        ...,
+        examples=[
+            "Google token verification failed",
+            "This Google account is already linked to another user",
+            "This email is already linked to a different Google account.",
+        ],
+    )

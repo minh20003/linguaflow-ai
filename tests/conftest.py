@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import tempfile
 from collections.abc import AsyncGenerator
@@ -13,16 +14,44 @@ import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from src.api.routes import router as api_router
 from src.api.websocket import get_connection_manager
 from src.api.websocket import router as websocket_router
+from src.core.circuit_breaker import (
+    embedding_breaker,
+    embedding_fallback_breaker,
+    fallback_translator_breaker,
+    llm_breaker,
+)
+from src.core.rate_limit import reset_rate_limits
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
+from src.services import assistant_indexing as assistant_indexing_module
+from src.services import correction_log as correction_log_module
+from src.services import message_memory as message_memory_module
+from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
+from src.services import voice_transcription as voice_transcription_module
 from src.services.connection_manager import ConnectionManager
+
+
+@pytest.fixture(autouse=True)
+def reset_process_local_resilience_state():
+    """Keep singleton counters and breakers from leaking between tests."""
+    reset_rate_limits()
+    for breaker in (llm_breaker, embedding_breaker, embedding_fallback_breaker, fallback_translator_breaker):
+        breaker.reset()
+    yield
+    reset_rate_limits()
+    for breaker in (llm_breaker, embedding_breaker, embedding_fallback_breaker, fallback_translator_breaker):
+        breaker.reset()
+
 
 # ========================
 # Test Database Setup
@@ -41,10 +70,104 @@ _ws_session_maker: async_sessionmaker | None = None
 def _init_engines(db_file: str) -> None:
     """Initialize test setup and WebSocket engines pointing to the same file.
 
-    Using separate engines with separate pools allows concurrent access to the
-    same SQLite file without StaticPool connection contention issues.
-    The SQLite file itself handles locking and consistency.
-    Enabling WAL mode allows concurrent reads during writes.
+async def _ensure_test_database() -> None:
+    """Create the test database and its `vector` extension, once per run.
+
+    The extension belongs to the database, not to a schema, so it is installed
+    here rather than alongside the per-test tables. It has to exist before any
+    `create_all`: a `vector` column on a database without the extension fails at
+    CREATE TABLE with "type vector does not exist", which reads like a typo in
+    the model rather than a missing extension.
+
+    Alembic also creates the extension (ADR-22), but the suite never runs
+    migrations — `Base.metadata.create_all` tests the current models, not the
+    migration history — so the two paths each have to stand on their own.
+    """
+    global _database_prepared
+    if _database_prepared:
+        return
+
+    url = make_url(TEST_DATABASE_URL)
+    maintenance = create_async_engine(
+        url.set(database="postgres").render_as_string(hide_password=False),
+        poolclass=NullPool,
+        isolation_level="AUTOCOMMIT",  # CREATE DATABASE cannot run in a transaction
+    )
+    try:
+        async with maintenance.connect() as conn:
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": url.database},
+            )
+            if not exists:
+                await conn.execute(text(f'CREATE DATABASE "{url.database}"'))
+    finally:
+        await maintenance.dispose()
+
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            # Trigram search backs the lexical half of the assistant's hybrid
+            # retrieval. Created here as well as in the migration because a test
+            # database is built from the models, not by running migrations.
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+    finally:
+        await engine.dispose()
+
+    _database_prepared = True
+
+
+async def _run_on_test_database(statement: str) -> None:
+    """Execute one DDL statement against the test database, outside a schema.
+
+    A `lock_timeout` is set first, and it is the difference between a slow suite
+    and one that never finishes. `_settle_background_translations` cancels the
+    tasks it can reach, but a task scheduled from a WebSocket handler runs on
+    another event loop and cannot be awaited from here — so it may still be
+    inside a read when the schema is dropped, holding a lock this statement then
+    waits on. Postgres waits forever by default, and the symptom is a pytest
+    process alive with no CPU and no output: twice in one session that cost
+    around forty minutes each before anyone looked at `pg_stat_activity`.
+
+    Failing the drop instead leaks one schema into the test database, which is
+    cosmetic and clears with `make reset-db`. The suite's job is to report pass
+    or fail, not to be a database janitor.
+    """
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SET lock_timeout = '15s'"))
+            try:
+                await conn.execute(text(statement))
+            except OperationalError:
+                logging.getLogger(__name__).warning(
+                    "Timed out on: %s — a background task is still holding a lock. "
+                    "The schema is left behind; `make reset-db` clears it.",
+                    statement,
+                )
+    finally:
+        await engine.dispose()
+
+
+def _init_engines(schema: str) -> None:
+    """Point the fixture engine and the WebSocket engine at one private schema.
+
+    Isolation is per schema rather than per database because `CREATE DATABASE`
+    costs roughly a second each and the suite has hundreds of tests, while
+    `CREATE SCHEMA` is close to free. Both engines share the schema so a row
+    written through a fixture is visible to the WebSocket handler, which is the
+    same guarantee the previous SQLite file gave.
+
+    `search_path` also lists `public`, where the `vector` extension installs its
+    type — without it every embedding column fails to resolve.
+
+    NullPool on purpose, and it is not a performance detail: `ws_client` drives
+    the app through starlette's TestClient, which runs it on its own event loop
+    in another thread. An asyncpg connection belongs to the loop that opened it,
+    so a pooled connection handed across that boundary — or disposed from the
+    other side at teardown — fails in ways that surface as unrelated tests going
+    red. Holding no connections between checkouts removes the boundary entirely.
     """
     global test_engine, test_async_session_maker, _ws_engine, _ws_session_maker
 
@@ -110,7 +233,19 @@ async def _settle_background_translations() -> None:
     the suite. Production never does this — the process is not torn down between
     messages — so this belongs to the harness, not to the service.
     """
-    pending = [task for task in translation_module._BACKGROUND_TASKS if not task.done()]
+    tracked = (
+        *translation_module._BACKGROUND_TASKS,
+        # Sending a message also schedules a conversation-profile inference,
+        # which outlives the request the same way and has the same problem.
+        *profile_inference_module._BACKGROUND_TASKS,
+        *message_memory_module._BACKGROUND_TASKS,
+        # Sending a message also schedules chunk indexing for the assistant's
+        # retrieval, which outlives the request the same way (ADR-37).
+        *assistant_indexing_module._BACKGROUND_TASKS,
+        *correction_log_module._BACKGROUND_TASKS,
+        *voice_transcription_module._BACKGROUND_TASKS,
+    )
+    pending = [task for task in tracked if not task.done()]
     for task in pending:
         task.cancel()
     if pending:
@@ -400,3 +535,24 @@ def mock_llm() -> AsyncMock:
     mock = AsyncMock()
     mock.ainvoke.return_value = AsyncMock(content="Mocked LLM response")
     return mock
+
+
+@pytest.fixture(autouse=True)
+def _no_secondary_translator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite off the network.
+
+    `fallback_translator_enabled` defaults to true, and rendering a proposal or
+    a calendar row for a reader whose two language settings differ now calls the
+    provider. Several fixtures set `preferred_language` to something other than
+    the `interface_language` default, so a plain `pytest tests/` was reaching a
+    public endpoint over the internet -- slow, flaky, and failing outright on a
+    machine with no route out.
+
+    Autouse and unconditional. A test that wants to observe the rendering stubs
+    `translate_with_secondary_provider` itself and gets a deterministic answer;
+    a test that does not should never depend on one.
+    """
+    monkeypatch.setattr(
+        "src.services.fallback_translator.get_settings",
+        lambda: get_settings().model_copy(update={"fallback_translator_enabled": False}),
+    )

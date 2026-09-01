@@ -50,6 +50,9 @@ async def test_uploaded_file_is_recorded_and_downloadable_by_another_member(
         headers=auth_headers_for_user(test_user_two),
     )
     assert download.status_code == 200
+    assert download.content == b"%PDF-1.4 test"
+    assert download.headers["content-type"] == "application/pdf"
+    assert download.headers["content-disposition"] == 'attachment; filename="bao-cao.pdf"'
 
 
 @pytest.mark.asyncio
@@ -78,6 +81,54 @@ async def test_an_outsider_cannot_download_an_attachment(
 
 
 @pytest.mark.asyncio
+async def test_an_attachment_on_a_private_message_stays_private(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """The loose-upload exception must not expose a private message's file."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("private.txt", b"for the owner", "text/plain")},
+    )
+    assert upload.status_code == 201
+
+    private_message = Message(
+        client_message_id="private-attachment-1",
+        conversation_id=conversation.id,
+        sender_id=test_user.id,
+        original_text="Private attachment",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private_message)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == upload.json()["id"])
+    )
+    attachment.message_id = private_message.id
+    await test_db.commit()
+
+    hidden = await client.get(
+        upload.json()["download_url"],
+        headers=auth_headers_for_user(test_user_two),
+    )
+    visible = await client.get(
+        upload.json()["download_url"],
+        headers=test_user_headers,
+    )
+
+    assert hidden.status_code == 404
+    assert visible.status_code == 200
+    assert visible.content == b"for the owner"
+
+
+@pytest.mark.asyncio
 async def test_sending_with_an_attachment_binds_it_to_that_message(
     client,
     test_db,
@@ -99,13 +150,15 @@ async def test_sending_with_an_attachment_binds_it_to_that_message(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "with-file-1",
-            "conversation_id": conversation.id,
-            "text": "Gửi anh bản kế hoạch",
-            "attachment_id": attachment_id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "with-file-1",
+                "conversation_id": conversation.id,
+                "text": "Gửi anh bản kế hoạch",
+                "attachment_id": attachment_id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     assert acknowledgement["type"] == "message_created"
@@ -147,13 +200,15 @@ async def test_a_reply_records_the_message_it_answers(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "reply-1",
-            "conversation_id": conversation.id,
-            "text": "3 giờ chiều nhé",
-            "reply_to_message_id": parent.id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "reply-1",
+                "conversation_id": conversation.id,
+                "text": "3 giờ chiều nhé",
+                "reply_to_message_id": parent.id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     assert acknowledgement["message"]["reply_to_message_id"] == parent.id
@@ -165,9 +220,7 @@ async def test_a_reply_records_the_message_it_answers(
     # Found by identity rather than by position: both messages land in the same
     # second, and SQLite's CURRENT_TIMESTAMP has no finer resolution, so the
     # order between them is decided by a random id.
-    stored_reply = next(
-        row for row in history.json() if row["client_message_id"] == "reply-1"
-    )
+    stored_reply = next(row for row in history.json() if row["client_message_id"] == "reply-1")
     assert stored_reply["reply_to_message_id"] == parent.id
 
 
@@ -195,13 +248,15 @@ async def test_a_reply_pointing_outside_the_conversation_is_dropped(
     test_client, _ = ws_client
     with test_client.websocket_connect("/api/v1/ws") as socket:
         _authenticate(socket, test_user)
-        socket.send_json({
-            "type": "send_message",
-            "client_message_id": "reply-foreign",
-            "conversation_id": conversation.id,
-            "text": "Trả lời nhầm chỗ",
-            "reply_to_message_id": foreign.id,
-        })
+        socket.send_json(
+            {
+                "type": "send_message",
+                "client_message_id": "reply-foreign",
+                "conversation_id": conversation.id,
+                "text": "Trả lời nhầm chỗ",
+                "reply_to_message_id": foreign.id,
+            }
+        )
         acknowledgement = socket.receive_json()
 
     # The message still goes through; only the bad link is discarded.
@@ -221,30 +276,32 @@ async def test_unread_counts_only_other_peoples_messages(
     """Your own messages are never unread, and neither are withdrawn ones."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     now = datetime.now(UTC)
-    test_db.add_all([
-        Message(
-            client_message_id="theirs-1",
-            conversation_id=conversation.id,
-            sender_id=test_user_two.id,
-            original_text="Tin của người khác",
-            created_at=now,
-        ),
-        Message(
-            client_message_id="mine-1",
-            conversation_id=conversation.id,
-            sender_id=test_user.id,
-            original_text="Tin của tôi",
-            created_at=now + timedelta(seconds=1),
-        ),
-        Message(
-            client_message_id="theirs-deleted",
-            conversation_id=conversation.id,
-            sender_id=test_user_two.id,
-            original_text="",
-            created_at=now + timedelta(seconds=2),
-            deleted_at=now + timedelta(seconds=3),
-        ),
-    ])
+    test_db.add_all(
+        [
+            Message(
+                client_message_id="theirs-1",
+                conversation_id=conversation.id,
+                sender_id=test_user_two.id,
+                original_text="Tin của người khác",
+                created_at=now,
+            ),
+            Message(
+                client_message_id="mine-1",
+                conversation_id=conversation.id,
+                sender_id=test_user.id,
+                original_text="Tin của tôi",
+                created_at=now + timedelta(seconds=1),
+            ),
+            Message(
+                client_message_id="theirs-deleted",
+                conversation_id=conversation.id,
+                sender_id=test_user_two.id,
+                original_text="",
+                created_at=now + timedelta(seconds=2),
+                deleted_at=now + timedelta(seconds=3),
+            ),
+        ]
+    )
     await test_db.commit()
 
     listed = (await client.get("/api/v1/conversations", headers=test_user_headers)).json()[0]
@@ -339,3 +396,101 @@ async def test_a_non_member_cannot_mark_a_conversation_read(
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_on_a_private_reply_is_downloadable_by_its_reader(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """The visibility filter has to let the one person it was written for through."""
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("rieng-tu.txt", b"chi minh doc", "text/plain")},
+    )
+    assert upload.status_code == 201
+    attachment_id = upload.json()["id"]
+
+    private = Message(
+        conversation_id=conversation.id,
+        client_message_id="private-attach-1",
+        sender_id=test_user.id,
+        original_text="Bao cao rieng cua ban",
+        source_language="vi",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == attachment_id)
+    )
+    attachment.message_id = private.id
+    await test_db.commit()
+
+    download = await client.get(
+        upload.json()["download_url"], headers=test_user_headers
+    )
+
+    assert download.status_code == 200
+    assert download.content == b"chi minh doc"
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_on_a_private_reply_is_hidden_from_the_other_member(
+    client,
+    test_db,
+    test_user,
+    test_user_headers,
+    test_user_two,
+    conversation_factory,
+):
+    """Membership is not enough once a private message carries the file.
+
+    Written because the download query was widened to an OUTER join so that an
+    attachment uploaded but not yet sent stays reachable. That is the right fix
+    for the composer, and it must not become a way past ADR-31: a file carried by
+    a private assistant reply belongs to the one person it was written for, and
+    another member of the same conversation gets 404 — not 403, which would
+    confirm the attachment exists.
+    """
+    conversation = await conversation_factory(test_user, [test_user, test_user_two])
+
+    upload = await client.post(
+        f"/api/v1/conversations/{conversation.id}/attachments",
+        headers=test_user_headers,
+        files={"file": ("rieng-tu.txt", b"chi minh doc", "text/plain")},
+    )
+    assert upload.status_code == 201
+    attachment_id = upload.json()["id"]
+
+    private = Message(
+        conversation_id=conversation.id,
+        client_message_id="private-attach-2",
+        sender_id=test_user.id,
+        original_text="Bao cao rieng cua ban",
+        source_language="vi",
+        visibility="private",
+        visible_to_user_id=test_user.id,
+    )
+    test_db.add(private)
+    await test_db.flush()
+    attachment = await test_db.scalar(
+        select(Attachment).where(Attachment.id == attachment_id)
+    )
+    attachment.message_id = private.id
+    await test_db.commit()
+
+    download = await client.get(
+        upload.json()["download_url"],
+        headers=auth_headers_for_user(test_user_two),
+    )
+
+    assert download.status_code == 404

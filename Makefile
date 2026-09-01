@@ -30,6 +30,54 @@ test:
 metrics:
 	python scripts/report_metrics.py
 
+# Proposes glossary entries from corrections several people made the same way.
+# Costs quota: one model call per surviving cluster, so run it deliberately
+# rather than on every push. `--no-write` prints what it would create.
+glossary-mine:
+	python scripts/mine_glossary.py --since 7d
+
+# Loads the curated starter glossary. Safe to run repeatedly: entries are
+# matched on the key the database is unique on and updated in place, so editing
+# seed/glossary_en_vi.jsonl and re-running is how to change it in development.
+seed-glossary:
+	python scripts/seed_glossary.py
+
+# --- Assistant Agent evaluation (ADR-37, ADR-38) ---------------------------
+
+# Rebuilds the corpus from `eval/assistant/corpus_spec.py`. The JSONL files it
+# writes are committed, so this is run when the scenarios change, not before
+# every measurement — a corpus that shifts between runs turns a comparison of
+# chunking strategies into a comparison of datasets.
+assistant-corpus:
+	python eval/build_assistant_corpus.py
+
+# Which chunking strategy actually finds the messages that hold the answer.
+# COSTS QUOTA: every chunk of every strategy is embedded, which for tier XL is
+# roughly ten thousand calls against a Gemini free tier of twenty a day. Use
+# `--embedding local:...` above tier M, or `--offline` to check the harness
+# rather than a model. Seeds rows into the database; run `assistant-clean` after.
+assistant-sweep:
+	python eval/assistant_chunk_sweep.py --tier M
+
+# Builds the assistant's chunk index for conversations that predate it. The
+# message path keeps new conversations current by itself; this is for history,
+# and for the periodic full rebuild that removes the seams the incremental pass
+# leaves. COSTS QUOTA: one embedding call per chunk. Start with --dry-run.
+assistant-backfill:
+	python scripts/backfill_assistant_chunks.py --resume
+
+# What the assistant actually answers, end to end: coverage of the facts the
+# corpus planted, faithfulness scored by a judge on a different provider, and
+# whether it declines the questions the conversation does not answer. COSTS
+# QUOTA: roughly five model calls per question. Start with --limit.
+assistant-eval:
+	python eval/run_assistant_eval.py --tier S --limit 4
+
+# Removes every conversation and account the corpus builder has seeded. Run it
+# after a sweep, and after any run that died partway.
+assistant-clean:
+	python eval/build_assistant_corpus.py --cleanup
+
 lint:
 	ruff check src/ tests/ eval/
 

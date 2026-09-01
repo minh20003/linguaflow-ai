@@ -1,0 +1,144 @@
+{
+ "run_id": "20260901-153340",
+ "started_at": "2026-09-01T15:33:40.885793+00:00",
+ "tier": "S",
+ "strategy": "turn_window",
+ "provider": "gemini",
+ "model": "gemini-3.5-flash",
+ "judge_provider": "mistral",
+ "judge_model": "mistral-medium-latest",
+ "summary": {
+  "questions": 9,
+  "coverage": 1.0,
+  "coverage_by_kind": {
+   "single_hop": 1.0
+  },
+  "faithfulness": 1.0,
+  "judged": 7,
+  "abstain_accuracy": 0.667,
+  "false_abstain_rate": 0.0,
+  "clarify_accuracy": 1.0,
+  "avg_latency_ms": 9277,
+  "avg_replans": 2.56
+ },
+ "rows": [
+  {
+   "key": "deadline-moved",
+   "kind": "single_hop",
+   "answer": "Deadline cuối cùng của milestone thanh toán được chốt là ngày 13 tháng 9.",
+   "coverage": 1.0,
+   "abstained": false,
+   "latency_ms": 15351,
+   "replans": 2,
+   "tools": [
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "db-choice",
+   "kind": "single_hop",
+   "answer": "We picked ClickHouse for the reporting service, rather than Postgres.",
+   "coverage": 1.0,
+   "abstained": false,
+   "latency_ms": 5246,
+   "replans": 2,
+   "tools": [
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "standup-commitment",
+   "kind": "single_hop",
+   "answer": "Bạn đã hứa sẽ gửi bản nháp báo cáo hiệu năng. Hạn gửi là trước 5h chiều thứ Sáu.",
+   "coverage": 1.0,
+   "abstained": false,
+   "latency_ms": 6578,
+   "replans": 2,
+   "tools": [
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "design-review-meeting",
+   "kind": "single_hop",
+   "answer": "Buổi review thiết kế được chốt vào lúc 10h sáng thứ Tư tuần sau tại phòng họp lớn.",
+   "coverage": 1.0,
+   "abstained": false,
+   "latency_ms": 6068,
+   "replans": 2,
+   "tools": [
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "absent-budget",
+   "kind": "negative",
+   "answer": "Không tìm thấy thông tin về ngân sách marketing quý tới trong các cuộc hội thoại của bạn.",
+   "abstained": true,
+   "latency_ms": 11187,
+   "replans": 3,
+   "tools": [
+    "search_old_messages",
+    "search_old_messages",
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "absent-vendor",
+   "kind": "negative",
+   "answer": "The provided observations do not contain any information about a security audit or the vendor chosen for it.",
+   "abstained": false,
+   "latency_ms": 10946,
+   "replans": 3,
+   "tools": [
+    "search_old_messages",
+    "search_old_messages",
+    "search_old_messages"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "absent-headcount",
+   "kind": "negative",
+   "answer": "提供されたデータの中には、来年の採用計画の人数に関する情報は見つかりませんでした。",
+   "abstained": true,
+   "latency_ms": 9864,
+   "replans": 3,
+   "tools": [
+    "search_old_messages",
+    "search_old_messages",
+    "recall_user_memory"
+   ],
+   "faithfulness": 1.0
+  },
+  {
+   "key": "ambiguous-reschedule",
+   "kind": "ambiguous",
+   "answer": "Bạn muốn dời cuộc họp nào ạ (buổi review thiết kế thứ Tư, họp kế hoạch sáng thứ Ba, hay họp với khách hàng chiều thứ Ba)? Và bạn muốn dời sang thời gian nào?",
+   "asked_back": true,
+   "latency_ms": 9548,
+   "replans": 3,
+   "tools": [
+    "list_calendar_events",
+    "search_old_messages"
+   ]
+  },
+  {
+   "key": "ambiguous-remind",
+   "kind": "ambiguous",
+   "answer": "Which report would you like to be reminded about? (e.g., the weekly report, the quarterly report, or the performance report?)",
+   "asked_back": true,
+   "latency_ms": 8702,
+   "replans": 3,
+   "tools": [
+    "extract_actions",
+    "search_old_messages"
+   ]
+  }
+ ]
+}
