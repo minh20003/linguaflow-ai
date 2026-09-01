@@ -150,6 +150,10 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     if (/(^|\s)@assistant(?=\s|$)/i.test(text)) mentions.push({ type: 'assistant' });
     onSendMessage(text.trim(), replyTo?.id, mentions);
     setText('');
+    // The reply is spent once it has been sent. Leaving the banner up meant the
+    // next message silently attached itself to the same quoted message unless
+    // the person noticed the strip and dismissed it by hand.
+    onCancelReply();
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -161,7 +165,11 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       setActiveMention((current) => (current + (e.key === 'ArrowDown' ? 1 : mentionOptions.length - 1)) % mentionOptions.length);
       return;
     }
-    if (mentionOptions.length && e.key === 'Tab') {
+    // Enter completes the highlighted mention while the list is open, and only
+    // sends once it has closed. Tab alone was not enough: with the list on
+    // screen and "@assistant" highlighted, Enter is what everybody presses, and
+    // it used to fall through and send the half-typed "@" as the message.
+    if (mentionOptions.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) {
       e.preventDefault();
       insertMention(mentionOptions[activeMention]);
       return;
@@ -267,7 +275,13 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             await onSendVoice(file, replyTo?.id, (stage) => {
               if (mountedRef.current) setRecorderStage(stage);
             });
-            if (mountedRef.current) setRecorderStage('idle');
+            if (mountedRef.current) {
+              setRecorderStage('idle');
+              // Spent here for the same reason as a typed message. Cleared only
+              // on success: a failed send leaves the reply in place, because
+              // the person will try again and would have to re-pick it.
+              onCancelReply();
+            }
           } catch (error) {
             failRecording(
               error instanceof VoiceRecorderError
