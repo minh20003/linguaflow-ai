@@ -11,7 +11,6 @@
 | Thành viên | Vai trò chính | Vai trò phụ |
 |---|---|---|
 | Nguyễn Thị Trà My | Trưởng nhóm / AI | Backend |
-| Nguyễn Văn Hưởng | AI | Knowledge Base |
 | Nguyễn Ngọc Thuận | Frontend | Tester |
 | Đinh Quang Minh | Backend | Knowledge Base |
 
