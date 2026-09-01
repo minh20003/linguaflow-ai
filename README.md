@@ -226,8 +226,8 @@ Two demo accounts created by `make reset-db`:
 
 | Email | Password | Preferred Language | Role |
 |-------|----------|-------------------|------|
-| member@test.com | testpass123 | English (en) | member |
-| admin@test.com | adminpass123 | Vietnamese (vi) | admin |
+| member@test.com | 3d0aaa7e6e62234dcd3a79ebfbf6efb33d92ba859bc7c725 | English (en) | member |
+| admin@test.com | ec265d395737c0e1de387421c5f93f0aece9ed62f1f717ea | Vietnamese (vi) | admin |
 
 ## Tests
 
