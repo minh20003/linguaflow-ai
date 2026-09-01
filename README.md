@@ -312,7 +312,6 @@ on separate branches.
 | Member | Primary role | Secondary role |
 |---|---|---|
 | Nguyễn Thị Trà My | Team lead / AI | Backend |
-| Nguyễn Văn Hưởng | AI | Knowledge base |
 | Nguyễn Ngọc Thuận | Frontend | Testing |
 | Đinh Quang Minh | Backend | Knowledge base |
 
