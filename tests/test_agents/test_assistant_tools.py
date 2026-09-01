@@ -319,3 +319,57 @@ def test_the_planner_cannot_choose_a_reminder_lead_time():
     fields = _registry()["propose_calendar_event"].schema.model_fields
 
     assert "reminder_minutes_before" not in fields
+
+
+def test_every_tool_forwards_only_keywords_its_service_will_accept():
+    """A tool whose call site drifts from its service raises on every run.
+
+    Found by the evaluation harness rather than by this suite:
+    `recall_user_memory` passed `top_n=` to `recall`, which names that argument
+    `top_k`, so the tool raised `TypeError` every single time it was dispatched
+    and the assistant simply had no memory. Nothing above it noticed, because a
+    tool that fails is reported as a failed step and the run continues.
+
+    The check is static, over the registry source, so it covers tools added
+    later without anybody remembering to extend it.
+    """
+    import ast
+    import importlib
+    import inspect
+    import pathlib
+
+    source = pathlib.Path("src/agents/tools/registry.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    # Services are imported inside the tool bodies to keep the module cheap to
+    # import, so the names are collected from every ImportFrom in the file.
+    imported: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("src."):
+            for alias in node.names:
+                imported[alias.asname or alias.name] = node.module
+
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        module = imported.get(node.func.id)
+        if module is None:
+            continue
+        target = getattr(importlib.import_module(module), node.func.id, None)
+        if not callable(target) or inspect.isclass(target):
+            continue
+        parameters = inspect.signature(target).parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                continue
+            assert keyword.arg in parameters, (
+                f"registry.py:{node.lineno} calls {node.func.id}"
+                f"({keyword.arg}=...), which {module} does not accept"
+            )
+            checked += 1
+
+    # A sweep that silently matches nothing would pass forever.
+    assert checked >= 5

@@ -1,19 +1,32 @@
-# LinguaFlow (P-217) — Trình bày Dự án & Pitch Deck Cập nhật
+# LinguaFlow (P-217)
 
 **Tên đề tài:** AI Agent Dịch tin nhắn đa ngôn ngữ Real-time & Trợ lý Hội thoại Thông minh  
 **Nhóm thực hiện:** 4U · **Chương trình:** VinUni AI20K Build Phase  
-**Phiên bản cập nhật:** 2.0 (Đã bổ sung Phân hệ **Assistant Agent**, Đánh giá **Golden Set**, **Glossary Mining** & **Kết quả Nghiệm thu**)
+**Phiên bản:** 3.0 — cập nhật 01/09/2026  
+**Bổ sung so với 2.0:** tin nhắn thoại & phiên âm, phạm vi đọc của trợ lý, đề xuất lịch fan-out cho cả nhóm, giao diện 14 ngôn ngữ, và định hướng thương mại hoá
+**Link demo**: https://c3-lingua-flow-217.dquangminh2003.id.vn/
+
+**Đội ngũ triển khai — nhóm 4U**
+
+| Thành viên | Vai trò chính | Vai trò phụ |
+|---|---|---|
+| Nguyễn Thị Trà My | Trưởng nhóm / AI | Backend |
+| Nguyễn Văn Hưởng | AI | Knowledge Base |
+| Nguyễn Ngọc Thuận | Frontend | Tester |
+| Đinh Quang Minh | Backend | Knowledge Base |
+
+Bốn người làm song song trong 6 tuần trên các nhánh riêng. Mỗi người giữ thêm một vai phụ ở lĩnh vực của người khác — đó là lý do `docs/CONTRACT.md` tồn tại và luôn được sửa **trước** khi viết code: bốn người cùng chạm vào một schema thì tên trường phải chốt trước, không phải hoà giải sau.
 
 ---
 
-## 📋 Mục lục
+## Mục lục
 
 1. [Bài toán & Khảo sát Thị trường](#1-bài-toán--khảo-sát-thị-trường)
-2. [Giải pháp Kỹ thuật — Kiến trúc Song Agent (Dual-Agent Architecture)](#2-giải-pháp-kỹ-thuật--kiến-trúc-song-agent-dual-agent-architecture)
-3. [Kỹ thuật Xử lý các Case Khó (Advanced Edge Case Techniques)](#3-kỹ-thuật-xử-lý-các-case-khó-advanced-edge-case-techniques)
-4. [Hệ thống Chấm điểm & Đánh giá (Evaluation Framework)](#4-hệ-thống-chấm-điểm--đánh-giá-evaluation-framework)
-5. [Kết quả Nghiệm thu Sản phẩm (Product Acceptance Results)](#5-kết-quả-nghiệm-thu-sản-phẩm-product-acceptance-results)
-6. [Hướng Phát triển & Lộ trình Doanh nghiệp (Future Roadmap)](#6-hướng-phát-triển--lộ-trình-doanh-nghiệp-future-roadmap)
+2. [Giải pháp Kỹ thuật — Kiến trúc Agent](#2-giải-pháp-kỹ-thuật--kiến-trúc-song-agent-dual-agent-architecture)
+3. [Kỹ thuật Xử lý các Case khó](#3-kỹ-thuật-xử-lý-các-case-khó-advanced-edge-case-techniques)
+4. [Hệ thống Chấm điểm & Đánh giá](#4-hệ-thống-chấm-điểm--đánh-giá-evaluation-framework)
+5. [Kết quả thu được](#5-kết-quả-thu-được)
+6. [Hướng tới người dùng thật](#6-hướng-tới-người-dùng-thật)
 
 ---
 
@@ -51,24 +64,11 @@ graph LR
     Gap --> P4["Song Agent: Dịch real-time<br/>+ Trợ lý trích xuất Task/Lịch hẹn"]
 ```
 
-#### Bảng so sánh tính năng đối thủ & LinguaFlow:
-
-| Tiêu chí | Google Translate | DeepL | ChatGPT / Claude | LinguaFlow (P-217) |
-|---|:---:|:---:|:---:|:---:|
-| **Dịch Real-time WebSocket** | ✗ | ✗ | ✗ | **✓ (Streaming < 1.5s)** |
-| **Nhớ ngữ cảnh 3-5 tin gần nhất** | ✗ | ✗ | ✓ | **✓ (Context Injection)** |
-| **Glossary theo đối tượng đọc** | ✗ | △ (Tĩnh) | ✗ | **✓ (Internal vs Client)** |
-| **Tự khai phá thuật ngữ (Mining)** | ✗ | ✗ | ✗ | **✓ (Cosine Clustering + Admin Approval)** |
-| **Trợ lý trích xuất Task & Lịch** | ✗ | ✗ | △ (Hỏi riêng) | **✓ (Assistant Agent + Google Calendar)** |
-| **Bảo mật RAG & Consent Scope** | ✗ | ✗ | ✗ | **✓ (ADR-30 & ADR-16)** |
-
-*(✓ = Tốt · △ = Hạn chế · ✗ = Chưa hỗ trợ)*
-
 ---
 
-## 2. Giải pháp Kỹ thuật — Kiến trúc Song Agent (Dual-Agent Architecture)
+## 2. Giải pháp Kỹ thuật — Kiến trúc Agent
 
-LinguaFlow xây dựng kiến trúc **Song Agent chạy song song** trên cùng một hạ tầng (Auth, PostgreSQL + pgvector, WebSocket Gateway, Observability Tracing):
+LinguaFlow xây dựng kiến trúc Agent chạy song song trên cùng một hạ tầng (Auth, PostgreSQL + pgvector, WebSocket Gateway, Observability Tracing):
 
 ```mermaid
 graph TB
@@ -108,26 +108,33 @@ graph TB
   3. **Task & Reminder Extraction:** Trích xuất hành động, thời hạn, người phụ trách từ nội dung chat.
   4. **Human-in-the-Loop Confirmation:** Hiển thị popup xác nhận trước khi ghi dữ liệu hoặc đồng bộ Google Calendar.
 
+- **Phạm vi đọc do nơi hỏi quyết định, không do câu hỏi:**
+
+| Hỏi ở đâu | Trợ lý đọc được gì |
+|:---|:---|
+| Chat riêng với trợ lý | **Mọi hội thoại** tài khoản là thành viên, kèm danh sách thành viên từng nhóm |
+| `@assistant` trong một hội thoại | **Đúng hội thoại đó**, không gì khác |
+
 ---
 
-## 3. Kỹ thuật Xử lý các Case Khó (Advanced Edge Case Techniques)
+## 3. Kỹ thuật Xử lý các Case khó
 
 Trong quá trình phát triển, nhóm đã áp dụng các kỹ thuật chuyên sâu để giải quyết 5 nhóm bài toán khó (Edge Cases):
 
-### 🛠️ Case 1: Tối ưu Độ trễ (Latency) & Chi phí gọi LLM
+### Case 1: Tối ưu Độ trễ (Latency) & Chi phí gọi LLM
 - **Bài toán:** Gọi LLM cho mọi tin nhắn gây tăng latency (2.6s/tin) và tốn kém token.
 - **Kỹ thuật xử lý:** **Tách lọc ngôn ngữ 2 tầng (2-tier Language Detection)**.
   - Tầng 1: Chạy `langdetect` cục bộ (~2ms, 0đ chi phí). Nguồn và đích trùng nhau ➔ Trả về ngay không gọi LLM.
   - Tầng 2: Chỉ khi `langdetect` mâu thuẫn với thông tin người gửi mới gọi LLM phân xử.
 - **Kết quả:** Giảm latency từ **2610ms xuống 1501ms** (~42.5%), tiết kiệm hơn 35% chi phí API.
 
-### 🛠️ Case 2: Xử lý Ngữ cảnh & Thuật ngữ theo Đối tượng đọc (Audience Awareness)
+### Case 2: Xử lý Ngữ cảnh & Thuật ngữ theo Đối tượng đọc (Audience Awareness)
 - **Bài toán:** Từ "deploy" gửi cho Dev nội bộ nên giữ nguyên `deploy`, nhưng gửi cho Khách hàng nên dịch thành `triển khai`.
 - **Kỹ thuật xử lý:** **Honorific & Audience Profile Fan-out**.
   - Hệ thống lưu trữ `honorific_profile` (`senior`, `peer`, `junior`, `client`).
   - Node `customize` trong LangGraph tra cứu bảng `glossary_entries` dựa theo cặp `(source_lang, target_lang, audience)`.
 
-### 🛠️ Case 3: Lọc Nhiễu & Tự động Đề xuất Glossary từ Chỉnh sửa Người dùng
+### Case 3: Lọc Nhiễu & Tự động Đề xuất Glossary từ Chỉnh sửa Người dùng
 - **Bài toán:** Người dùng sửa bản dịch nhưng có thể sửa sai, sửa ngẫu nhiên hoặc gõ nhầm.
 - **Kỹ thuật xử lý:** **Semantic Embedding Clustering & Multi-user Verification**.
   - Lưu các chỉnh sửa vào `correction_log` (khi người dùng bật consent).
@@ -135,13 +142,13 @@ Trong quá trình phát triển, nhóm đã áp dụng các kỹ thuật chuyên
   - **Điều kiện lọc khắt khe:** Chỉ tạo `GlossaryProposal` khi thỏa mãn đồng thời: `occurrence_count >= 3` VÀ `distinct_user_count >= 2` (phải có ít nhất 2 người khác nhau cùng sửa giống nhau).
   - Admin duyệt trên Bảng điều khiển (`/admin` GlossaryPanel) trước khi thành `GlossaryEntry` chính thức.
 
-### 🛠️ Case 4: An toàn Quyền riêng tư & Bảo vệ PII (Guardrails & Privacy)
+### Case 4: An toàn Quyền riêng tư & Bảo vệ PII (Guardrails & Privacy)
 - **Bài toán:** Tin nhắn chứa thông tin nhạy cảm (mật khẩu, STK, email) hoặc dữ liệu riêng tư trong hội thoại nhóm.
 - **Kỹ thuật xử lý:**
-  - **Assistant Consent Scope (ADR-30):** Bắt buộc người dùng cấp quyền đọc hội thoại mới cho phép Assistant truy cập RAG context.
-  - **Privacy-Preserving Telemetry (ADR-16):** Mọi log tracing (Braintrust/Langfuse) và log lỗi hệ thống đều được làm sạch, mask PII, chỉ ghi nhận metadata (token count, latency, error code) không lưu trữ văn bản thô của người dùng.
+  - **Assistant Consent Scope:** Bắt buộc người dùng cấp quyền đọc hội thoại mới cho phép Assistant truy cập RAG context.
+  - **Privacy-Preserving Telemetry:** Mọi log tracing (Braintrust/Langfuse) và log lỗi hệ thống đều được làm sạch, mask PII, chỉ ghi nhận metadata (token count, latency, error code) không lưu trữ văn bản thô của người dùng.
 
-### 🛠️ Case 5: Đảm bảo Hệ thống Không Bao giờ Cắt đứt Hội thoại (Zero-Crash Resilience)
+### Case 5: Đảm bảo Hệ thống Không Bao giờ Cắt đứt Hội thoại (Zero-Crash Resilience)
 - **Bài toán:** LLM Provider (Groq/DeepSeek) bị rate-limit, timeout hoặc ngắt kết nối.
 - **Kỹ thuật xử lý:** **2-Level Graceful Fallback Architecture**.
   - Tầng 1: Tự động chuyển hướng sang Provider dự phòng (`deep-translator`).
@@ -191,56 +198,156 @@ graph TD
 
 ---
 
-## 5. Kết quả Nghiệm thu Sản phẩm (Product Acceptance Results)
+## 5. Kết quả thu được
 
-Sản phẩm đã hoàn tất toàn bộ các mục tiêu MVP và các tính năng nâng cao:
+### 5.1. Ma trận tính năng đã nghiệm thu
 
-### 5.1. Mức độ Hoàn thiện Tính năng (Feature Acceptance Matrix)
-
-| Mã Tính năng | Mô tả Tính năng | Trạng thái Nghiệm thu | Nguồn Kiểm chứng |
+| Mã | Tính năng | Trạng thái | Nơi kiểm chứng |
 |:---:|:---|:---:|:---|
-| **F-01** | Xác thực JWT & Cài đặt ngôn ngữ đích | ✅ **100%** | `src/api/auth.py` |
-| **F-02** | Chat real-time 1-1 và Nhóm qua WebSocket | ✅ **100%** | `src/api/chat.py` |
-| **F-03** | Dịch thuật nhận thức ngữ cảnh (3-5 tin gần nhất) | ✅ **100%** | `src/agents/nodes/` |
-| **F-04** | Toggle xem bản gốc / bản dịch linh hoạt | ✅ **100%** | `frontend/src/` |
-| **F-05** | Human-in-the-Loop: Feedback Up/Down & Chỉnh sửa | ✅ **100%** | `src/api/feedback.py` |
-| **F-06** | Cấu hình bảo mật & Xóa ngữ cảnh tạm thời | ✅ **100%** | `docs/GUARDRAILS.md` |
-| **F-07** | **Glossary Mining & Bảng duyệt Admin** | ✅ **Hoàn thành sớm** | `src/services/glossary_mining.py` |
-| **F-08** | **Assistant Agent (RAG, Task & Calendar Sync)** | ✅ **Hoàn thành sớm** | `src/agents/assistant/` |
+| **F-01** | Xác thực JWT, OTP đăng ký, đặt ngôn ngữ dịch & ngôn ngữ giao diện | ✓ | `src/api/routes.py`, `tests/test_api/test_auth.py` (23 test) |
+| **F-02** | Chat real-time 1-1 và nhóm qua WebSocket | ✓ | `src/api/websocket.py`, `src/services/connection_manager.py` |
+| **F-03** | Dịch có ngữ cảnh, phát hiện ngôn ngữ hai tầng, fallback 2 mức | ✓ | `src/agents/graph.py`, `src/agents/nodes/translation.py` |
+| **F-04** | Bật/tắt bản gốc — bản dịch trên từng tin nhắn | ✓ | `frontend/src/features/chat/components/MessageBubble.tsx` |
+| **F-05** | Human-in-the-loop: upvote/downvote và sửa bản dịch | ✓ | `src/services/correction_log.py` |
+| **F-06** | Guardrail đầu vào/đầu ra, giới hạn độ dài, chống giả mạo thẻ ngữ cảnh | ✓ | `src/agents/guardrails.py`, `docs/GUARDRAILS.md` |
+| **F-07** | Khai phá thuật ngữ tự động + bảng duyệt của quản trị | ✓ | `src/services/glossary_mining.py` |
+| **F-08** | Assistant Agent: RAG riêng, trích việc, lịch cá nhân, đồng bộ Google Calendar | ✓ | `src/agents/assistant/`, `src/services/calendar.py` |
+| **F-09** | Tin nhắn thoại: ghi âm → phiên âm (Gemini STT) → dịch → trích việc | ✓ | `src/services/voice_transcription.py`, `src/services/audio_conversion.py` |
+| **F-10** | Gọi thoại/video 1-1 qua WebRTC | ✓ | `src/services/rtc.py` |
+| **F-11** | Giao diện 14 ngôn ngữ theo cài đặt tài khoản | ✓ | `frontend/src/features/chat/i18n.ts` (576 khóa), `scripts/check_ui_keys.py` |
 
-### 5.2. Kết quả Automated Test Suite
+### 5.2. Kiểm thử tự động
 
-- **Tổng số Unit & Integration Tests:** **100% PASSED**.
-  - `tests/test_services/test_glossary_mining.py`: **16/16 PASSED** (Khai phá thuật ngữ, gom cụm vector, lọc trùng).
-  - Full Glossary & Admin Suite (`tests/test_services/test_glossary*.py` & `test_admin_glossary.py`): **52/52 PASSED**.
-  - Assistant & Telemetry Suite (`tests/test_services/test_assistant*.py`): **PASSED**.
+| Bộ | Số lượng | Kết quả |
+|:---|:---:|:---|
+| Backend (`pytest tests/`) | **1236** | toàn bộ đạt, ~22 phút |
+| Frontend (`vitest`) | **53** | toàn bộ đạt |
+| Kiểu tĩnh (`tsc --noEmit`) | — | 0 lỗi |
+| Lint (`ruff`, `eslint`) | — | 0 lỗi |
+| Migration | 38 revision | một `head` duy nhất |
 
-### 5.3. Trạng thái Triển khai Thực tế (Live Deployment)
+### 5.3. Kết quả đánh giá chất lượng dịch — kể cả phần chưa đạt
 
-- **Frontend:** Triển khai trên **Vercel** (`linguaflow-4-u3.vercel.app`).
-- **Backend:** Triển khai trên **Railway** (FastAPI + Uvicorn + WebSocket Gateway).
-- **Database:** **PostgreSQL + pgvector** (Supabase/Railway Production DB).
-- **Observability:** Tích hợp **Braintrust / Langfuse** theo dõi latency & token real-time.
+Chạy trên `eval/golden_set.jsonl` (62 mẫu), chấm bằng LLM-as-judge (`mistral-medium` chấm `gemini-3.7-flash`):
+
+| Chỉ số | Mục tiêu | Thực tế | |
+|:---|:---:|:---:|:---|
+| Tỷ lệ đạt (≥ 0.7) | > 80% | **100%** | đạt |
+| Điểm trung bình | > 0.80 | **0.912** | đạt |
+| chrF++ / BLEU / TER | — | 65.6 / 52.2 / 56.9 | đạt |
+| Tuân thủ glossary | 100% | **100%** | đạt |
+| Số lần fallback | 0 | **0** | đạt |
+| **Độ trễ trung bình** | < 2000ms | **2324ms** | **chưa đạt** |
+| **Độ trễ p95** | < 5000ms | **4608ms** | **đạt** |
+| **Đúng ngôn ngữ đích** | 100% | **96,6%** | **chưa đạt** |
+
+### 5.4. Phân tích tính khả thi
+
+Mục này đánh giá khả năng tồn tại của sản phẩm trên bốn trục: khác biệt chức năng so với giải pháp sẵn có, cơ sở kỹ thuật của khác biệt đó, khả năng duy trì, và tính khả thi kinh tế. Mỗi số liệu được dẫn nguồn tại chỗ.
+
+#### 5.4.1. Khác biệt chức năng so với giải pháp sẵn có
+
+Các giải pháp hiện có xử lý ở **mức câu**: nhận một đoạn văn bản, trả về bản dịch, kết thúc. Phạm vi xử lý của LinguaFlow mở rộng thêm một bước — từ nội dung hội thoại tới **hành động được ghi nhận**.
+
+| Bước xử lý | Google Translate / DeepL | Zoom AI Companion / Teams | LinguaFlow |
+|---|:---:|:---:|:---:|
+| Dịch một câu | có | có | có |
+| Giữ ngữ cảnh 3–5 lượt trước | không | trong phiên họp | có |
+| Bề mặt hoạt động | ứng dụng rời | phòng họp, kết thúc khi họp tan | luồng chat, liên tục |
+| Trích cam kết thành mục lịch | không | không | có |
+| Cá thể hoá theo từng người nhận | không | không | một hàng đề xuất / thành viên |
+| Bước xác nhận của người dùng | không áp dụng | không áp dụng | bắt buộc trước khi ghi |
+
+Khác biệt trọng yếu nằm ở ba dòng cuối. Trong quy trình outsourcing và xuất nhập khẩu, cam kết công việc (*"gửi báo giá trước thứ Sáu"*) phát sinh chủ yếu trong chat giữa các cuộc họp, không phải trong cuộc họp. Giải pháp gắn với phòng họp không quan sát được bề mặt này.
+
+#### 5.4.2. Cơ sở kỹ thuật của khác biệt
+
+Chất lượng dịch ở mức câu của DeepL và các mô hình ngôn ngữ lớn là tốt; dự án không có số liệu nào chứng minh điều ngược lại, do bộ đánh giá tại §5.3 chấm trên golden set nội bộ và không so sánh chéo với sản phẩm khác. Khác biệt chức năng vì vậy **không dựa trên giả định chất lượng dịch cao hơn**, mà dựa trên ba đặc điểm ngôn ngữ khiến đơn vị "một câu" không đủ:
+
+| Hiện tượng ngôn ngữ | Hệ quả khi dịch rời từng câu | Cơ chế xử lý trong hệ thống |
+|---|---|---|
+| Tiếng Việt lược chủ ngữ, không đánh dấu thì | *"Gửi rồi nhé"* mất chủ thể, thời điểm và tân ngữ; bộ dịch buộc phải suy đoán | Nạp 3–5 lượt gần nhất vào ngữ cảnh trước khi dịch (`build_context`) |
+| Đại từ xưng hô mã hoá vai vế; tiếng Anh quy về "you" | Dịch chiều ngược lại chọn xưng hô ngẫu nhiên, sai vai vế trong hội thoại với khách hàng | Suy luận hồ sơ hội thoại, giữ trục xưng hô nhất quán (`profile_inference`) |
+| Một thuật ngữ cần hai cách diễn đạt tuỳ người đọc | Glossary tĩnh chỉ có một ánh xạ cho mỗi thuật ngữ | Glossary tra theo đối tượng đọc (nội bộ / khách hàng), bổ sung tự động từ log chỉnh sửa của người dùng |
+
+#### 5.4.3. Khả năng duy trì khác biệt
+
+Về mặt kỹ thuật, các nền tảng lớn **có đủ năng lực triển khai** chức năng tương đương. Khác biệt hiện tại đến từ việc chưa nền tảng nào triển khai, không đến từ rào cản kỹ thuật. Ba yếu tố làm chậm quá trình thu hẹp khoảng cách:
+
+1. **Khác bề mặt vận hành.** Trợ lý gắn với phòng họp chỉ hoạt động trong thời gian họp. Việc mở rộng sang luồng chat liên tục là thay đổi phạm vi sản phẩm, không phải bổ sung tính năng.
+2. **Khác ràng buộc thiết kế.** Tính năng miễn phí đi kèm tối ưu cho độ phủ. Bài toán ở đây có ràng buộc trách nhiệm — hệ thống từ chối đặt lịch khi chưa có múi giờ đáng tin thay vì đặt sai giờ, và không ghi bất kỳ mục lịch nào trước bước xác nhận của người dùng (ADR-30, ADR-34). Ràng buộc này làm giảm tỷ lệ tự động hoá nhưng là điều kiện để bán theo kết quả.
+3. **Dữ liệu tích luỹ không sao chép được.** Glossary theo đối tượng đọc được bồi đắp từ chính log chỉnh sửa của doanh nghiệp sử dụng. Chức năng có thể sao chép; dữ liệu vận hành của một khách hàng cụ thể thì không.
+
+#### 5.4.4. Tính khả thi kinh tế
+
+Số liệu lấy từ mô hình chi phí đã nêu, đối chiếu giá API tại thời điểm 27/08/2026.
+
+| Chỉ tiêu | Giá trị | Nguồn |
+|---|---:|---|
+| Giá bán đề xuất | $1,50 / cuộc họp hoàn tất | mô hình định giá theo kết quả |
+| Chi phí biến đổi thực tế | $0,4102 / cuộc họp hoàn tất | bóc tách LLM + STT + hạ tầng + retry + HITL |
+| Biên lợi nhuận gộp | 72,65% | suy ra từ hai dòng trên |
+| Ngưỡng hoà vốn (biên 60%) | tỷ lệ tự xử lý ≥ 71,63% | giải phương trình breakeven |
+| Tỷ lệ tự xử lý đo được | 82,0% | bộ đánh giá Day 21–22 |
+
+Biên độ an toàn hiện tại là 10,37 điểm phần trăm trên ngưỡng hoà vốn. Mức giá này nằm trong khả năng chi trả của phân khúc doanh nghiệp 20–200 nhân sự, không phụ thuộc vào định giá enterprise.
+
+#### 5.4.5. Rủi ro đã nhận diện
+
+| Rủi ro | Mức độ | Trạng thái hiện tại |
+|---|:---:|---|
+| Tỷ lệ đúng ngôn ngữ đích 96,6% (§5.3) — sai khoảng 1/30 tin nhắn, ảnh hưởng trực tiếp cam kết cốt lõi | Cao | Nút `validate_output` đã phát hiện và ghi nhận `wrong_language`; chưa chốt hành vi khi phát hiện — thử lại hay trả nguyên văn |
+| Hệ thống chỉ chạy được một bản sao — vừa là trần công suất, vừa là điểm chết đơn lẻ | Cao | Cần backplane dùng chung trước khi mở rộng |
+| Tỷ lệ tự xử lý 82% đo trên bộ eval, chưa đo trên người dùng thật | Trung bình | Là chỉ số phải đo lại đầu tiên khi có lưu lượng thật |
+| Nền tảng lớn bổ sung chức năng trích cam kết theo từng người | Trung bình | Phụ thuộc dữ liệu tích luỹ (5.4.3) để giữ khác biệt |
+| Luồng phát hiện cam kết timeout ở 10 giây, thất bại không phát tín hiệu | Trung bình | Quan sát được khi chạy thử 01/09; chưa có retry hoặc chỉ báo |
+
+### 5.5. Phiên bản triển khai
+
+| Thành phần | Nơi chạy |
+|:---|:---|
+| Backend + Agent | Ubuntu VPS, container GHCR dựng sẵn, **đúng một bản sao** |
+| Cơ sở dữ liệu | `pgvector/pgvector:pg16` trên cùng VPS, volume bền vững |
+| Frontend | Ubuntu VPS, container GHCR sau Caddy |
+| Quan sát | Braintrust (mặc định) hoặc Langfuse, đổi bằng biến môi trường |
 
 ---
 
-## 6. Hướng Phát triển & Lộ trình Doanh nghiệp (Future Roadmap)
+## 6. Định hướng tương lai tới người dùng thật
 
-Định hướng phát triển tiếp theo tập trung vào việc thương mại hóa và gắn sâu LinguaFlow vào quy trình làm việc của doanh nghiệp:
+### 6.1. Định vị: bán kết quả, không bán phần mềm
 
-```mermaid
-graph TD
-    R1["Giai đoạn 1: Hoàn thiện MVP & Song Agent<br/>(Đã hoàn thành hiện tại)"] 
-    --> R2["Giai đoạn 2: Tích hợp Sâu Doanh nghiệp<br/>(Google Calendar 2-Way Sync + Slack/Teams Bot)"]
-    --> R3["Giai đoạn 3: Enterprise Security & Analytics<br/>(Multi-tenant Isolation + Custom Fine-tuned LLM)"]
-```
+| | Khung A — Phần mềm | **Khung B — Thay thế công việc (đã chọn)** |
+|:---|:---|:---|
+| Cách nói | "Phần mềm trợ lý AI dịch họp và ghi biên bản" | "Đảm bảo 100% cuộc họp đa quốc gia được dịch chuẩn, biên bản & task giao đúng hạn" |
+| Người quyết chi | IT Director | **COO / Head of Operations** |
+| Lấy từ ngân sách | SaaS | **Nhân sự / Vận hành** |
+| Bị so với | Zoom AI Companion ($0), Teams Premium ($10/user) | Thuê phiên dịch part-time ($600–1.000/tháng) |
+| Phản đối lớn nhất | "Đã có Zoom/Teams miễn phí rồi" | "AI dịch sai gây thiệt hại hợp đồng thì ai chịu?" |
 
-### 6.1. Đồng bộ 2 chiều với Google Calendar & Nền tảng Doanh nghiệp
-- Tự động hóa luồng Webhook 2 chiều: Khi sự kiện trên Google Calendar thay đổi, LinguaFlow tự động cập nhật task tương ứng trong app và thông báo qua WebSocket.
-- Đóng gói LinguaFlow thành Plugin/Bot cho **Slack**, **Microsoft Teams** và **Zalo Work**.
+Lý do chọn B: ngân sách vận hành lớn và linh hoạt hơn ngân sách SaaS, vốn bị đọ giá trực tiếp với một sản phẩm giá $0 tích hợp sẵn.
 
-### 6.2. Phân quyền Doanh nghiệp Strict Enterprise RBAC & Privacy
-- Thiết lập ranh giới dữ liệu tuyệt đối giữa **User** và **Admin**: Admin quản lý chi phí, token, duyệt thuật ngữ nhưng **không bao giờ có quyền xem nội dung chat thô hay dữ liệu cá nhân của nhân viên**.
+### 6.2. Đơn vị tính tiền: một "Completed Job"
 
-### 6.3. Bảng điều khiển Quản trị Chất lượng & Tối ưu Chi phí (Admin Analytics)
-- Xây dựng Dashboard trực quan hóa xu hướng điểm **BLEU**, tỷ lệ **Upvote/Downvote**, chi phí token theo ngày/theo model, và hiệu suất đề xuất Glossary tự động.
+Mô hình đề xuất là **Outcome-based** (Attribution 8/10 × Autonomy cao), giá $1,50/completed meeting, với ngưỡng hòa vốn:
+
+| Containment | Cost/Completed Job | Gross Margin | |
+|:---:|:---:|:---:|:---|
+| 60,0% | $0,6240 | 58,4% | cảnh báo |
+| **71,63%** | $0,6000 | **60,0%** | ngưỡng hòa vốn |
+| **82,0%** (đo thực) | **$0,4102** | **72,65%** | an toàn |
+
+**con số 82% đó đến từ eval, chưa phải từ người dùng thật.** Việc đầu tiên khi có người dùng là đo lại containment thật và đối chiếu với ngưỡng 71,63% — dưới ngưỡng đó thì mô hình giá không còn lãi lành mạnh.
+
+### 6.3. Kênh 90 ngày đầu: Partner-Led
+
+Kênh chốt là **Partner-Led** qua liên minh tư vấn chuyển đổi số & IT Outsourcing (FPT Digital, Rikkei Soft, VNITO Alliance), chia sẻ 25% doanh thu. Bề mặt tích hợp mục tiêu: **Google Meet Chrome Extension** và **Zoom App Bot**, xuất biên bản & action item thẳng vào Slack/Notion của doanh nghiệp.
+
+Khoảng cách kỹ thuật giữa bản hiện tại và bề mặt đó là rõ ràng: LinguaFlow hôm nay là một ứng dụng chat độc lập; để vào được cuộc họp Meet/Zoom cần một lớp bot tham gia phòng họp và nhận luồng audio — hạ tầng phiên âm và trích việc thì đã sẵn sàng, phần thiếu là đường vào.
+
+### 6.4. Nâng cấp hệ thống hiện có
+
+- **Đồng bộ hai chiều Google Calendar** đã có một chiều (đẩy lên) và pull định kỳ 300s; cần webhook để sự kiện đổi bên Google phản ánh ngược lại tức thì.
+- **Ranh giới dữ liệu Admin/User**: quản trị xem chi phí, token, duyệt thuật ngữ — **không bao giờ đọc nội dung chat thô**. `message_visibility.public_only()` đã là nền cho việc này.
+- **Bảng điều khiển chất lượng**: trực quan hóa xu hướng chrF++/BLEU, tỷ lệ upvote, chi phí token theo ngày và theo model, hiệu suất đề xuất glossary.
+- **Mở rộng grammar thời gian**: hiện đã hiểu "ngày kia", "thứ 6 tuần sau", "6 giờ rưỡi", "3pm"; chưa hiểu mốc chỉ có giờ mà không có ngày, và chưa hiểu tiếng Việt không dấu.

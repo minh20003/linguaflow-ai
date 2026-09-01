@@ -1,0 +1,210 @@
+{
+ "run_id": "20260901-155826",
+ "started_at": "2026-09-01T15:58:26.520077+00:00",
+ "offline": true,
+ "embedding_override": "",
+ "top_k": 8,
+ "top_n": 4,
+ "rows": [
+  {
+   "tier": "S",
+   "strategy": "message",
+   "arrangement": "vector",
+   "chunks": 50,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 0.917,
+   "mrr": 0.889,
+   "hit_rate": 1.0,
+   "chance_recall": 0.08,
+   "chance_hit_rate": 0.08,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 233,
+   "query_ms": 20
+  },
+  {
+   "tier": "S",
+   "strategy": "message",
+   "arrangement": "hybrid",
+   "chunks": 50,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 0.855,
+   "mrr": 0.806,
+   "hit_rate": 1.0,
+   "chance_recall": 0.08,
+   "chance_hit_rate": 0.08,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 233,
+   "query_ms": 28
+  },
+  {
+   "tier": "S",
+   "strategy": "turn_window",
+   "arrangement": "vector",
+   "chunks": 7,
+   "queries": 6,
+   "recall": 0.833,
+   "precision": 0.25,
+   "ndcg": 0.75,
+   "mrr": 0.722,
+   "hit_rate": 0.833,
+   "chance_recall": 0.571,
+   "chance_hit_rate": 0.571,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 0.75
+   },
+   "index_ms": 111,
+   "query_ms": 12
+  },
+  {
+   "tier": "S",
+   "strategy": "turn_window",
+   "arrangement": "hybrid",
+   "chunks": 7,
+   "queries": 6,
+   "recall": 0.833,
+   "precision": 0.25,
+   "ndcg": 0.688,
+   "mrr": 0.639,
+   "hit_rate": 0.833,
+   "chance_recall": 0.571,
+   "chance_hit_rate": 0.571,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 0.75
+   },
+   "index_ms": 111,
+   "query_ms": 21
+  },
+  {
+   "tier": "S",
+   "strategy": "token_window",
+   "arrangement": "vector",
+   "chunks": 3,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.389,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 101,
+   "query_ms": 9
+  },
+  {
+   "tier": "S",
+   "strategy": "token_window",
+   "arrangement": "hybrid",
+   "chunks": 3,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.389,
+   "ndcg": 0.938,
+   "mrr": 0.917,
+   "hit_rate": 1.0,
+   "chance_recall": 1.0,
+   "chance_hit_rate": 1.0,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 101,
+   "query_ms": 19
+  },
+  {
+   "tier": "S",
+   "strategy": "semantic_split",
+   "arrangement": "vector",
+   "chunks": 50,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 0.917,
+   "mrr": 0.889,
+   "hit_rate": 1.0,
+   "chance_recall": 0.08,
+   "chance_hit_rate": 0.08,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 131,
+   "query_ms": 19
+  },
+  {
+   "tier": "S",
+   "strategy": "semantic_split",
+   "arrangement": "hybrid",
+   "chunks": 50,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.25,
+   "ndcg": 0.855,
+   "mrr": 0.806,
+   "hit_rate": 1.0,
+   "chance_recall": 0.08,
+   "chance_hit_rate": 0.08,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 131,
+   "query_ms": 31
+  },
+  {
+   "tier": "S",
+   "strategy": "parent_child",
+   "arrangement": "vector",
+   "chunks": 9,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.5,
+   "ndcg": 0.938,
+   "mrr": 0.917,
+   "hit_rate": 1.0,
+   "chance_recall": 0.444,
+   "chance_hit_rate": 0.444,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 128,
+   "query_ms": 20
+  },
+  {
+   "tier": "S",
+   "strategy": "parent_child",
+   "arrangement": "hybrid",
+   "chunks": 9,
+   "queries": 6,
+   "recall": 1.0,
+   "precision": 0.5,
+   "ndcg": 1.0,
+   "mrr": 1.0,
+   "hit_rate": 1.0,
+   "chance_recall": 0.444,
+   "chance_hit_rate": 0.444,
+   "recall_by_kind": {
+    "ambiguous": 1.0,
+    "single_hop": 1.0
+   },
+   "index_ms": 128,
+   "query_ms": 31
+  }
+ ]
+}

@@ -281,6 +281,23 @@ Summary:
 - **Database**: local PostgreSQL + pgvector durable volume
 - **Observability**: Braintrust (optional, default) or Langfuse
 
+## Team
+
+Group 4U, VinUni AI20K Build Phase. Six weeks, four people working in parallel
+on separate branches.
+
+| Member | Primary role | Secondary role |
+|---|---|---|
+| Nguyễn Thị Trà My | Team lead / AI | Backend |
+| Nguyễn Văn Hưởng | AI | Knowledge base |
+| Nguyễn Ngọc Thuận | Frontend | Testing |
+| Đinh Quang Minh | Backend | Knowledge base |
+
+Everybody holds a second role in somebody else's area, which is why
+`docs/CONTRACT.md` exists and is edited *before* the code it describes: four
+people touching one schema have to agree on a field name up front rather than
+reconcile two of them afterwards.
+
 ## Security Note
 
 LinguaFlow uses server-side AI translation:

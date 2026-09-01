@@ -228,6 +228,11 @@ Tài liệu ghi nhận theo tuần: mục tiêu, kết quả đạt được, v�
 | Assistant | Cải thiện hiểu biểu đạt thời gian tự nhiên, gợi ý proposal theo múi giờ người nói, giữ mention/private chat trong đúng phạm vi và cho assistant private đọc ngữ cảnh tài khoản theo quyền. |
 | Reliability | Hoàn thiện kiểm thử cho rate limit, GZip, cursor pagination, translation cache, system health và circuit breaker; kết quả kiểm thử runtime hiện tại đạt 54/54. |
 | Môi trường | Kiểm tra Alembic revision local, bổ sung migration còn thiếu và xác nhận backend health endpoint hoạt động. |
+| Đề xuất theo nhóm | Một tin nhắn sinh ra đề xuất cho **từng thành viên**, trạng thái duyệt/từ chối độc lập; thời gian quy đổi một lần theo đồng hồ người nói rồi sao chép sang mọi hàng |
+| Phạm vi đọc của trợ lý | Chat riêng đọc mọi hội thoại của tài khoản; `@assistant` trong nhóm chỉ đọc hội thoại đó (`src/services/assistant_scope.py`) |
+| Quy tắc ngôn ngữ | Trả lời theo ngôn ngữ câu hỏi; nội dung trong luồng chat theo ngôn ngữ dịch; chrome, ngày giờ và hộp nhiệm vụ theo ngôn ngữ giao diện |
+| Giao diện đa ngôn ngữ | 219 chuỗi đưa vào catalogue chung; 576 khoá × 14 ngôn ngữ; `scripts/check_ui_keys.py` đối chiếu mọi lượt tra với catalogue |
+| Ngữ pháp thời gian | Tách thành `src/services/relative_time.py`; hiểu "ngày kia", "thứ 6 tuần sau", "6 giờ rưỡi", "3pm"; từ chối thay vì đoán khi không đủ căn cứ |
 
 ### 6.3. Vướng mắc và biện pháp xử lý
 
@@ -236,6 +241,9 @@ Tài liệu ghi nhận theo tuần: mục tiêu, kết quả đạt được, v�
 | API history có nguy cơ trả kiểu dữ liệu cũ khi dùng cursor pagination | Điều chỉnh nhánh trả response và kiểm thử phân trang theo cursor | Cursor pagination trả đúng envelope, không lặp hoặc bỏ sót message |
 | Database local có thể thiếu migration dù source đã cập nhật | Đối chiếu Alembic head, chạy migration và kiểm tra schema trước khi test luồng đăng nhập | Môi trường local khớp schema hiện hành |
 | Dịch vụ ngoài lỗi liên tiếp gây latency lớn | Bổ sung circuit breaker, cache và metric health để fail-fast/có thể quan sát | Cơ chế runtime có kiểm thử trạng thái lỗi và phục hồi |
+| Endpoint trả về tiêu đề **đã dịch**, trong khi client gửi `title` ngược lên khi duyệt — bản dịch máy ghi đè lên câu người dùng thật sự nói | Tách trường chỉ đọc `display_title`; `title` luôn giữ giá trị đã lưu | Đã khắc phục; phát hiện bởi rà soát mã nguồn chứ không phải bởi kiểm thử |
+| Khoá catalogue bị tra nhưng không tồn tại: hiển thị đúng ở tiếng Anh, im lặng sai ở 13 ngôn ngữ còn lại | Viết `scripts/check_ui_keys.py`, thoát khác 0 khi thiếu khoá | Bổ sung 9 khoá thiếu; loại lỗi này không còn vô hình |
+| Hook React bị đặt vào hàm thường trong đợt chuyển đổi cơ học | `tsc` không phát hiện; quy tắc `rules-of-hooks` của eslint bắt được | Đã khắc phục; ghi nhận typecheck không đủ làm lưới an toàn cho loại thay đổi này |
 
 ### 6.4. Bài học rút ra
 

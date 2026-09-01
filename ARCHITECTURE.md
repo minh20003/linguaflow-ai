@@ -90,7 +90,15 @@ Cơ chế JWT (`src/core/security.py`), tài khoản được định danh sẵn
 
 Trình tự gọi giữa các tầng: xem [Sequence Diagram](docs/architecture_diagram.md#5-sequence-diagram).
 
-### 3.3. AI Agent (LangGraph)
+### 3.3. Tầng agent (LangGraph)
+
+Hệ thống có **hai agent**, xây dựng ở hai pha khác nhau và không dùng chung đồ
+thị. §3.3.1 mô tả Translation Agent, có từ pha đầu và phục vụ F-01..F-06.
+§3.3.2 mô tả Assistant Agent, **bổ sung ở pha sau** theo yêu cầu của đề bài và
+thiết kế trong `docs/NewFeature.md`. Agent thứ hai đặt cạnh agent thứ nhất, không
+thay đổi nó: mọi tính chất của luồng dịch ở §3.3.1 giữ nguyên sau khi bổ sung.
+
+#### 3.3.1. Translation Agent (pha đầu)
 
 | Hạng mục | Mô tả |
 |---|---|
@@ -102,6 +110,28 @@ Trình tự gọi giữa các tầng: xem [Sequence Diagram](docs/architecture_d
 
 Việc lựa chọn provider chính thức được quyết định trên cơ sở kết quả đánh giá Golden Set.
 
+#### 3.3.2. Assistant Agent (bổ sung ở pha sau)
+
+Agent thứ hai, xây dựng sau khi luồng dịch đã chạy ổn định. Nó đọc nội dung hội
+thoại để tóm tắt, trích cam kết thành đề xuất lịch, trả lời câu hỏi về những gì
+đã trao đổi, và đặt nhắc. Đồ thị và tính chất thiết kế khác hẳn agent dịch, nên
+được tách thành đồ thị riêng (`src/agents/assistant/graph.py`).
+
+| Hạng mục | Mô tả |
+|---|---|
+| Loại agent | Planner–executor có vòng lặp replan. Khác agent dịch ở chỗ tập hành động **không** cố định trước: người dùng hỏi một câu tự do, agent phải tự chọn công cụ và số bước |
+| Chuỗi node | `check_consent` → `load_memory` → `plan` → `run_tools` → (`clarify` \| `human_confirm` → `execute`) → `ask_permission` → `respond` |
+| Cổng người duyệt | `human_confirm` là một `interrupt` của LangGraph. Mọi ghi ra lịch đều dừng ở đây và chỉ tiếp tục khi người dùng bấm duyệt, kèm chú thích nếu có (ADR-30, ADR-34) |
+| Bộ công cụ | 8 công cụ trong `src/agents/tools/registry.py`: `search_old_messages`, `summarize_conversation`, `extract_actions`, `list_calendar_events`, `propose_calendar_event`, `list_people`, `recall_user_memory`, `save_user_memory` |
+| Phạm vi đọc | Đóng kín từ ngữ cảnh request, không phải tham số của công cụ: chat riêng đọc mọi hội thoại của tài khoản, `@assistant` trong nhóm chỉ đọc hội thoại đó. `AssistantScope` trong `src/services/assistant_scope.py`; không kế hoạch nào do mô hình sinh ra có thể tự nới rộng phạm vi của chính nó |
+| Truy hồi | RAG riêng, **không** dùng lại đường truy hồi của agent dịch: index `assistant_chunks`, embedding và mô hình sinh cấu hình độc lập qua `ASSISTANT_*`, có bước rerank (`ASSISTANT_RERANK_ENABLED`) |
+| Ngôn ngữ trả lời | Theo ngôn ngữ của câu hỏi, không theo `preferred_language`. Nội dung đề xuất sinh trong luồng chat theo ngôn ngữ dịch của từng người nhận; nhãn giao diện và hộp nhiệm vụ theo ngôn ngữ giao diện |
+| Chống hành động ảo | `_parse_plan` loại bỏ tên công cụ không có trong registry. Một tên bịa sẽ không gọi tới đâu và lượt chạy sẽ *trông như* thành công mà không làm gì — đó là kiểu hỏng khó phát hiện nhất, nên nó bị chặn ngay ở khâu đọc kế hoạch |
+| Nhật ký đo lường | `assistant_attempts`, song song với `translation_attempts` của agent dịch |
+
+Sơ đồ luồng: [Agent Flow §2.1](docs/architecture_diagram.md#21-assistant-agent--planner-executor-có-cổng-người-duyệt).
+Trình tự từ một lời hứa trong chat tới lịch Google: [Sequence §5.1](docs/architecture_diagram.md#51-từ-một-lời-hứa-trong-chat-đến-lịch-google).
+
 ### 3.4. Cơ sở dữ liệu
 
 | Hạng mục | Mô tả |
@@ -109,8 +139,8 @@ Việc lựa chọn provider chính thức được quyết định trên cơ s�
 | Hệ quản trị | PostgreSQL (`postgresql+asyncpg`) kèm extension `pgvector` ở **mọi** môi trường, kể cả máy phát triển và bộ kiểm thử (ADR-22). Máy phát triển lấy nó bằng `docker compose up -d postgres`; production trỏ `DATABASE_URL` sang Railway/Supabase. SQLite không còn dùng được: schema có cột `vector` |
 | ORM | SQLAlchemy 2.0 async (`src/database/`) |
 | Vai trò | Vừa lưu trữ lịch sử hội thoại dài hạn, vừa là nguồn cung cấp ngữ cảnh cho Agent (xem ADR-01) |
-| Bảng dữ liệu | `users`, `conversations`, `conversation_members`, `messages`, `translation_results`, `feedbacks`, `translation_attempts` |
-| Vector Store | Không sử dụng trong phạm vi MVP (xem ADR-01) |
+| Bảng dữ liệu | 32 bảng, chia theo miền. **Tài khoản**: `users`, `user_settings`, `refresh_sessions`, `password_reset_tokens`, `pending_registrations`, `blocked_users`. **Hội thoại**: `conversations`, `conversation_members`, `messages`, `message_reactions`, `saved_messages`, `attachments`, `call_sessions`. **Dịch**: `translation_results`, `translation_attempts`, `translation_edits`, `correction_log`, `feedbacks`, `conversation_profiles`, `participant_profiles`, `message_embeddings`. **Glossary**: `glossary_entries`, `glossary_proposals`, `glossary_proposal_citations`. **Assistant Agent (pha sau)**: `action_proposals`, `calendar_events`, `reminders`, `calendar_links`, `agent_consents`, `assistant_chunks`, `assistant_user_memory`, `assistant_attempts`. Tên cột ràng buộc tại [`docs/CONTRACT.md`](docs/CONTRACT.md) §5 |
+| Vector Store | `pgvector` trong chính PostgreSQL, không dùng dịch vụ vector rời (ADR-22). Hai index tách biệt: `message_embeddings` cho truy hồi ngữ cảnh dịch và glossary ngữ nghĩa (ADR-25, ADR-26), `assistant_chunks` cho RAG của Assistant Agent (ADR-37). **Điều này thay thế ADR-01**, vốn loại vector store khỏi phạm vi MVP; ADR-26 và ADR-27 ghi rõ việc sửa đó |
 
 `translation_attempts` là nhật ký đo lường, không phải trạng thái ứng dụng: nó tồn tại để trả lời NFR-03 và chỉ được đọc bởi `src/services/metrics.py` cùng `scripts/report_metrics.py`. Xem ADR-16.
 
@@ -266,22 +296,28 @@ Quy trình chi tiết, biến môi trường và cách khắc phục sự cố: 
 
 | Thành phần | Nền tảng |
 |---|---|
-| Backend và Agent | Docker container trên Railway, **1 bản sao duy nhất** (ADR-18) |
-| Frontend | Vercel (thư mục gốc `frontend-v1/`, chờ chuyển sang frontend mới của `develop_v2`) |
-| Cơ sở dữ liệu | PostgreSQL của Railway; Supabase thay thế được mà không sửa mã |
-| Tệp đính kèm | Volume gắn vào `/app/data` của container backend |
+| Nền chạy | Máy chủ Ubuntu, Docker Compose (`docker-compose.production.yml`) sau reverse proxy Caddy |
+| Backend và cả hai agent | Ảnh GHCR bất biến, **1 bản sao duy nhất** (ADR-18) |
+| Frontend | Ảnh GHCR dựng từ `frontend/`, phục vụ qua Caddy cùng tên miền |
+| Cơ sở dữ liệu | PostgreSQL + `pgvector` chạy trong Compose, dữ liệu trên volume `postgres-data` |
+| Tệp đính kèm | Volume `backend-uploads` gắn vào container backend |
 | Schema | Alembic, chạy trong `CMD` trước `uvicorn` (ADR-06) |
-| CI/CD | GitHub Actions chạy lint + test; triển khai do Railway/Vercel tự làm theo nhánh |
+| CI/CD | GitHub Actions chạy lint + test và dựng ảnh; khâu phát hành/triển khai làm sau (CD-1) |
 
 ## 9. Định hướng mở rộng
 
-Các hạng mục Post-MVP, chưa được thiết kế chi tiết:
+Hai hạng mục từng nằm trong danh sách Post-MVP đã **được đưa vào phạm vi và đã
+triển khai**, nên không còn là định hướng: glossary doanh nghiệp tra theo đối
+tượng đọc (`glossary_entries`, `src/services/glossary.py`, ADR-25/ADR-26) và
+dịch tin nhắn thoại qua pipeline Speech-to-Text. Assistant Agent cũng vậy — nó là
+hạng mục của pha sau, đã triển khai, mô tả tại §3.3.2.
+
+Còn lại là các hạng mục Post-MVP thật sự, chưa được thiết kế chi tiết:
 
 1. Nhận diện và chuẩn hoá tiếng Việt vùng miền, từ lóng, từ viết tắt
-2. Glossary doanh nghiệp (CRUD và tìm kiếm ngữ nghĩa; yêu cầu bật `pgvector` hoặc bổ sung Vector Store)
-3. Dịch tin nhắn thoại (pipeline Speech-to-Text)
-4. Dashboard theo dõi chi phí token
-5. Tối ưu fan-out theo nhóm ngôn ngữ (xem ADR-03)
+2. Dashboard theo dõi chi phí token
+3. Tối ưu fan-out theo nhóm ngôn ngữ (xem ADR-03)
+4. Gỡ trần một bản sao ở ADR-18: cần backplane dùng chung cho `ConnectionManager` trước khi chạy nhiều replica
 
 ## 10. Tài liệu liên quan
 
