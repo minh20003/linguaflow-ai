@@ -668,9 +668,11 @@ def render_report(
         rate = passed / count * 100 if count else 0
         lines.append(f"| `{pair}` | {count} | {mean_score:.3f} | {rate:.0f}% |")
 
+    lines += [""]
+    lines += _render_retrieval_sweep_section()
+
     lines += [
-        "",
-        "## 5. Chi tiết từng mẫu",
+        "## 6. Chi tiết từng mẫu",
         "",
         "| ID | Kiểu | Ngữ cảnh | Cặp | Nhóm | Điểm | Độ trễ | Câu gốc | Bản dịch hệ thống |",
         "|---|---|---|---|---|---|---|---|---|",
@@ -688,7 +690,7 @@ def render_report(
         )
 
     failed = [r for r in results if r["score"] is not None and r["score"] < PASS_THRESHOLD]
-    lines += ["", "## 6. Mẫu chưa đạt", ""]
+    lines += ["", "## 7. Mẫu chưa đạt", ""]
     if not failed:
         lines.append("Không có mẫu nào dưới ngưỡng.")
     else:
@@ -705,7 +707,7 @@ def render_report(
             ]
 
     lines += [
-        "## 7. Cách tái lập",
+        "## 8. Cách tái lập",
         "",
         "```bash",
         "python eval/run_eval.py",
@@ -716,6 +718,87 @@ def render_report(
     ]
 
     return "\n".join(lines)
+
+
+def _render_retrieval_sweep_section() -> list[str]:
+    """Render latest retrieval sweep metrics from eval/results/rag/ and eval/results/assistant/."""
+    lines: list[str] = [
+        "## 5. Kết quả Sweep truy hồi (Retrieval Sweep)",
+        "",
+        "> Đánh giá hiệu năng và chất lượng truy hồi ngữ cảnh của các mô hình nhúng và chiến lược truy vấn.",
+        "",
+    ]
+
+    has_content = False
+
+    # 1. RAG Sweep (Translation Agent context retrieval)
+    rag_dir = RESULTS_DIR / "rag"
+    rag_files = (
+        sorted(rag_dir.glob("sweep-*.json"), key=lambda p: p.name, reverse=True)
+        if rag_dir.exists()
+        else []
+    )
+    if rag_files:
+        try:
+            rag_data = json.loads(rag_files[0].read_text(encoding="utf-8"))
+            lines += [
+                f"**Retrieval Ngữ cảnh Dịch (`eval/rag_sweep.py` — Run ID: `{rag_data.get('run_id', '')}`)**",
+                "",
+                "| Mô hình Embedding | Chiến lược truy vấn | Kịch bản | Hit Rate (hit@3) | MRR | Hạng TB | Độ trễ truy vấn | Hit ngẫu nhiên |",
+                "|---|---|---|---|---|---|---|---|",
+            ]
+            for r in rag_data.get("rows", []):
+                hit_rate = f"{r.get('hit_rate', 0) * 100:.1f}%"
+                mrr = f"{r.get('mrr', 0):.3f}"
+                rank = f"{r.get('mean_rank', 0)}/{r.get('candidates', 0):.0f}" if r.get("mean_rank") is not None else "—"
+                q_ms = f"{r.get('query_ms', 0):.1f}ms"
+                chance_hit = f"{r.get('chance_hit_rate', 0) * 100:.1f}%"
+                lines.append(
+                    f"| `{r.get('embedding', '')}` | `{r.get('strategy', '')}` | "
+                    f"{r.get('scenarios', 0)} | {hit_rate} | {mrr} | {rank} | {q_ms} | {chance_hit} |"
+                )
+            lines.append("")
+            has_content = True
+        except Exception:
+            pass
+
+    # 2. Assistant Chunk Sweep (Assistant Agent chunk retrieval)
+    ast_dir = RESULTS_DIR / "assistant"
+    ast_files = (
+        sorted(ast_dir.glob("sweep-*.json"), key=lambda p: p.name, reverse=True)
+        if ast_dir.exists()
+        else []
+    )
+    if ast_files:
+        try:
+            ast_data = json.loads(ast_files[0].read_text(encoding="utf-8"))
+            off = " [offline mode]" if ast_data.get("offline") else ""
+            lines += [
+                f"**Retrieval Assistant Agent (`eval/assistant_chunk_sweep.py` — Run ID: `{ast_data.get('run_id', '')}`{off})**",
+                "",
+                "| Bậc | Chiến lược | Cách truy hồi | Chunks | Recall@4 | nDCG | MRR | Ngẫu nhiên |",
+                "|---|---|---|---|---|---|---|---|",
+            ]
+            for r in ast_data.get("rows", []):
+                recall = f"{r.get('recall', 0) * 100:.1f}%"
+                ndcg = f"{r.get('ndcg', 0):.3f}"
+                mrr = f"{r.get('mrr', 0):.3f}"
+                chance = f"{r.get('chance_recall', 0) * 100:.1f}%"
+                lines.append(
+                    f"| `{r.get('tier', '')}` | `{r.get('strategy', '')}` | "
+                    f"`{r.get('arrangement', '')}` | {r.get('chunks', 0)} | "
+                    f"{recall} | {ndcg} | {mrr} | {chance} |"
+                )
+            lines.append("")
+            has_content = True
+        except Exception:
+            pass
+
+    if not has_content:
+        lines.append("Chưa có dữ liệu sweep truy hồi.")
+        lines.append("")
+
+    return lines
 
 
 def make_run_id() -> str:

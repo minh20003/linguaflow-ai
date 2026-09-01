@@ -401,7 +401,9 @@ def build_registry(
     async def recall_user_memory(*, query: str, top_n: int = 3) -> ToolResult:
         from src.services.assistant_memory import recall
 
-        facts = await recall(db, user_id=user_id, query_text=query, top_n=top_n)
+        # The tool argument is `top_n` to match the other retrieval tools the
+        # planner sees; `recall` names the same thing `top_k`.
+        facts = await recall(db, user_id=user_id, query_text=query, top_k=top_n)
         return ToolResult(
             tool="recall_user_memory",
             ok=True,

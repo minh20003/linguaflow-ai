@@ -189,7 +189,7 @@ async def sweep_tier(
                         started = time.perf_counter()
                         results = await assistant_retrieval.retrieve(
                             session,
-                            conversation_id=conversation_id,
+                            conversation_ids=[conversation_id],
                             query_text=query.question,
                             config=config,
                         )
@@ -403,4 +403,7 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    from src.services.embeddings import preload_local_models
+
+    preload_local_models()
     raise SystemExit(asyncio.run(main()))

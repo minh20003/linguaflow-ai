@@ -24,15 +24,29 @@ graph TB
     FE -->|WS: send/receive message| BE[Backend<br/>FastAPI + WebSocket Gateway]
     FE -->|REST: login, set language, feedback| BE
 
-    BE --> Agent[AI Agent<br/>LangGraph]
-    Agent -->|prompt + context| LLM[LLM Provider<br/>Groq / DeepSeek / Gemini / OpenAI]
-    Agent -->|read last 3-5 messages| DB[(SQLite dev<br/>PostgreSQL prod)]
-    BE -->|persist message + translation + feedback| DB
+    FE -->|REST: đề xuất, lịch, nhắc| BE
 
-    Monitor[Braintrust<br/>latency/token monitoring<br/>OBSERVABILITY_PROVIDER] -.-> Agent
+    BE --> TA[Translation Agent<br/>LangGraph — pha đầu]
+    BE --> AA[Assistant Agent<br/>LangGraph planner-executor<br/>bổ sung ở pha sau]
+
+    TA -->|prompt + context| LLM[LLM Provider<br/>Groq / DeepSeek / Gemini / OpenAI / Mistral]
+    TA -->|đọc 3-5 tin gần nhất| DB[(PostgreSQL + pgvector<br/>mọi môi trường)]
+
+    AA -->|planner, answer| ALLM[LLM riêng của trợ lý<br/>ASSISTANT_LLM_PROVIDER]
+    AA -->|truy hồi ngữ nghĩa| DB
+    AA -->|đề xuất chờ duyệt| BE
+    BE -->|chỉ ghi sau khi người dùng duyệt| GCal[Google Calendar API]
+
+    BE -->|tin nhắn thoại| STT[Speech-to-Text<br/>Gemini]
+    BE -->|lưu tin nhắn, bản dịch, phản hồi, đề xuất| DB
+
+    Monitor[Braintrust<br/>latency/token monitoring<br/>OBSERVABILITY_PROVIDER] -.-> TA
+    Monitor -.-> AA
 ```
 
-Hệ thống sử dụng một nguồn dữ liệu duy nhất (`DB`), đảm nhiệm đồng thời hai vai trò: lưu trữ lịch sử hội thoại dài hạn và cung cấp ngữ cảnh cho Agent. Phạm vi MVP không sử dụng Vector Store riêng (xem ADR-01 trong [`ARCHITECTURE.md`](../ARCHITECTURE.md)).
+Hệ thống dùng **một nguồn dữ liệu duy nhất** (`DB`) cho cả bốn vai trò: lưu lịch sử hội thoại, cung cấp ngữ cảnh cho agent dịch, chứa index vector, và lưu đề xuất cùng lịch của agent trợ lý. Vector store nằm ngay trong PostgreSQL qua `pgvector` chứ không phải dịch vụ rời (ADR-22); điều này **thay thế ADR-01**, vốn loại vector store khỏi phạm vi MVP — xem ADR-26 và ADR-27 trong [`ARCHITECTURE.md`](../ARCHITECTURE.md). SQLite không còn chạy được vì schema có cột `vector`.
+
+Hai agent dùng đồ thị riêng và cấu hình mô hình riêng. Đường tới Google Calendar đi qua Backend chứ không đi thẳng từ agent: agent chỉ **đề xuất**, việc ghi chỉ xảy ra sau khi người dùng duyệt (ADR-30, ADR-34).
 
 ## 2. Agent Flow
 
@@ -158,7 +172,7 @@ graph LR
     P1 -->|2. Broadcast tin gốc ngay lập tức| E1
     P1 -->|3. Message data| P2((P2: Translation Agent<br/>LangGraph))
 
-    P2 -->|4. Query 3-5 recent messages| DB[(SQLite dev / PostgreSQL prod)]
+    P2 -->|4. Query 3-5 recent messages| DB[(PostgreSQL + pgvector)]
     P2 -->|5. Translation request + prompt| E2[LLM Provider API]
     E2 -->|6. Translation stream| P2
 
@@ -169,9 +183,21 @@ graph LR
     E1 -->|10. Submit correction| P4((P4: Handle Feedback<br/>REST API))
     P4 -->|11. Save feedbacks| DB
     P4 -.log metrics.-> Monitor[Braintrust]
+
+    P1 -.12. quét nền tìm cam kết.-> P5((P5: Assistant Agent<br/>planner-executor))
+    E1 -->|12'. @assistant hoặc chat riêng| P5
+    P5 -->|13. truy hồi ngữ nghĩa assistant_chunks| DB
+    P5 -->|14. planner + answer| E3[LLM riêng của trợ lý]
+    P5 -->|15. action_proposals, một hàng mỗi thành viên| DB
+    P5 -->|16. thẻ đề xuất chờ duyệt| E1
+    E1 -->|17. duyệt / từ chối + chú thích| P6((P6: Execute<br/>sau cổng người duyệt))
+    P6 -->|18. calendar_events, reminders| DB
+    P6 -->|19. đẩy lên lịch ngoài| E4[Google Calendar API]
 ```
 
 **Ghi chú:** chỉ bước lưu bản dịch (bước 9) được thực hiện bất đồng bộ. Tin nhắn gốc được lưu đồng bộ trước khi phát tới các client, do các bước sau yêu cầu `message_id`. Trình tự chi tiết bao gồm cơ chế streaming: xem §5.
+
+Các bước 12–19 thuộc Assistant Agent, **bổ sung ở pha sau**. Điểm cần đọc kỹ là bước 17: không có mũi tên nào đi thẳng từ P5 sang `calendar_events` hay Google Calendar. Mọi ghi ra lịch đều phải qua P6, và P6 chỉ chạy sau khi người dùng duyệt (ADR-30, ADR-34). Bước 12 và 12' là hai lối vào khác nhau — quét nền tự phát hiện cam kết, và người dùng chủ động gọi — nhưng cả hai hội tụ vào cùng một cổng duyệt.
 
 ## 4. ER Diagram
 
@@ -194,6 +220,60 @@ erDiagram
     users ||--o| calendar_links : links
     action_proposals |o--o{ calendar_events : "scheduled as (nullable)"
     calendar_events ||--o{ reminders : "nudges"
+
+    action_proposals {
+        string id PK
+        string owner_user_id FK "một hàng mỗi thành viên — duyệt là quyền riêng từng người"
+        string conversation_id FK
+        string source_message_id FK
+        string source_mode "proactive | mention | private"
+        string kind "calendar_event | reminder | task"
+        string title "câu người dùng thật sự nói — không bao giờ bị ghi đè bằng bản dịch"
+        string details
+        datetime starts_at
+        string timezone
+        string status "pending | approved | rejected | expired"
+        string annotations "chú thích người duyệt thêm vào trước khi ghi"
+    }
+    assistant_chunks {
+        string id PK
+        string conversation_id FK
+        string message_ids "các tin gộp thành một chunk"
+        vector embedding "index RAG riêng của trợ lý, tách khỏi message_embeddings"
+        string strategy "turn_window | message"
+    }
+    assistant_user_memory {
+        string id PK
+        string user_id FK
+        string content "điều người dùng bảo trợ lý nhớ"
+        vector embedding
+    }
+    assistant_attempts {
+        string id PK
+        string user_id FK
+        string outcome "answered | clarified | proposals_pending | no_request | error"
+        int replans
+        int latency_ms "nhật ký đo lường, song song translation_attempts"
+    }
+    user_settings {
+        string user_id PK
+        string interface_language "ngôn ngữ giao diện — khác preferred_language"
+        string preferred_language "ngôn ngữ dịch"
+        boolean proactive_scan "có cho trợ lý quét nền hội thoại không"
+    }
+    message_embeddings {
+        string message_id PK
+        vector embedding "index của agent dịch — glossary và ngữ cảnh"
+    }
+
+    users ||--o{ action_proposals : owns
+    users ||--o| user_settings : configures
+    users ||--o{ assistant_user_memory : remembers
+    users ||--o{ assistant_attempts : attempted
+    conversations ||--o{ action_proposals : raised_in
+    conversations ||--o{ assistant_chunks : indexed_as
+    messages ||--o| message_embeddings : embedded
+    action_proposals ||--o| calendar_events : "ghi ra sau khi duyệt"
 
     users {
         string id PK
@@ -472,6 +552,17 @@ graph LR
         UC08[UC-08<br/>Chỉnh sửa và gửi phản hồi]
     end
 
+    subgraph SYS2["Assistant Agent — bổ sung ở pha sau"]
+        UC09[UC-09<br/>Hỏi trợ lý về nội dung<br/>đã trao đổi]
+        UC10[UC-10<br/>Tóm tắt hội thoại]
+        UC11[UC-11<br/>Trích cam kết thành<br/>đề xuất lịch]
+        UC12[UC-12<br/>Duyệt / từ chối đề xuất<br/>kèm chú thích]
+        UC13[UC-13<br/>Xem lịch cá nhân<br/>và hộp nhiệm vụ]
+        UC14[UC-14<br/>Nhận nhắc trước<br/>giờ hẹn]
+        UC15[UC-15<br/>Liên kết Google Calendar<br/>đồng bộ hai chiều]
+        UC16[UC-16<br/>Cấp / thu hồi quyền<br/>cho trợ lý]
+    end
+
     Sender((Người gửi)) --> UC01
     Sender --> UC02
     Sender --> UC03
@@ -484,6 +575,17 @@ graph LR
     Receiver --> UC05
     Receiver --> UC07
     Receiver --> UC08
+
+    Owner((Chủ tài khoản)) --> UC09
+    Owner --> UC10
+    Owner --> UC13
+    Owner --> UC15
+    Owner --> UC16
+    UC09 -. include .-> UC16
+    UC11 -. include .-> UC12
+    UC12 -. extend .-> UC13
+    UC12 -. extend .-> UC14
+    UC04 -. extend .-> UC11
 ```
 
 **Nguyên tắc xây dựng sơ đồ:**
@@ -491,3 +593,6 @@ graph LR
 1. Actor "Người gửi" chỉ liên kết với UC-04 (gửi tin nhắn). Actor "Người nhận" chỉ liên kết với UC-05, UC-07, UC-08 (nhận, xem, phản hồi). Không tồn tại liên kết chéo giữa hai vai trò.
 2. UC-06 là use case được gọi qua quan hệ `<<include>>` từ UC-04, không phải use case do người dùng kích hoạt trực tiếp.
 3. Sơ đồ tập trung vào các chức năng người dùng tương tác trực tiếp, không đưa các thao tác kỹ thuật nội bộ vào use case.
+4. UC-09..UC-16 thuộc Assistant Agent, **phát triển ở pha sau** so với UC-01..UC-08. Actor "Chủ tài khoản" tách riêng khỏi "Người gửi"/"Người nhận" vì phạm vi của nó là **tài khoản**, không phải một hội thoại: chat riêng với trợ lý đọc được mọi hội thoại của chính người đó.
+5. UC-11 nối với UC-04 bằng `<<extend>>` chứ không phải `<<include>>`: phần lớn tin nhắn không chứa cam kết, việc trích chỉ xảy ra khi có.
+6. UC-12 là điều kiện bắt buộc để tới UC-13 và UC-14. Không có đường nào từ UC-11 tới lịch mà không đi qua UC-12 — đó là biểu diễn của ADR-30 và ADR-34 trên sơ đồ use case.
