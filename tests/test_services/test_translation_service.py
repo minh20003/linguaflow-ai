@@ -11,6 +11,7 @@ all feature areas.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from sqlalchemy import select
@@ -112,9 +113,7 @@ async def run_translations(*, message, publisher, graph_factory):
 
 
 @pytest.mark.asyncio
-async def test_translates_for_each_recipient_language(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_translates_for_each_recipient_language(test_db, test_user, test_user_two, conversation_factory):
     """test_user reads en, test_user_two reads vi — one translation each way."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
@@ -190,9 +189,7 @@ async def test_sends_only_to_users_who_read_that_language(
 
 
 @pytest.mark.asyncio
-async def test_writes_back_the_detected_source_language(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_writes_back_the_detected_source_language(test_db, test_user, test_user_two, conversation_factory):
     """The stored source_language is provisional until detection overrides it."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
@@ -217,9 +214,7 @@ async def test_writes_back_the_detected_source_language(
 
 
 @pytest.mark.asyncio
-async def test_publishes_nothing_when_the_agent_fails(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_publishes_nothing_when_the_agent_fails(test_db, test_user, test_user_two, conversation_factory):
     """A failed translation must leave the delivered original untouched."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
@@ -244,9 +239,7 @@ async def test_publishes_nothing_when_the_agent_fails(
 
 
 @pytest.mark.asyncio
-async def test_publishes_nothing_when_the_translation_is_empty(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_publishes_nothing_when_the_translation_is_empty(test_db, test_user, test_user_two, conversation_factory):
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
         test_db,
@@ -267,9 +260,7 @@ async def test_publishes_nothing_when_the_translation_is_empty(
 
 
 @pytest.mark.asyncio
-async def test_a_publisher_failure_does_not_escape_the_task(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_a_publisher_failure_does_not_escape_the_task(test_db, test_user, test_user_two, conversation_factory):
     """The translation is persisted, so an undelivered event is recoverable."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
@@ -287,9 +278,7 @@ async def test_a_publisher_failure_does_not_escape_the_task(
     await run_translations(
         message=message,
         publisher=BrokenPublisher(),
-        graph_factory=make_graph_factory(
-            {"en": {"source_language": "vi", "translated_text": "Hello there"}}
-        ),
+        graph_factory=make_graph_factory({"en": {"source_language": "vi", "translated_text": "Hello there"}}),
     )
 
     async with session_factory_for_tests()() as session:
@@ -298,9 +287,7 @@ async def test_a_publisher_failure_does_not_escape_the_task(
 
 
 @pytest.mark.asyncio
-async def test_rerunning_reuses_the_existing_translation_row(
-    test_db, test_user, test_user_two, conversation_factory
-):
+async def test_rerunning_reuses_the_existing_translation_row(test_db, test_user, test_user_two, conversation_factory):
     """The unique constraint keeps one translation_id per message and language."""
     conversation = await conversation_factory(test_user, [test_user, test_user_two])
     message = await persist_message(
@@ -311,9 +298,7 @@ async def test_rerunning_reuses_the_existing_translation_row(
         source_language="vi",
     )
     publisher = RecordingPublisher()
-    graph_factory = make_graph_factory(
-        {"en": {"source_language": "vi", "translated_text": "Hello there"}}
-    )
+    graph_factory = make_graph_factory({"en": {"source_language": "vi", "translated_text": "Hello there"}})
 
     await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
     await run_translations(message=message, publisher=publisher, graph_factory=graph_factory)
@@ -386,11 +371,7 @@ async def test_translation_of_edited_text_is_neither_stored_nor_sent(
     )
 
     assert publisher.events_for("en") == []
-    stored = (
-        await test_db.scalars(
-            select(TranslationResult).where(TranslationResult.message_id == message.id)
-        )
-    ).all()
+    stored = (await test_db.scalars(select(TranslationResult).where(TranslationResult.message_id == message.id))).all()
     assert stored == []
 
 
@@ -421,11 +402,7 @@ async def test_translation_of_a_withdrawn_message_is_neither_stored_nor_sent(
     )
 
     assert publisher.events_for("en") == []
-    stored = (
-        await test_db.scalars(
-            select(TranslationResult).where(TranslationResult.message_id == message.id)
-        )
-    ).all()
+    stored = (await test_db.scalars(select(TranslationResult).where(TranslationResult.message_id == message.id))).all()
     assert stored == []
 
 
@@ -467,8 +444,7 @@ async def test_direct_sender_also_receives_the_translation_of_their_own_message(
     )
 
     english_recipients = [
-        recipients for recipients, payload in publisher.sent
-        if payload.get("target_language") == "en"
+        recipients for recipients, payload in publisher.sent if payload.get("target_language") == "en"
     ]
     assert len(english_recipients) == 1
     assert set(english_recipients[0]) == {test_user.id, test_user_two.id}
@@ -587,9 +563,7 @@ async def test_translation_cache_hit_skips_graph_and_attempt(
     ]
     async with session_factory_for_tests()() as session:
         attempts = (
-            await session.scalars(
-                select(TranslationAttempt).where(TranslationAttempt.target_language == "vi")
-            )
+            await session.scalars(select(TranslationAttempt).where(TranslationAttempt.target_language == "vi"))
         ).all()
     assert len(attempts) == 1
 
@@ -619,12 +593,8 @@ async def test_translation_cache_long_text_is_not_cached(
     )
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
 
-    await run_translations(
-        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
-    await run_translations(
-        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
+    await run_translations(message=first, publisher=RecordingPublisher(), graph_factory=graph_factory)
+    await run_translations(message=second, publisher=RecordingPublisher(), graph_factory=graph_factory)
 
     assert calls.count("vi") == 2
     assert translation_service._translation_cache == {}
@@ -687,12 +657,8 @@ async def test_translation_cache_does_not_store_fallback_output(
     }
     graph_factory, calls = counting_graph_factory({"vi": fallback_result})
 
-    await run_translations(
-        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
-    await run_translations(
-        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
+    await run_translations(message=first, publisher=RecordingPublisher(), graph_factory=graph_factory)
+    await run_translations(message=second, publisher=RecordingPublisher(), graph_factory=graph_factory)
 
     assert calls.count("vi") == 2
     assert translation_service._translation_cache == {}
@@ -716,7 +682,7 @@ async def test_translation_cache_hit_does_not_publish_a_withdrawn_message(
     )
     translation_service._translation_cache[
         translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
-    ] = "Chao buoi sang"
+    ] = ("Chao buoi sang", time.monotonic())
     message.deleted_at = datetime.now(UTC)
     await test_db.commit()
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
@@ -753,12 +719,8 @@ async def test_translation_cache_is_scoped_to_the_conversation(
     )
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
 
-    await run_translations(
-        message=first, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
-    await run_translations(
-        message=second, publisher=RecordingPublisher(), graph_factory=graph_factory
-    )
+    await run_translations(message=first, publisher=RecordingPublisher(), graph_factory=graph_factory)
+    await run_translations(message=second, publisher=RecordingPublisher(), graph_factory=graph_factory)
 
     assert calls.count("vi") == 2
 
@@ -778,7 +740,7 @@ async def test_translation_cache_detector_disagreement_runs_the_graph(
     )
     translation_service._translation_cache[
         translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "peer")
-    ] = "Chao buoi sang"
+    ] = ("Chao buoi sang", time.monotonic())
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
     publisher = RecordingPublisher()
 
@@ -811,10 +773,8 @@ async def test_the_translation_cache_never_serves_one_standing_to_another(
     # Seeded under a standing nobody in this conversation holds; the members
     # are unprofiled, so the fan-out asks for `peer`.
     translation_service._translation_cache[
-        translation_service._cache_key(
-            conversation.id, "Good morning", "en", "vi", "client"
-        )
-    ] = "Kinh chao quy khach"
+        translation_service._cache_key(conversation.id, "Good morning", "en", "vi", "client")
+    ] = ("Kinh chao quy khach", time.monotonic())
     graph_factory, calls = counting_graph_factory({"vi": PRIMARY_EN_TO_VI})
     publisher = RecordingPublisher()
 

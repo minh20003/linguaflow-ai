@@ -1,5 +1,7 @@
 """Business logic for durable conversations and original chat messages."""
 
+import base64
+import binascii
 import json
 import logging
 import re
@@ -42,6 +44,27 @@ logger = logging.getLogger(__name__)
 # could ever be summarised. Still a hard ceiling — this is what stops an
 # unbounded query, and the REST history endpoint keeps its own stricter limit.
 MAX_MESSAGE_HISTORY = 2000
+
+
+def encode_message_cursor(created_at: datetime, message_id: str) -> str:
+    """Encode the composite pagination key as an opaque URL-safe cursor."""
+    moment = created_at.replace(tzinfo=UTC) if created_at.tzinfo is None else created_at.astimezone(UTC)
+    payload = json.dumps([moment.isoformat(), message_id], separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def decode_message_cursor(cursor: str) -> tuple[datetime, str]:
+    """Decode and validate a cursor previously returned by the API."""
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+        timestamp_raw, message_id = json.loads(raw)
+        created_at = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
+        if created_at.tzinfo is None or not isinstance(message_id, str) or not message_id:
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError, binascii.Error) as exc:
+        raise ConversationValidationError("Invalid message cursor") from exc
+    return created_at.astimezone(UTC), message_id
 
 
 class ChatServiceError(Exception):
@@ -688,39 +711,50 @@ class ChatService:
         user_id: str,
         conversation_id: str,
         limit: int = 50,
+        before_created_at: datetime | None = None,
+        before_id: str | None = None,
+        offset: int = 0,
     ) -> list[Message]:
         """Return a member's recent messages in deterministic chronology.
 
-        The ceiling is a guard against an unbounded query, not a page size. The
-        REST endpoint that reads history declares its own `Query(le=100)` and is
-        unaffected by the number here; what needed the room is the assistant's
-        summariser, which reads a whole conversation and splits it into batches
-        itself (ADR-38), and would otherwise be capped at a hundred messages by a
-        bound meant for a scrolling list.
+        Supports cursor-based pagination using (before_created_at, before_id).
         """
         if not 1 <= limit <= MAX_MESSAGE_HISTORY:
-            raise ConversationValidationError(
-                f"limit must be between 1 and {MAX_MESSAGE_HISTORY}"
-            )
+            raise ConversationValidationError(f"limit must be between 1 and {MAX_MESSAGE_HISTORY}")
+        if offset < 0:
+            raise ConversationValidationError("offset must not be negative")
+        if before_created_at is not None and offset:
+            raise ConversationValidationError("offset cannot be combined with a cursor")
 
         await self._require_membership(
             conversation_id=conversation_id,
             user_id=user_id,
         )
 
-        recent_messages = list(
-            (
-                await self._db.scalars(
-                    select(Message)
-                    .where(
-                        Message.conversation_id == conversation_id,
-                        visible_to(user_id),
-                    )
-                    .order_by(Message.created_at.desc(), Message.id.desc())
-                    .limit(limit)
-                )
-            ).all()
+        stmt = select(Message).where(
+            Message.conversation_id == conversation_id,
+            visible_to(user_id),
         )
+
+        if before_created_at is not None:
+            if before_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        Message.created_at < before_created_at,
+                        and_(
+                            Message.created_at == before_created_at,
+                            Message.id < before_id,
+                        ),
+                    )
+                )
+            else:
+                stmt = stmt.where(Message.created_at < before_created_at)
+
+        stmt = stmt.order_by(Message.created_at.desc(), Message.id.desc())
+        if before_created_at is None and offset:
+            stmt = stmt.offset(offset)
+        stmt = stmt.limit(limit)
+        recent_messages = list((await self._db.scalars(stmt)).all())
         recent_messages.reverse()
         return recent_messages
 

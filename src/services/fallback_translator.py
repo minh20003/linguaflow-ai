@@ -25,6 +25,7 @@ import asyncio
 import logging
 
 from src.config import get_settings
+from src.core.circuit_breaker import fallback_translator_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,10 @@ async def translate_with_secondary_provider(
     if source_language and source_language == target_language:
         return None
 
+    if not fallback_translator_breaker.allow_request():
+        logger.info("Fallback translator circuit breaker is OPEN, skipping")
+        return None
+
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(_translate_sync, text, source_language, target_language),
@@ -93,9 +98,11 @@ async def translate_with_secondary_provider(
             "Fallback translator timed out after %ss",
             settings.fallback_translator_timeout_seconds,
         )
+        fallback_translator_breaker.record_failure()
         return None
     except Exception as exc:
         logger.warning("Fallback translator failed: %s: %s", type(exc).__name__, exc)
+        fallback_translator_breaker.record_failure()
         return None
 
     if not isinstance(result, str) or not result.strip():
@@ -107,6 +114,8 @@ async def translate_with_secondary_provider(
             type(result).__name__,
             len(result) if isinstance(result, str) else 0,
         )
+        fallback_translator_breaker.record_failure()
         return None
 
+    fallback_translator_breaker.record_success()
     return result.strip()

@@ -59,8 +59,33 @@ _BACKGROUND_TASKS: set[asyncio.Task] = set()
 # This deliberately stays small and local to one process. It avoids repeat LLM
 # calls for common short phrases without turning translation delivery into a
 # cache dependency or changing the persistence contract.
-_CACHE_MAX_SIZE = 200
-_translation_cache: dict[tuple[str, str, str, str, str, str], str] = {}
+_CACHE_MAX_SIZE = 500
+_CACHE_TTL_SECONDS = 1800  # 30 minutes
+# Value is (translated_text, timestamp_monotonic)
+_translation_cache: dict[tuple[str, str, str, str, str, str], tuple[str, float]] = {}
+_cache_hits = 0
+_cache_misses = 0
+
+
+def translation_cache_metrics() -> dict[str, Any]:
+    """Return translation cache metrics for system health monitoring."""
+    total = _cache_hits + _cache_misses
+    return {
+        "size": len(_translation_cache),
+        "max_size": _CACHE_MAX_SIZE,
+        "ttl_seconds": _CACHE_TTL_SECONDS,
+        "hits": _cache_hits,
+        "misses": _cache_misses,
+        "hit_rate": round(_cache_hits / total, 4) if total else 0.0,
+    }
+
+
+def reset_translation_cache() -> None:
+    """Clear values and counters; intended for deterministic tests."""
+    global _cache_hits, _cache_misses
+    _translation_cache.clear()
+    _cache_hits = 0
+    _cache_misses = 0
 
 
 def _normalize_cache_text(text: str) -> str:
@@ -71,7 +96,7 @@ def _normalize_cache_text(text: str) -> str:
 def _is_cacheable(text: str) -> bool:
     """Limit completed-value caching to short, simple phrases."""
     normalized = _normalize_cache_text(text)
-    return bool(normalized) and len(normalized) <= 30 and len(normalized.split()) <= 3
+    return bool(normalized) and len(normalized) <= 60 and len(normalized.split()) <= 6
 
 
 def _cache_key(
@@ -111,11 +136,7 @@ def _confirmed_cache_source(snapshot: Mapping[str, Any]) -> str | None:
     """
     text = _normalize_cache_text(str(snapshot.get("original_text") or ""))
     declared = str(snapshot.get("source_language") or "")
-    if (
-        not declared
-        or len(text) < _MIN_DETECT_CHARS
-        or not _HAS_LETTER.search(text)
-    ):
+    if not declared or len(text) < _MIN_DETECT_CHARS or not _HAS_LETTER.search(text):
         return None
 
     try:
@@ -151,9 +172,31 @@ def _cache_primary_translation(
                 honorific_profile,
                 translation_tone,
             )
-        ] = translated_text
+        ] = (translated_text, time.monotonic())
     except Exception as exc:
         logger.warning("Caching completed translation failed: %s", exc)
+
+
+def _read_translation_cache(
+    key: tuple[str, str, str, str, str, str],
+) -> str | None:
+    """Return a live cache value while updating hit/miss metrics."""
+    global _cache_hits, _cache_misses
+    try:
+        cached_entry = _translation_cache.get(key)
+        if cached_entry is None:
+            _cache_misses += 1
+            return None
+        cached_text, timestamp = cached_entry
+        if time.monotonic() - timestamp > _CACHE_TTL_SECONDS:
+            del _translation_cache[key]
+            _cache_misses += 1
+            return None
+        _cache_hits += 1
+        return cached_text
+    except Exception as exc:
+        logger.warning("Reading the translation cache failed: %s", exc)
+        return None
 
 
 class EventPublisher(Protocol):
@@ -287,9 +330,7 @@ async def _translate_message(
 ) -> None:
     """Translate one message into every language its recipients read."""
     async with session_factory() as session:
-        conversation_type, recipients_by_bucket = await _recipients_by_bucket(
-            session, snapshot["conversation_id"]
-        )
+        conversation_type, recipients_by_bucket = await _recipients_by_bucket(session, snapshot["conversation_id"])
         # Read in the same session block as the buckets. The prompt needs the
         # *relationship* between sender and reader, and one standing per person
         # is only half of it — without this a message from one junior to another
@@ -340,9 +381,7 @@ async def _retry_translation_for_reader(
     """Resolve a current reader bucket, then force one fresh model run."""
     async with session_factory() as session:
         message = await session.get(Message, snapshot["message_id"])
-        membership = await session.get(
-            ConversationMember, (snapshot["conversation_id"], reader_id)
-        )
+        membership = await session.get(ConversationMember, (snapshot["conversation_id"], reader_id))
         reader = await session.get(User, reader_id)
         if message is None or message.deleted_at is not None or membership is None or reader is None:
             return
@@ -506,20 +545,15 @@ async def _translate_into(
     cacheable = _is_cacheable(str(snapshot["original_text"]))
     confirmed_source = _confirmed_cache_source(snapshot) if cacheable else None
     if confirmed_source and not force:
-        try:
-            cached_text = _translation_cache.get(
-                _cache_key(
-                    str(snapshot["conversation_id"]),
-                    str(snapshot["original_text"]),
-                    confirmed_source,
-                    target_language,
-                    honorific_profile,
-                    translation_tone,
-                )
-            )
-        except Exception as exc:
-            logger.warning("Reading the translation cache failed: %s", exc)
-            cached_text = None
+        key = _cache_key(
+            str(snapshot["conversation_id"]),
+            str(snapshot["original_text"]),
+            confirmed_source,
+            target_language,
+            honorific_profile,
+            translation_tone,
+        )
+        cached_text = _read_translation_cache(key)
 
         if cached_text is not None:
             if await _serve_cached_translation(
@@ -547,8 +581,9 @@ async def _translate_into(
     # concurrent use, and these run under asyncio.gather.
     async with session_factory() as session:
 
-        async def record(outcome: str, *, result: Mapping[str, Any] | None = None,
-                         translation_id: str | None = None) -> None:
+        async def record(
+            outcome: str, *, result: Mapping[str, Any] | None = None, translation_id: str | None = None
+        ) -> None:
             """Log this attempt, whatever became of it."""
             await record_attempt(
                 session,
@@ -634,9 +669,7 @@ async def _translate_into(
             await record("empty", result=result)
             return
 
-        message = await _store_detected_source(
-            session, snapshot["message_id"], detected_source
-        )
+        message = await _store_detected_source(session, snapshot["message_id"], detected_source)
 
         # Between the graph starting and finishing — around 1.5 seconds — the
         # sender may have edited or withdrawn the message. Persisting now would
@@ -644,9 +677,7 @@ async def _translate_into(
         # unique constraint makes the retranslation's insert lose to this row,
         # that stale text would be what every recipient reads (F-06).
         superseded = (
-            message is None
-            or message.deleted_at is not None
-            or message.original_text != snapshot["original_text"]
+            message is None or message.deleted_at is not None or message.original_text != snapshot["original_text"]
         )
         if superseded:
             # The attempt is still recorded under its real outcome — the model
@@ -951,9 +982,7 @@ async def _persist_translation(
 
     # For user retries (force=True), loop through collision attempts to increment version
     for _ in range(5):
-        max_version = await session.scalar(
-            select(func.max(TranslationResult.version)).where(*filters)
-        )
+        max_version = await session.scalar(select(func.max(TranslationResult.version)).where(*filters))
         target_version = (max_version or 0) + 1
 
         translation = TranslationResult(

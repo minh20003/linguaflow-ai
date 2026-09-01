@@ -1316,14 +1316,15 @@ export const AppShell: React.FC = () => {
       {activeTab === "calendar" && accessToken ? (
         <PersonalCalendar
           token={accessToken}
+          language={settings.interfaceLanguage}
           onNotify={addToast}
           refreshToken={calendarRefreshCount}
         />
       ) : activeTab === "tasks" && accessToken ? (
         <TaskInboxPanel
           token={accessToken}
-          incoming={incomingProposals}
           language={settings.interfaceLanguage}
+          incoming={incomingProposals}
           onProposalChanged={(proposal, removed) =>
             setIncomingProposals((current) => removed
               ? current.filter((item) => item.id !== proposal.id)

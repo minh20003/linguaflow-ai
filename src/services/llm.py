@@ -6,10 +6,12 @@ throttles mid-demo has to be swapped quickly.
 """
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from src.config import Settings, get_settings
+from src.core.circuit_breaker import CircuitBreaker, llm_breaker
 
 # Model used when LLM_MODEL is left empty.
 #
@@ -49,6 +51,20 @@ class LLMConfigError(RuntimeError):
 # key is deliberately not part of the key: it would put the secret in a
 # module-level structure that any traceback dumping locals would render.
 _CLIENTS: dict[tuple[str, str, float, int, int], BaseChatModel] = {}
+
+
+class _CircuitProtectedChatModel:
+    """Transparent model proxy that guards the provider's actual async call."""
+
+    def __init__(self, model: BaseChatModel, breaker: CircuitBreaker) -> None:
+        self._model = model
+        self._breaker = breaker
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._breaker.call(lambda: self._model.ainvoke(*args, **kwargs))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._model, name)
 
 
 def extract_text(response: object) -> str:
@@ -248,7 +264,7 @@ def get_llm(
     if not model and provider == settings.llm_provider and settings.llm_model:
         chosen_model = settings.llm_model
 
-    return _build_llm(
+    model_client = _build_llm(
         provider,
         chosen_model,
         settings.llm_temperature,
@@ -256,6 +272,7 @@ def get_llm(
         settings.llm_max_tokens,
         api_key,
     )
+    return cast(BaseChatModel, _CircuitProtectedChatModel(model_client, llm_breaker))
 
 
 def get_assistant_llm(settings: Settings | None = None) -> BaseChatModel:

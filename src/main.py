@@ -91,6 +91,7 @@ if _local_models_wanted():
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -100,16 +101,22 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.gzip import GZipMiddleware
 
 from src.agents.observability import verify_tracing_credentials
 from src.api.admin import router as admin_router
 from src.api.metrics import router as metrics_router
 from src.api.routes import router
+from src.api.system_health import router as system_health_router
 from src.api.websocket import connection_manager
 from src.api.websocket import router as websocket_router
 from src.config import configure_logging, get_settings
+from src.core.rate_limit import AuthRateLimitMiddleware, limiter
 from src.database import get_db
 from src.services.agent_consent import ConsentRequiredError
 from src.services.embeddings import preload_local_models
@@ -152,9 +159,9 @@ async def lifespan(app: FastAPI):
     # The reminder clock. Started here because this is the only place with a
     # lifecycle, and stopped below so a reload does not leave a second loop
     # running against the same table (ADR-33).
-    scheduler = start_reminder_scheduler(
-        publisher=connection_manager, settings=settings
-    )
+    scheduler = start_reminder_scheduler(publisher=connection_manager, settings=settings)
+    app.state.startup_monotonic = time.monotonic()
+    app.state.reminder_scheduler = scheduler
 
     yield
 
@@ -170,16 +177,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_SENSITIVE_FIELD_NAMES = frozenset({
-    "password",
-    "new_password",
-    "otp",
-    "token",
-    "access_token",
-    "refresh_token",
-    "jwt_secret",
-    "secret",
-})
+_SENSITIVE_FIELD_NAMES = frozenset(
+    {
+        "password",
+        "new_password",
+        "otp",
+        "token",
+        "access_token",
+        "refresh_token",
+        "jwt_secret",
+        "secret",
+    }
+)
 
 
 def _sanitize_sensitive_data(val: Any) -> Any:
@@ -203,9 +212,7 @@ def _redact_validation_errors(errors: list[dict]) -> list[dict]:
     for err in errors:
         item = dict(err)
         loc = item.get("loc", ())
-        is_loc_sensitive = any(
-            isinstance(k, str) and k.lower() in _SENSITIVE_FIELD_NAMES for k in loc
-        )
+        is_loc_sensitive = any(isinstance(k, str) and k.lower() in _SENSITIVE_FIELD_NAMES for k in loc)
         if is_loc_sensitive and "input" in item:
             item["input"] = "[REDACTED]"
         elif "input" in item:
@@ -246,7 +253,13 @@ async def consent_required_handler(request: Request, exc: ConsentRequiredError):
         },
     )
 
+
 settings = get_settings()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(AuthRateLimitMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -259,6 +272,7 @@ app.add_middleware(
 app.include_router(router, prefix="/api/v1")
 app.include_router(metrics_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
+app.include_router(system_health_router, prefix="/api/v1")
 app.include_router(websocket_router, prefix="/api/v1")
 
 
@@ -289,10 +303,12 @@ async def _readiness_response(db: AsyncSession) -> dict[str, Any] | JSONResponse
     except Exception as exc:
         await db.rollback()
         logger.error("Database readiness check failed (%s): %s", type(exc).__name__, exc)
-        payload.update({
-            "status": "unavailable",
-            "checks": {"api": "ok", "database": "unavailable"},
-        })
+        payload.update(
+            {
+                "status": "unavailable",
+                "checks": {"api": "ok", "database": "unavailable"},
+            }
+        )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=payload,
