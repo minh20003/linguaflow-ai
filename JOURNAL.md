@@ -130,4 +130,145 @@ Tài liệu ghi nhận theo tuần: mục tiêu, kết quả đạt được, v�
 
 ---
 
-<!-- Bổ sung theo mẫu trên cho Tuần 4, 5, 6 -->
+## Tuần 4: 17/08/2026 - 23/08/2026 — Hợp nhất giao diện, xác thực và tầng glossary
+
+*80 commit (Trà My 44 · Thuận 24 · Minh 12)*
+
+### 4.1. Mục tiêu
+
+- [x] Hợp nhất giao diện chat vào nhánh phát triển chung
+- [x] Bổ sung đăng ký qua OTP email và đăng nhập Google
+- [x] Xây dựng tầng glossary có nhận thức đối tượng đọc và vai vế xưng hô
+- [x] Chuyển môi trường phát triển và kiểm thử sang PostgreSQL + pgvector
+- [x] Đóng các lỗ hổng guardrail phát hiện khi rà soát
+
+### 4.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Giao diện | Hợp nhất giao diện chat vào `develop`; bản địa hoá giao diện chat; hỗ trợ chuyển tiếp tin nhắn; sửa lỗi sự kiện dịch real-time ghi đè sai bong bóng tin nhắn (Thuận) |
+| Xác thực | Đăng ký bằng OTP email (Minh); đăng nhập Google đã xác minh, tự liên kết theo `google_sub` (Thuận, Minh — Batch G) |
+| Glossary | Hàng đợi duyệt thuật ngữ cho quản trị; khai phá thuật ngữ từ các chỉnh sửa mà nhiều người cùng đồng thuận; bộ glossary khởi tạo để tính năng dùng được ngay ngày đầu (Trà My) |
+| Dịch theo đối tượng đọc | Suy luận vai vế từ hội thoại; mỗi người nhận một bản dịch viết cho đúng vị thế của họ; phát tán bản dịch theo ngôn ngữ và vai vế (Trà My) |
+| Truy hồi ngữ nghĩa | Nhớ lại ngữ cảnh cũ theo **nghĩa** chứ không chỉ theo thời điểm (`message_embeddings`, pgvector) |
+| Guardrail | Chặn rò ngữ cảnh và câu từ chối của model lọt tới người nhận; hiệu chỉnh ADR-13 kèm biên bản rà soát |
+| Hạ tầng | Môi trường phát triển và kiểm thử chuyển hẳn sang PostgreSQL + pgvector; gia cố khởi động container production |
+
+### 4.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| Hợp nhất giao diện chat ghi đè lên giao diện P0 đang chạy | Khôi phục lại P0 rồi hợp nhất lại theo từng phần thay vì thay nguyên khối | Khôi phục được, nhưng mất một vòng revert–reapply trên nhánh chung |
+| Hai nhánh xác thực (OTP email và Google) sinh ra hai đầu migration | Nối migration Batch G sau `ef06ca79ef49`, đồng bộ route và schema | Một `head` duy nhất |
+| Thay đổi giao diện và thay đổi backend cùng chạm vào luồng xác thực | Thống nhất định danh hồ sơ và văn bản hiển thị trước khi hợp nhất | Hết mâu thuẫn định danh giữa hai phía |
+
+### 4.4. Bài học rút ra
+
+1. Hợp nhất một giao diện lớn bằng cách **thay nguyên thư mục** là cách nhanh nhất để mất công việc của người khác. Vòng revert–reapply tuần này là chi phí trực tiếp của lựa chọn đó.
+2. Hai nhánh cùng thêm migration thì phải thống nhất thứ tự nối **trước khi** cả hai cùng merge, không phải sau.
+3. Quyết định chuyển sang PostgreSQL + pgvector ngay ở môi trường phát triển đã ngăn được một lớp lỗi chỉ xuất hiện trên production.
+
+### 4.5. Kế hoạch tuần tiếp theo
+
+- [ ] Xây dựng Assistant Agent: đồ thị planner–executor với chốt xác nhận của người dùng
+- [ ] Mô hình quyền của trợ lý (ADR-30)
+- [ ] Lịch cá nhân, nhắc việc và đồng bộ Google Calendar
+- [ ] Ổn định CI
+
+---
+
+## Tuần 5: 24/08/2026 - 30/08/2026 — Assistant Agent, lịch và đường phát hành
+
+*65 commit (Trà My 40 · Minh 17 · Thuận 7)*
+
+### 5.1. Mục tiêu
+
+- [x] Hoàn thành Assistant Agent với chốt xác nhận bắt buộc của người dùng
+- [x] Thiết lập mô hình quyền người dùng cấp cho trợ lý
+- [x] Lịch cá nhân, hộp nhiệm vụ và đồng bộ hai chiều Google Calendar
+- [x] Tin nhắn thoại và phiên âm
+- [x] Ổn định CI và tự động hoá phát hành lên VPS
+
+### 5.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Assistant Agent | Đồ thị planner–executor với chốt `human_confirm`; trả lời `@assistant` **riêng tư** cho đúng người hỏi; truy hồi hội thoại theo nghĩa và theo thời điểm (Trà My) |
+| Mô hình quyền | Năm phạm vi quyền người dùng cấp cho trợ lý, hỏi khi bật trợ lý, trả `403 CONSENT_REQUIRED` khi thiếu; ghi thành ADR-30 (Trà My) |
+| Lịch & nhắc việc | Đề xuất được duyệt trở thành mục lịch; nhắc việc chạy trên đồng hồ có hàng đợi trong cơ sở dữ liệu; đồng bộ Google Calendar hai chiều, lưu chứng thực có mã hoá (Trà My) |
+| Giao diện | Lịch cá nhân và hộp nhiệm vụ có sắp xếp ưu tiên; làm mới giao diện lịch, quản trị và xác thực; tinh chỉnh hộp nhiệm vụ (Trà My, Thuận) |
+| Tin nhắn thoại | Ghi âm → phiên âm bằng Gemini → dịch; khôi phục khi phiên âm thất bại (Minh) |
+| Quản trị | Màn hình phản hồi bản dịch và các endpoint quản trị; tích hợp dữ liệu telemetry thật (Minh, Thuận) |
+| CI/CD | Khắc phục xung đột cổng PostgreSQL, tăng thời gian chờ, chuyển sang self-hosted runner; tự động hoá quy trình phát hành production lên VPS (Minh) |
+| Tài liệu | Sơ đồ luồng trợ lý, các bảng mới và đường tới Google Calendar; mô hình quyền; sự kiện realtime của trợ lý (Trà My) |
+
+### 5.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| CI liên tục đỏ vì xung đột cổng PostgreSQL và hết thời gian chờ | Chuyển sang self-hosted runner, tách riêng bộ test của trợ lý, nới thời gian chờ | CI xanh trở lại, nhưng chi phí là ba ngày sửa hạ tầng thay vì làm tính năng |
+| Bộ rerank cục bộ làm chết tiến trình máy chủ | Tách khỏi đường xử lý chính, cho phép tắt bằng cấu hình | Máy chủ ổn định; chất lượng truy hồi giảm nhẹ khi tắt |
+| Giới hạn token của bộ dịch làm im lặng luồng phát hiện đề xuất | Tách hạn mức token của hai luồng | Phát hiện đề xuất hoạt động trở lại |
+| Đề xuất thiếu thông tin không thể hoàn thiện để duyệt | Cho phép bổ sung trường còn thiếu ngay trên thẻ đề xuất | Duyệt được mà không phải tạo lại |
+
+### 5.4. Bài học rút ra
+
+1. Một tính năng nền (rerank, hạn mức token) hỏng thì biểu hiện ở **tính năng khác**, không ở chính nó. Cả hai sự cố tuần này đều mất thời gian tìm vì triệu chứng nằm xa nguyên nhân.
+2. Chốt xác nhận của người dùng phải là **cấu trúc của đồ thị**, không phải một lời nhắc trong prompt — đó là điều kiện để sau này bán theo kết quả.
+3. Đầu tư vào CI không sinh ra tính năng nào nhưng là thứ duy nhất giữ cho ba người merge được vào cùng một nhánh.
+
+### 5.5. Kế hoạch tuần tiếp theo
+
+- [ ] Chuẩn hoá hành vi ngôn ngữ trên toàn hệ thống
+- [ ] Hoàn thiện giao diện đa ngôn ngữ
+- [ ] Rà soát mã nguồn trước khi bàn giao
+- [ ] Cập nhật tài liệu trình bày theo hiện trạng
+
+---
+
+## Tuần 6: 31/08/2026 - 01/09/2026 — Chuẩn hoá ngôn ngữ và rà soát bàn giao
+
+*17 commit tính đến 01/09*
+
+### 6.1. Mục tiêu
+
+- [x] Chuẩn hoá quy tắc ngôn ngữ cho mọi chuỗi hệ thống sinh ra
+- [x] Đưa toàn bộ giao diện qua một catalogue duy nhất
+- [x] Rà soát mã nguồn và xử lý phát hiện
+- [ ] Kiểm thử giao diện bằng thao tác thật (chưa thực hiện được)
+
+### 6.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Đề xuất theo nhóm | Một tin nhắn sinh ra đề xuất cho **từng thành viên**, trạng thái độc lập; thời gian quy đổi theo đồng hồ người nói |
+| Ngữ pháp thời gian | Tách thành `src/services/relative_time.py`: hiểu "ngày kia", "thứ 6 tuần sau", "6 giờ rưỡi", "3pm"; từ chối thay vì đoán khi không đủ căn cứ |
+| Phạm vi đọc của trợ lý | Chat riêng đọc toàn bộ hội thoại của tài khoản; tag trong nhóm chỉ đọc hội thoại đó (`assistant_scope.py`) |
+| Quy tắc ngôn ngữ | Trả lời theo ngôn ngữ câu hỏi; nội dung trong luồng chat theo ngôn ngữ dịch; chrome, ngày giờ và hộp nhiệm vụ theo ngôn ngữ giao diện |
+| Giao diện đa ngôn ngữ | 219 chuỗi đưa vào catalogue; 576 khoá × 14 ngôn ngữ; `scripts/check_ui_keys.py` phát hiện khoá bị tra mà không tồn tại |
+| Kiểm thử | 1236 test backend, 53 test frontend, `tsc` và lint sạch |
+
+### 6.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| Endpoint trả về tiêu đề **đã dịch**, trong khi client gửi `title` ngược lên khi duyệt — bản dịch máy ghi đè lên câu người dùng thật sự nói | Tách trường chỉ đọc `display_title`; `title` luôn là giá trị đã lưu | Đã sửa; phát hiện bởi rà soát mã nguồn, không phải bởi test |
+| Khoá catalogue bị tra nhưng không tồn tại — hiển thị đúng ở tiếng Anh, im lặng sai ở 13 ngôn ngữ còn lại | Viết `scripts/check_ui_keys.py` đối chiếu mọi lượt tra với catalogue | 9 khoá thiếu được bổ sung; loại lỗi này không còn vô hình |
+| Hook React bị đặt vào hàm thường trong đợt quét tự động | `tsc` không phát hiện; `rules-of-hooks` của eslint bắt được | Đã sửa; ghi nhận rằng typecheck không phải lưới an toàn cho loại thay đổi này |
+| Bộ dịch miễn phí bị chặn khi dịch hàng nghìn dòng catalogue | Chuyển sang gọi LLM theo lô, một ngôn ngữ mỗi lượt | 6230/6264 dòng được lấp |
+
+### 6.4. Bài học rút ra
+
+1. Lỗi nguy hiểm nhất tuần này **biên dịch sạch và test xanh**: trả về giá trị đã biến đổi ở nơi client sẽ gửi ngược lại. Cần soát riêng những chỗ client gửi lại dữ liệu nó vừa nhận.
+2. Một khoá dịch bị thiếu **rơi về chính chuỗi tiếng Anh** — đúng ở tiếng Anh, sai ở mọi ngôn ngữ khác, và không có gì báo. Phải có công cụ đối chiếu, không thể trông vào quan sát.
+3. Với thay đổi cơ học trên diện rộng, `tsc` không đủ; lint theo quy tắc của framework mới là thứ bắt được lỗi ngữ nghĩa.
+
+### 6.5. Kế hoạch tiếp theo
+
+- [ ] Chốt tỷ lệ đúng ngôn ngữ đích từ 96,6% lên 100% (§5.3 tài liệu trình bày)
+- [ ] Kiểm thử giao diện bằng thao tác thật trên trình duyệt
+- [ ] Bỏ giới hạn một bản sao (ADR-18) trước khi mở rộng
+- [ ] Xử lý timeout im lặng của luồng phát hiện cam kết
+
+---
+
