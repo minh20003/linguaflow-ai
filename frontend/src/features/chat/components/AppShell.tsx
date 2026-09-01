@@ -1325,7 +1325,6 @@ export const AppShell: React.FC = () => {
           token={accessToken}
           language={settings.interfaceLanguage}
           incoming={incomingProposals}
-          language={settings.interfaceLanguage}
           onProposalChanged={(proposal, removed) =>
             setIncomingProposals((current) => removed
               ? current.filter((item) => item.id !== proposal.id)
