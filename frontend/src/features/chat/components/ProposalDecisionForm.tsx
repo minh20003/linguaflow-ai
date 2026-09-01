@@ -2,6 +2,7 @@
 
 import React from "react";
 import { AlertCircle, ArrowRight, CalendarDays, Clock3, FileText, MapPin } from "lucide-react";
+import type { LanguageCode } from "../types";
 import type { ApiActionProposal } from "../api/chat-api";
 import {
   ApprovalOptions,
@@ -12,6 +13,7 @@ import {
 } from "../proposal-approval";
 
 interface ProposalDecisionFormProps {
+  language?: LanguageCode;
   proposal: ApiActionProposal;
   draft: ProposalDraft;
   chosen: ApprovalOptions;
