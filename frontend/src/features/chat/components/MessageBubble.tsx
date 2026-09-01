@@ -20,6 +20,7 @@ import {
   Pencil,
   X
 } from 'lucide-react';
+import { useT } from "../language-context";
 
 interface MessageBubbleProps {
   message: Message;
@@ -70,6 +71,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onStartDirectChat,
   language,
 }) => {
+  const ui = useT();
   const [showActions, setShowActions] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -151,12 +153,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             message.senderAvatar ? (
               <img
                 src={message.senderAvatar}
-                alt="Trợ lý thông minh"
+                alt={ui("Smart Assistant")}
                 className="h-8 w-8 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30"
                 referrerPolicy="no-referrer"
               />
             ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-600 ring-1 ring-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:ring-violet-400/30" aria-label="Trợ lý thông minh">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-600 ring-1 ring-violet-200 dark:bg-violet-500/20 dark:text-violet-300 dark:ring-violet-400/30" aria-label={ui("Smart Assistant")}>
                 <Sparkles className="h-4 w-4" />
               </div>
             )

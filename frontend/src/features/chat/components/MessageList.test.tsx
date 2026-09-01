@@ -98,6 +98,8 @@ function renderList(overrides: Partial<React.ComponentProps<typeof MessageList>>
     onDownloadAttachment: vi.fn(),
     onLoadAttachmentPreview: vi.fn().mockResolvedValue(''),
     language: 'en',
+    // The chat card follows the translation language, not the chrome.
+    contentLanguage: 'en' as const,
     ...overrides,
   };
   const view = render(<MessageList {...props} />);
@@ -197,7 +199,10 @@ describe('the assistant proposing an action inside the conversation', () => {
 
     rerenderWith({ proposals: [proposal({ status: 'confirmed' })] });
 
-    expect(screen.getByText(/Đã thêm "Họp review kiến trúc" vào Lịch cá nhân/)).toBeTruthy();
+    // The fixture renders with language "en", so the card answers in English.
+    expect(
+      screen.getByText(/Added to your personal calendar: "Họp review kiến trúc"/),
+    ).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Duyệt và thêm vào lịch/ })).toBeNull();
   });
 
@@ -210,6 +215,8 @@ describe('the assistant proposing an action inside the conversation', () => {
 
     rerenderWith({ proposals: [proposal({ status: 'rejected' })] });
 
-    expect(screen.getByText(/Đã từ chối đề xuất "Họp review kiến trúc"/)).toBeTruthy();
+    expect(
+      screen.getByText(/Turned down, and left off your calendar: "Họp review kiến trúc"/),
+    ).toBeTruthy();
   });
 });

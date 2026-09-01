@@ -14,6 +14,11 @@ class CalendarEventResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # Read-only, for the same reason as `ActionProposalResponse`: the
+    # calendar page PATCHes `title` back when a task is dragged, so a
+    # translated `title` in the response would be written to the row.
+    display_title: str | None = None
+
     id: str
     title: str
     details: str | None = None

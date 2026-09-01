@@ -17,6 +17,7 @@ import {
   MapPin, Pencil, Plus, RefreshCw, RotateCw, Search, Trash2,
   Users, Video, X,
 } from "lucide-react";
+import { useLanguage, useT } from "../language-context";
 
 /* ────────────────────────── TYPES & MODELS ────────────────────────── */
 export type EventKind = "event" | "task";
@@ -40,6 +41,8 @@ export interface EventReminder {
 type ReminderUnit = "minutes" | "hours" | "days";
 
 export interface CalendarTask {
+  /** The title as this screen should show it. Display only. */
+  displayTitle?: string;
   id: string;
   title: string;
   kind: EventKind;
@@ -124,6 +127,9 @@ function toCalendarTask(event: ApiCalendarEvent): CalendarTask {
   return {
     id: event.id,
     title: event.title,
+    // Shown, never sent. `saveTask` PATCHes `title`, so putting the
+    // rendered string there would write the translation to the row.
+    displayTitle: event.display_title || event.title,
     note: event.details ?? undefined,
     date: toDateString(starts),
     isAllDay,
@@ -230,15 +236,19 @@ export function generateMeetLink(): string {
   return `https://meet.google.com/${rand(3)}-${rand(4)}-${rand(3)}`;
 }
 
-export function formatVietnameseDate(date: Date, includeWeekday: boolean = true): string {
-  const weekday = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"][date.getDay()];
-  const day = date.getDate();
-  const month = date.getMonth() + 1;
-  const year = date.getFullYear();
-  if (includeWeekday) {
-    return `${weekday}, ${day} tháng ${month}, ${year}`;
-  }
-  return `${day} tháng ${month}, ${year}`;
+export function formatCalendarDate(
+  date: Date,
+  includeWeekday: boolean = true,
+  language: string = "en",
+): string {
+  // `Intl` rather than a name table: it already knows every weekday in every
+  // language offered, and the day/month order each of them reads.
+  return date.toLocaleDateString(language, {
+    weekday: includeWeekday ? "long" : undefined,
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 export function sameDay(left: Date, right: Date): boolean {
@@ -551,14 +561,14 @@ const defaultTasks = (): CalendarTask[] => {
   ];
 };
 
-function recurrenceLabel(rec?: RecurrenceFreq) {
-  if (!rec || rec === "none") return "Không lặp lại";
-  if (rec === "daily") return "Hằng ngày";
-  if (rec === "workdays") return "Thứ 2 đến Thứ 6"; // Đã bỏ "Ngày làm việc"
-  if (rec === "weekly") return "Hằng tuần vào ngày này";
-  if (rec === "monthly") return "Hằng tháng vào ngày này";
-  if (rec === "yearly") return "Hằng năm vào ngày này";
-  return "Không lặp lại";
+function recurrenceLabel(rec: RecurrenceFreq | undefined, ui: (value: string) => string) {
+  if (!rec || rec === "none") return ui("Does not repeat");
+  if (rec === "daily") return ui("Daily");
+  if (rec === "workdays") return ui("Monday to Friday"); // Đã bỏ ui("Weekdays")
+  if (rec === "weekly") return ui("Weekly on this day");
+  if (rec === "monthly") return ui("Monthly on this day");
+  if (rec === "yearly") return ui("Annually on this day");
+  return ui("Does not repeat");
 }
 
 /* ────────────────────────── DRAG TIME SELECTION STATE ────────────────────────── */
@@ -583,6 +593,8 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
   onNotify,
   refreshToken = 0,
 }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(() => new Date());
@@ -640,12 +652,12 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       hydrated.current = true;
     } catch (error) {
       onNotify?.(
-        "Không tải được lịch",
+        ui("Failed to load calendar"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
     }
-  }, [token, onNotify]);
+  }, [token, onNotify, ui]);
 
   useEffect(() => {
     void reload();
@@ -703,7 +715,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       const q = query.trim().toLowerCase();
       const matchesSearch =
         !q ||
-        `${task.title} ${task.note ?? ""} ${task.location ?? ""} ${task.attendees?.map((a) => a.email).join(" ") ?? ""}`
+        `${task.displayTitle ?? task.title} ${task.note ?? ""} ${task.location ?? ""} ${task.attendees?.map((a) => a.email).join(" ") ?? ""}`
           .toLowerCase()
           .includes(q);
 
@@ -749,7 +761,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       await cancelCalendarEvent(token, task.id);
     } catch (error) {
       onNotify?.(
-        "Không xoá được",
+        ui("Failed to delete"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -780,7 +792,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       }
     } catch (error) {
       onNotify?.(
-        "Không lưu được",
+        ui("Failed to save"),
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -880,7 +892,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
   const currentPeriod = useMemo(() => {
     if (mode === "day") {
-      return formatVietnameseDate(cursor, true);
+      return formatCalendarDate(cursor, true, uiLanguage);
     }
     if (mode === "week") {
       return `${weekStart.toLocaleDateString("vi-VN", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" })}`;
@@ -889,10 +901,10 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
       return `Tháng ${cursor.getMonth() + 1} năm ${cursor.getFullYear()}`;
     }
     return `Lịch biểu (${cursor.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })})`;
-  }, [mode, cursor, weekStart, weekDays]);
+  }, [mode, cursor, weekStart, weekDays, ui]);
 
   return (
-    <section className="flex h-screen min-w-0 flex-1 bg-[#F8FAFD] text-[#1F1F1F] select-none dark:bg-[#131314] dark:text-[#E3E3E3]" aria-label="Lịch Google Calendar">
+    <section className="flex h-screen min-w-0 flex-1 bg-[#F8FAFD] text-[#1F1F1F] select-none dark:bg-[#131314] dark:text-[#E3E3E3]" aria-label={ui("Google Calendar")}>
       {/* ── MAIN CALENDAR VIEWPORT ── */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* ── GOOGLE CALENDAR HEADER TOOLBAR ── */}
@@ -920,14 +932,14 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
             {/* Chevron Prev / Next */}
             <div className="flex items-center">
               <button
-                aria-label="Kỳ trước"
+                aria-label={ui("Previous period")}
                 onClick={() => navigate(-1)}
                 className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
               >
                 <ChevronLeft className="h-5 w-5" />
               </button>
               <button
-                aria-label="Kỳ sau"
+                aria-label={ui("Next period")}
                 onClick={() => navigate(1)}
                 className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
               >
@@ -949,7 +961,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Tìm kiếm sự kiện, việc cần làm..."
+                placeholder={ui("Search events, tasks...")}
                 className="h-10 w-48 rounded-full border border-[#DADCE0] bg-[#F1F3F4] pl-9 pr-3 text-xs text-[#1F1F1F] outline-none transition-all focus:w-64 focus:border-[#1A73E8] focus:bg-white dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-white dark:focus:bg-[#1E1F20]"
               />
               {query && (
@@ -974,7 +986,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                       : "text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
                   }`}
                 >
-                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : "Lịch biểu"}
+                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : ui("Schedule")}
                 </button>
               ))}
             </div>
@@ -982,8 +994,8 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
             <button
               type="button"
               onClick={() => setNow(new Date())}
-              aria-label="Làm mới lịch"
-              title="Làm mới"
+              aria-label={ui("Refresh calendar")}
+              title={ui("Refresh")}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
             >
               <RefreshCw className="h-4 w-4" />
@@ -995,7 +1007,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* ── LEFT SIDEBAR (GOOGLE CALENDAR STYLE) ── */}
           <aside className="hidden w-[260px] shrink-0 flex-col border-r border-[#DADCE0] bg-white dark:border-[#36373A] dark:bg-[#1E1F20] lg:flex">
-            {/* Nút "+ Tạo" */}
+            {/* Nút ui("+ Create") */}
             <div className="p-4" ref={createMenuRef}>
               <div className="relative">
                 <button
@@ -1003,7 +1015,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                   className="flex h-12 w-fit items-center gap-3 rounded-full bg-white px-5 text-sm font-medium text-[#3C4043] shadow-[0_1px_3px_0_rgba(60,64,67,0.3),0_4px_8px_3px_rgba(60,64,67,0.15)] transition-all hover:bg-[#F8FAFD] hover:shadow-[0_2px_6px_2px_rgba(60,64,67,0.25)] active:scale-98 dark:bg-[#2D2E30] dark:text-[#E3E3E3] dark:hover:bg-[#36373A]"
                 >
                   <Plus className="h-6 w-6 text-[#1A73E8] stroke-[2.5]" />
-                  <span className="font-medium text-[15px]">Tạo</span>
+                  <span className="font-medium text-[15px]">{ui("Create")}</span>
                   <ChevronDown className="h-4 w-4 text-[#747775]" />
                 </button>
 
@@ -1019,7 +1031,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F0FE] text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">
                         <CalendarDays className="h-4 w-4" />
                       </span>
-                      <span className="font-medium">Sự kiện</span>
+                      <span className="font-medium">{ui("Event")}</span>
                     </button>
 
                     <button
@@ -1032,7 +1044,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F5E9] text-[#2E7D32] dark:bg-emerald-500/20 dark:text-emerald-300">
                         <CheckCircle2 className="h-4 w-4" />
                       </span>
-                      <span className="font-medium">Việc cần làm</span>
+                      <span className="font-medium">{ui("Task")}</span>
                     </button>
                   </div>
                 )}
@@ -1052,7 +1064,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
               />
             </div>
 
-            {/* "Lịch của tôi" Filter (Ô tích chọn màu trắng khi chưa tích) */}
+            {/* ui("My calendar") Filter (Ô tích chọn màu trắng khi chưa tích) */}
             <div className="flex-1 overflow-y-auto px-4 py-2 text-xs">
               <div className="mb-2 flex items-center justify-between">
                 <span className="font-semibold text-[#444746] dark:text-[#C4C7C5] tracking-wide uppercase text-[11px]">
@@ -1062,8 +1074,8 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
               <div className="space-y-1.5">
                 {[
-                  { key: "event", name: "Sự kiện", color: GOOGLE_PALETTE.sage },
-                  { key: "task", name: "Việc cần làm", color: GOOGLE_PALETTE.peacock },
+                  { key: "event", name: ui("Event"), color: GOOGLE_PALETTE.sage },
+                  { key: "task", name: ui("Task"), color: GOOGLE_PALETTE.peacock },
                   { key: "google", name: "Google Calendar Sync", color: GOOGLE_PALETTE.lavender },
                 ].map((item) => {
                   const isChecked = selectedFilters[item.key] !== false;
@@ -1346,6 +1358,8 @@ const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => v
   dragSelection,
   onOpenDay,
 }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const startHour = hours[0];
   const gridHeight = hours.length * HOUR_HEIGHT;
   const scrollRef = useScrollToNow(startHour);
@@ -1470,11 +1484,11 @@ const WeekGrid: React.FC<GridProps & { days: Date[]; onOpenDay: (day: Date) => v
                   onMouseDown={(event) => event.stopPropagation()}
                   className="absolute inset-x-1 z-30 flex items-center justify-center rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/30 px-1 py-0.5 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
                 >
-                  <button type="button" aria-label="Kéo để đổi giờ bắt đầu" onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
+                  <button type="button" aria-label={ui("Drag to change start time")} onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
                   <span className="truncate rounded bg-white/95 px-1.5 py-0.5 text-[10px] sm:text-[11px] font-bold text-[#1A73E8] shadow-2xs">
                     {minutesToTime(dragStart)} – {minutesToTime(dragEnd)}
                   </span>
-                  <button type="button" aria-label="Kéo để đổi giờ kết thúc" onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
+                  <button type="button" aria-label={ui("Drag to change end time")} onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
                 </div>
               )}
 
@@ -1508,6 +1522,8 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
   onResizeDrag,
   dragSelection,
 }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const startHour = hours[0];
   const gridHeight = hours.length * HOUR_HEIGHT;
   const scrollRef = useScrollToNow(startHour);
@@ -1553,7 +1569,7 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
 
           {allDay.length > 0 && (
             <div className="mt-3 flex items-start gap-3 border-t border-[#DADCE0] pt-2 dark:border-[#36373A]">
-              <span className="pt-1 text-[11px] font-medium uppercase tracking-wide text-[#70757A]">Cả ngày</span>
+              <span className="pt-1 text-[11px] font-medium uppercase tracking-wide text-[#70757A]">{ui("All day")}</span>
               <div className="flex flex-1 flex-wrap gap-1.5">
                 {allDay.map((task) => (
                   <AllDayChip key={task.id} task={task} onSelect={onSelect} />
@@ -1597,9 +1613,9 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
                 onMouseDown={(event) => event.stopPropagation()}
                 className="absolute inset-x-2 z-30 flex flex-col justify-start rounded-md border-2 border-[#1A73E8] bg-[#1A73E8]/25 p-2 shadow-md backdrop-blur-[1px] animate-in fade-in-50 overflow-hidden"
               >
-                <button type="button" aria-label="Kéo để đổi giờ bắt đầu" onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
+                <button type="button" aria-label={ui("Drag to change start time")} onMouseDown={(event) => onResizeDrag(dateStr, dragEnd, event)} className="absolute inset-x-0 top-0 h-2 cursor-ns-resize" />
                 <div className="flex items-center justify-between gap-2 leading-tight text-xs font-semibold text-[#0B57D0] dark:text-[#A8C7FA]">
-                  <span className="truncate text-xs font-semibold">(Chưa có tiêu đề)</span>
+                  <span className="truncate text-xs font-semibold">{ui("(No title)")}</span>
                   <span className="shrink-0 rounded bg-white px-2 py-0.5 text-xs font-bold text-[#1A73E8] shadow-2xs">
                     {minutesToTime(dragStart)} – {minutesToTime(dragEnd)}
                   </span>
@@ -1611,7 +1627,7 @@ const DayGrid: React.FC<GridProps & { day: Date }> = ({
                     <span>Thời lượng: {formatMinutesDuration(dragEnd - dragStart)}</span>
                   </div>
                 )}
-                <button type="button" aria-label="Kéo để đổi giờ kết thúc" onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
+                <button type="button" aria-label={ui("Drag to change end time")} onMouseDown={(event) => onResizeDrag(dateStr, dragStart, event)} className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
               </div>
             )}
 
@@ -1717,7 +1733,7 @@ const MonthGrid: React.FC<{
                       className="flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-[11px] font-medium text-white transition-all hover:brightness-105"
                     >
                       {isTask && <CheckCircle2 className="h-3 w-3 shrink-0" />}
-                      <span className="truncate flex-1">{task.title}</span>
+                      <span className="truncate flex-1">{task.displayTitle ?? task.title}</span>
                     </button>
                   ) : (
                     <button
@@ -1734,7 +1750,7 @@ const MonthGrid: React.FC<{
                         {task.startTime || new Date(task.dueAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
                       </span>
                       <span className={`truncate text-[#3C4043] dark:text-[#C4C7C5] flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
-                        {task.title}
+                        {task.displayTitle ?? task.title}
                       </span>
                       {task.meetLink && <Video className="h-3 w-3 text-[#1A73E8] shrink-0" />}
                     </button>
@@ -1791,7 +1807,7 @@ const MonthGrid: React.FC<{
                         >
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color.bg }} />
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{task.title}</p>
+                            <p className="truncate font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{task.displayTitle ?? task.title}</p>
                             <p className="text-[10px] text-[#70757A] dark:text-[#9AA0A6]">
                               {isAllDayTask(task) ? "Cả ngày" : `${task.startTime} – ${task.endTime}`}
                             </p>
@@ -1818,6 +1834,8 @@ const ScheduleView: React.FC<{
   onFinish: (task: CalendarTask) => void;
   onCreateNew: () => void;
 }> = ({ cursor, tasks, onSelect, onFinish, onCreateNew }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const daysList = useMemo(() => {
     const list: { date: Date; dateStr: string; items: CalendarTask[] }[] = [];
     const base = new Date(cursor);
@@ -1854,8 +1872,8 @@ const ScheduleView: React.FC<{
         {daysList.length === 0 ? (
           <div className="py-16 text-center text-[#70757A]">
             <CalendarDays className="mx-auto mb-3 h-12 w-12 text-[#DADCE0] dark:text-[#444746]" />
-            <p className="text-sm font-medium">Không có sự kiện hoặc việc cần làm nào</p>
-            <p className="text-xs mt-1">Nhấp "+ Thêm lịch mới" để tạo.</p>
+            <p className="text-sm font-medium">{ui("No events or tasks")}</p>
+            <p className="text-xs mt-1">{ui("Click \"+ Add new calendar\" to create.")}</p>
           </div>
         ) : (
           daysList.map(({ date, items }) => {
@@ -1876,7 +1894,7 @@ const ScheduleView: React.FC<{
                   </div>
                   <div>
                     <h4 className="font-semibold text-sm text-[#1F1F1F] dark:text-[#E3E3E3]">
-                      {formatVietnameseDate(date, true)}
+                      {formatCalendarDate(date, true, uiLanguage)}
                     </h4>
                     <span className="text-[11px] text-[#70757A]">
                       {items.length} mục trong ngày
@@ -1913,7 +1931,7 @@ const ScheduleView: React.FC<{
                             )}
                             <div className="min-w-0 flex-1">
                               <h5 className={`text-sm font-medium text-[#1F1F1F] dark:text-[#E3E3E3] truncate ${task.status === "done" ? "line-through opacity-60" : ""}`}>
-                                {task.title}
+                                {task.displayTitle ?? task.title}
                               </h5>
                               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#70757A] dark:text-[#9AA0A6]">
                                 <span className="flex items-center gap-1">
@@ -1929,7 +1947,7 @@ const ScheduleView: React.FC<{
                             className="rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0"
                             style={{ backgroundColor: color.light, color: color.bg }}
                           >
-                            {task.kind === "task" ? "Việc cần làm" : "Sự kiện"}
+                            {task.kind === "task" ? "Việc cần làm" : ui("Event")}
                           </span>
                         </div>
 
@@ -2011,7 +2029,7 @@ const TimedEventBlock: React.FC<{
           </span>
           <span className="opacity-40">•</span>
           <span className={`truncate font-semibold flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
-            {task.title}
+            {task.displayTitle ?? task.title}
           </span>
         </div>
       ) : (
@@ -2020,7 +2038,7 @@ const TimedEventBlock: React.FC<{
           <div className="flex items-center gap-1 leading-tight">
             {isTask && <CheckCircle2 className="h-3 w-3 shrink-0 opacity-90" />}
             <span className={`truncate text-[11px] sm:text-xs font-semibold flex-1 ${task.status === "done" ? "line-through opacity-60" : ""}`}>
-              {task.title}
+              {task.displayTitle ?? task.title}
             </span>
           </div>
           <div className="truncate text-[10px] sm:text-[11px] font-medium tracking-tight opacity-95 leading-none">
@@ -2054,20 +2072,22 @@ const AllDayChip: React.FC<{
       }`}
     >
       {isTask && <CheckCircle2 className="h-3 w-3 shrink-0" />}
-      <span className="truncate flex-1">{task.title}</span>
+      <span className="truncate flex-1">{task.displayTitle ?? task.title}</span>
     </button>
   );
 };
 
 /* ────────────────────────── NOW LINE ────────────────────────── */
 const NowLine: React.FC<{ now: Date; startHour: number; gridHeight: number }> = ({ now, startHour, gridHeight }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const currentMins = now.getHours() * 60 + now.getMinutes();
   const offset = ((currentMins - startHour * 60) / 60) * HOUR_HEIGHT;
   if (offset < 0 || offset > gridHeight) return null;
 
   return (
     <div
-      aria-label="Thời điểm hiện tại"
+      aria-label={ui("Current time")}
       className="pointer-events-none absolute inset-x-0 z-20 flex items-center"
       style={{ top: offset }}
     >
@@ -2087,6 +2107,8 @@ const QuickCreatePopover: React.FC<{
   onMoreOptions: (title: string, kind: EventKind, colorId: string, location: string, isAllDay: boolean) => void;
   onSave: (task: CalendarTask) => void;
 }> = ({ dateStr, startTime, endTime, anchor, onClose, onMoreOptions, onSave }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState<EventKind>("event");
   const [isAllDay, setIsAllDay] = useState(false);
@@ -2137,7 +2159,7 @@ const QuickCreatePopover: React.FC<{
           required
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+          placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : ui("Add event title")}
           className="w-full border-0 border-b-2 border-[#1A73E8] bg-transparent px-0 py-1.5 text-base font-medium text-[#1F1F1F] outline-none placeholder:text-[#9AA0A6] dark:text-[#E3E3E3]"
         />
 
@@ -2178,14 +2200,14 @@ const QuickCreatePopover: React.FC<{
           <div className="flex items-center gap-2 min-w-0">
             <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
             <div className="min-w-0 truncate">
-              <span className="font-medium">{formatVietnameseDate(dateObj, true)}</span>
+              <span className="font-medium">{formatCalendarDate(dateObj, true, uiLanguage)}</span>
               {!isAllDay && <span className="ml-1.5 font-semibold text-[#1A73E8] dark:text-[#A8C7FA]">({startTime} – {endTime})</span>}
               {!isAllDay && <span className="ml-1 text-[11px] text-[#70757A]">({formatMinutesDuration(duration)})</span>}
             </div>
           </div>
           <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3] shrink-0">
             <CustomCheckbox checked={isAllDay} onChange={setIsAllDay} />
-            <span>Cả ngày</span>
+            <span>{ui("All day")}</span>
           </label>
         </div>
 
@@ -2196,15 +2218,15 @@ const QuickCreatePopover: React.FC<{
             <input
               value={location}
               onChange={(e) => setLocation(e.target.value)}
-              placeholder="Thêm vị trí, phòng họp..."
+              placeholder={ui("Add location, meeting room...")}
               className="w-full bg-transparent text-xs text-[#1F1F1F] outline-none dark:text-[#E3E3E3]"
             />
           </div>
         )}
 
         <div className="relative flex items-center gap-2">
-          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">Màu sắc</span>
-          <button type="button" onClick={() => setShowColorPalette((current) => !current)} aria-label="Chọn màu sắc" aria-expanded={showColorPalette} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#DADCE0] bg-white px-2 hover:bg-[#F8FAFD] dark:border-[#5F6368] dark:bg-[#2D2E30]">
+          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">{ui("Color")}</span>
+          <button type="button" onClick={() => setShowColorPalette((current) => !current)} aria-label={ui("Select color")} aria-expanded={showColorPalette} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#DADCE0] bg-white px-2 hover:bg-[#F8FAFD] dark:border-[#5F6368] dark:bg-[#2D2E30]">
             <span className="h-4 w-4 rounded-full" style={{ backgroundColor: GOOGLE_PALETTE[colorId]?.bg }} />
             <ChevronDown className="h-3.5 w-3.5 text-[#70757A]" />
           </button>
@@ -2278,6 +2300,8 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   onClose,
   onSubmit,
 }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const [kind, setKind] = useState<EventKind>(initialTask?.kind ?? initialKind);
   const [title, setTitle] = useState(initialTask?.title ?? initialTitle);
 
@@ -2404,11 +2428,11 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     const normalizedEmail = clean.toLowerCase();
     const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
     if (!isValidEmail) {
-      setGuestError("Nhập địa chỉ email hợp lệ.");
+      setGuestError(ui("Enter a valid email address."));
       return;
     }
     if (attendees.some((attendee) => attendee.email.toLowerCase() === normalizedEmail)) {
-      setGuestError("Email này đã có trong danh sách.");
+      setGuestError(ui("This email is already in the list."));
       return;
     }
 
@@ -2440,7 +2464,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
       setGroups(conversations.filter((conversation) => conversation.type === "group"));
       setShowGroupPicker(true);
     } catch {
-      setGroupError("Không tải được danh sách nhóm.");
+      setGroupError(ui("Failed to load group list."));
     }
   };
 
@@ -2455,7 +2479,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
       }));
 
     if (membersToAdd.length === 0) {
-      setGroupError("Nhóm này không có người tham gia mới.");
+      setGroupError(ui("This group has no new participants."));
       return;
     }
     setAttendees((current) => [...current, ...membersToAdd]);
@@ -2517,7 +2541,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
 
   return (
     <Modal
-      title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : "Chỉnh sửa sự kiện") : (kind === "task" ? "Tạo việc cần làm mới" : "Tạo sự kiện mới")}
+      title={initialTask ? (kind === "task" ? "Chỉnh sửa việc cần làm" : ui("Edit event")) : (kind === "task" ? "Tạo việc cần làm mới" : ui("Create new event"))}
       maxWidth="max-w-xl"
       popoverAnchor={popoverAnchor}
       onClose={onClose}
@@ -2540,7 +2564,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             }`}
           >
             <CalendarDays className="h-4 w-4" />
-            <span>Sự kiện</span>
+            <span>{ui("Event")}</span>
           </button>
           <button
             type="button"
@@ -2557,7 +2581,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             }`}
           >
             <CheckCircle2 className="h-4 w-4" />
-            <span>Việc cần làm</span>
+            <span>{ui("Task")}</span>
           </button>
         </div>
 
@@ -2568,7 +2592,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             required
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : "Thêm tiêu đề sự kiện"}
+            placeholder={kind === "task" ? "Thêm tiêu đề việc cần làm" : ui("Add event title")}
             className="w-full border-0 border-b border-[#DADCE0] bg-transparent px-0 py-2 text-xl font-normal text-[#202124] outline-none transition-colors placeholder:text-[#9AA0A6] focus:border-[#1A73E8] focus:ring-0 dark:border-[#5F6368] dark:text-[#E8EAED]"
           />
         </div>
@@ -2585,7 +2609,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             {/* Checkbox Cả ngày (Màu trắng khi chưa tích) */}
             <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">
               <CustomCheckbox checked={isAllDay} onChange={setIsAllDay} />
-              <span>Cả ngày</span>
+              <span>{ui("All day")}</span>
             </label>
           </div>
 
@@ -2606,7 +2630,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <CalendarTimeField
                     value={startTime}
                     onChange={handleStartTimeChange}
-                    ariaLabel="Giờ bắt đầu"
+                    ariaLabel={ui("Start time")}
                     className="w-full"
                   />
                 </div>
@@ -2618,7 +2642,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   <CalendarTimeField
                     value={endTime}
                     onChange={setEndTime}
-                    ariaLabel="Giờ kết thúc"
+                    ariaLabel={ui("End time")}
                     className="w-full"
                   />
                 </div>
@@ -2635,12 +2659,12 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
               onChange={(e) => setRecurrence(e.target.value as RecurrenceFreq)}
               className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3] sm:w-auto"
             >
-              <option value="none">Không lặp lại</option>
-              <option value="daily">Hằng ngày</option>
-              <option value="workdays">Thứ 2 đến Thứ 6</option>
-              <option value="weekly">Hằng tuần vào ngày này</option>
-              <option value="monthly">Hằng tháng vào ngày này</option>
-              <option value="yearly">Hằng năm vào ngày này</option>
+              <option value="none">{ui("Does not repeat")}</option>
+              <option value="daily">{ui("Daily")}</option>
+              <option value="workdays">{ui("Monday to Friday")}</option>
+              <option value="weekly">{ui("Weekly on this day")}</option>
+              <option value="monthly">{ui("Monthly on this day")}</option>
+              <option value="yearly">{ui("Annually on this day")}</option>
             </select>
           </div>
         </div>
@@ -2664,7 +2688,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                       : "bg-[#1A73E8] text-white hover:bg-[#1557B0]"
                   }`}
                 >
-                  {meetLink ? "Xoá Meet" : "+ Thêm Google Meet"}
+                  {meetLink ? "Xoá Meet" : ui("+ Add Google Meet")}
                 </button>
               </div>
 
@@ -2675,7 +2699,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                     type="button"
                     onClick={() => navigator.clipboard.writeText(meetLink)}
                     className="p-1 hover:bg-[#D2E3FC] rounded text-[#1A73E8]"
-                    title="Sao chép link"
+                    title={ui("Copy link")}
                   >
                     <Copy className="h-3.5 w-3.5" />
                   </button>
@@ -2686,12 +2710,12 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             {/* Địa điểm */}
             <div>
               <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />Địa điểm</span>
+                <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-[#1A73E8]" />{ui("Location")}</span>
               </label>
               <input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                placeholder="Nhập địa điểm"
+                placeholder={ui("Enter location")}
                 className="w-full rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
               />
             </div>
@@ -2700,7 +2724,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <label className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
-                  <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm email người tham gia</span>
+                  <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />{ui("Add participant emails")}</span>
                 </label>
                 <button
                   type="button"
@@ -2714,7 +2738,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
               {showGroupPicker && (
                 <div className="overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-sm dark:border-[#5F6368] dark:bg-[#2D2E30]">
                   {groups.length === 0 ? (
-                    <p className="px-2.5 py-2 text-xs text-[#70757A]">Chưa có nhóm trò chuyện.</p>
+                    <p className="px-2.5 py-2 text-xs text-[#70757A]">{ui("No chat groups yet.")}</p>
                   ) : (
                     groups.map((group) => (
                       <button
@@ -2723,7 +2747,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                         onClick={() => handleAddGroup(group)}
                         className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
                       >
-                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || "Nhóm chưa đặt tên"}</span>
+                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || ui("Untitled group")}</span>
                         <span className="shrink-0 text-[11px] text-[#70757A]">{group.members.length} người</span>
                       </button>
                     ))
@@ -2746,14 +2770,14 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                       handleAddGuest();
                     }
                   }}
-                  placeholder="Nhập email người tham gia"
+                  placeholder={ui("Enter participant's email")}
                   aria-invalid={Boolean(guestError)}
                   aria-describedby={guestError ? "attendee-email-error" : undefined}
                   className={`w-full rounded-lg border bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:bg-[#2D2E30] dark:text-[#E3E3E3] ${guestError ? "border-red-500" : "border-[#DADCE0] dark:border-[#5F6368]"}`}
                 />
                 {(isSearchingGuests || suggestedUsers.length > 0) && (
                   <div className="absolute inset-x-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
-                    {isSearchingGuests && <p className="px-2.5 py-2 text-[11px] text-[#70757A]">Đang tìm liên hệ…</p>}
+                    {isSearchingGuests && <p className="px-2.5 py-2 text-[11px] text-[#70757A]">{ui("Searching for contacts…")}</p>}
                     {suggestedUsers.map((user) => (
                       <button
                         key={user.id}
@@ -2808,20 +2832,20 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
               <Clock3 className="h-3.5 w-3.5 text-[#1A73E8]" /> Thời hạn
             </label>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[auto_auto] sm:justify-start">
-              <CalendarDateField value={date} onChange={setDate} ariaLabel="Ngày thời hạn" containerClassName="w-48" />
+              <CalendarDateField value={date} onChange={setDate} ariaLabel={ui("Due date")} containerClassName="w-48" />
               {!isAllDay && (
-                <CalendarTimeField value={endTime} onChange={setEndTime} ariaLabel="Giờ thời hạn" />
+                <CalendarTimeField value={endTime} onChange={setEndTime} ariaLabel={ui("Due time")} />
               )}
             </div>
           </div>
         )}
 
         <div className="relative flex items-center gap-2">
-          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">Màu sắc</span>
+          <span className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">{ui("Color")}</span>
           <button
             type="button"
             onClick={() => setShowColorPalette((current) => !current)}
-            aria-label="Chọn màu sắc"
+            aria-label={ui("Select color")}
             aria-expanded={showColorPalette}
             className="flex h-8 items-center gap-1.5 rounded-lg border border-[#DADCE0] bg-white px-2 hover:bg-[#F8FAFD] dark:border-[#5F6368] dark:bg-[#2D2E30]"
           >
@@ -2851,7 +2875,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
 
         {/* ── THÔNG BÁO NHẮC LỊCH ── */}
         <div className="space-y-2">
-          <span className="flex items-center gap-1 text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]"><Bell className="h-3.5 w-3.5 text-[#1A73E8]" />Thông báo nhắc lịch</span>
+          <span className="flex items-center gap-1 text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]"><Bell className="h-3.5 w-3.5 text-[#1A73E8]" />{ui("Reminder notification")}</span>
           {reminders.map((reminder) => {
             const unit = reminderUnits[reminder.id] ?? "minutes";
             const divisor = unit === "days" ? 1440 : unit === "hours" ? 60 : 1;
@@ -2860,10 +2884,10 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                 <select
                   value={reminder.method}
                   onChange={(event) => updateReminder(reminder.id, { method: event.target.value as EventReminder["method"] })}
-                  aria-label="Kênh nhắc lịch"
+                  aria-label={ui("Reminder channel")}
                   className="w-auto shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
                 >
-                  <option value="popup">Thông báo</option>
+                  <option value="popup">{ui("Notification")}</option>
                   <option value="email">Email</option>
                 </select>
                 <input
@@ -2873,7 +2897,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                   step="1"
                   value={Math.max(0, Math.round(reminder.minutes / divisor))}
                   onChange={(event) => updateReminder(reminder.id, { minutes: Math.max(0, Math.min(10080, (Number.parseInt(event.target.value, 10) || 0) * divisor)) })}
-                  aria-label="Thời gian nhắc"
+                  aria-label={ui("Reminder time")}
                   className="calendar-reminder-number w-14 shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
                 />
                 <select
@@ -2883,30 +2907,30 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
                     setReminderUnits((current) => ({ ...current, [reminder.id]: nextUnit }));
                     updateReminder(reminder.id, { minutes: Math.max(0, Math.min(10080, Math.round(reminder.minutes / divisor) * (nextUnit === "days" ? 1440 : nextUnit === "hours" ? 60 : 1))) });
                   }}
-                  aria-label="Đơn vị thời gian nhắc"
+                  aria-label={ui("Reminder time unit")}
                   className="w-auto shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-white dark:text-[#1F1F1F]"
                 >
-                  <option value="minutes">Phút</option>
-                  <option value="hours">Giờ</option>
-                  <option value="days">Ngày</option>
+                  <option value="minutes">{ui("Minutes")}</option>
+                  <option value="hours">{ui("Hours")}</option>
+                  <option value="days">{ui("Day")}</option>
                 </select>
-                <button type="button" onClick={() => removeReminder(reminder.id)} aria-label="Xóa thông báo" className="rounded-lg p-2 text-[#70757A] hover:bg-[#F1F3F4] hover:text-red-600 dark:hover:bg-[#36373A]"><X className="h-4 w-4" /></button>
+                <button type="button" onClick={() => removeReminder(reminder.id)} aria-label={ui("Delete notification")} className="rounded-lg p-2 text-[#70757A] hover:bg-[#F1F3F4] hover:text-red-600 dark:hover:bg-[#36373A]"><X className="h-4 w-4" /></button>
               </div>
             );
           })}
-          <button type="button" onClick={addReminder} className="text-xs font-medium text-[#1A73E8] hover:underline dark:text-[#A8C7FA]">+ Thêm thông báo</button>
+          <button type="button" onClick={addReminder} className="text-xs font-medium text-[#1A73E8] hover:underline dark:text-[#A8C7FA]">{ui("+ Add notification")}</button>
         </div>
 
         {/* ── GHI CHÚ / MÔ TẢ ── */}
         <div>
           <label className="block text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5] mb-1">
-            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : "Mô tả sự kiện"}</span>
+            <span className="flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#1A73E8]" />{kind === "task" ? "Chi tiết việc cần làm" : ui("Event description")}</span>
           </label>
           <textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            placeholder={kind === "task" ? "Thêm mô tả hoặc chi tiết việc cần thực hiện..." : "Thêm mô tả cho sự kiện..."}
+            placeholder={kind === "task" ? "Thêm mô tả hoặc chi tiết việc cần thực hiện..." : ui("Add event description...")}
             className="w-full rounded-xl border border-[#DADCE0] bg-white p-2.5 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
           />
         </div>
@@ -2924,7 +2948,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             type="submit"
             className="rounded-full bg-[#1A73E8] px-6 py-2 text-xs font-medium text-white transition-all hover:bg-[#1557B0] shadow-sm active:scale-95"
           >
-            {initialTask ? "Lưu thay đổi" : "Lưu"}
+            {initialTask ? "Lưu thay đổi" : ui("Save")}
           </button>
         </div>
       </form>
@@ -2941,6 +2965,8 @@ const EventDetailsModal: React.FC<{
   onEdit: () => void;
   onDelete: () => void;
 }> = ({ task, anchor, onClose, onFinish, onEdit, onDelete }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const color = getEventColor(task);
   const isTask = task.kind === "task";
   const taskDateObj = parseDateString(task.date || toDateString(new Date(task.dueAt)));
@@ -2955,7 +2981,7 @@ const EventDetailsModal: React.FC<{
               className="rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
               style={{ backgroundColor: color.light, color: color.bg }}
             >
-              {isTask ? "Việc cần làm" : "Sự kiện"}
+              {isTask ? "Việc cần làm" : ui("Event")}
             </span>
             {task.status === "done" && (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
@@ -2967,21 +2993,21 @@ const EventDetailsModal: React.FC<{
           <div className="flex items-center gap-1">
             <button
               onClick={onEdit}
-              title="Chỉnh sửa"
+              title={ui("Edit")}
               className="rounded-full p-1.5 text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
             >
               <Pencil className="h-4 w-4" />
             </button>
             <button
               onClick={onDelete}
-              title="Xoá"
+              title={ui("Delete")}
               className="rounded-full p-1.5 text-[#D93025] hover:bg-red-50 dark:hover:bg-red-900/20"
             >
               <Trash2 className="h-4 w-4" />
             </button>
             <button
               onClick={onClose}
-              title="Đóng"
+              title={ui("Close")}
               className="rounded-full p-1.5 text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
             >
               <X className="h-4 w-4" />
@@ -2994,10 +3020,10 @@ const EventDetailsModal: React.FC<{
           <span className="mt-1 h-4 w-4 shrink-0 rounded-md" style={{ backgroundColor: color.bg }} />
           <div className="min-w-0 flex-1">
             <h3 className={`text-lg font-medium text-[#1F1F1F] dark:text-[#E3E3E3] leading-snug ${task.status === "done" ? "line-through opacity-60" : ""}`}>
-              {task.title}
+              {task.displayTitle ?? task.title}
             </h3>
             <p className="text-xs text-[#70757A] mt-0.5">
-              {formatVietnameseDate(taskDateObj, true)}
+              {formatCalendarDate(taskDateObj, true, uiLanguage)}
             </p>
           </div>
         </div>
@@ -3008,14 +3034,14 @@ const EventDetailsModal: React.FC<{
             <Clock3 className="h-4 w-4 text-[#1A73E8] shrink-0" />
             <span>
               {isAllDayTask(task)
-                ? "Sự kiện cả ngày"
+                ? ui("All-day event")
                 : `${task.startTime || toTimeString(new Date(task.dueAt))} – ${task.endTime || (task.endAt ? toTimeString(new Date(task.endAt)) : "")} (${formatMinutesDuration(task.duration)})`}
             </span>
           </div>
           {task.recurrence && task.recurrence !== "none" && (
             <div className="flex items-center gap-1 text-[11px] text-[#1A73E8] font-medium pl-6 dark:text-[#A8C7FA]">
               <RotateCw className="h-3 w-3" />
-              {recurrenceLabel(task.recurrence)}
+              {recurrenceLabel(task.recurrence, ui)}
             </div>
           )}
         </div>
@@ -3071,7 +3097,7 @@ const EventDetailsModal: React.FC<{
         {/* Description */}
         {task.note && (
           <div className="rounded-2xl bg-[#F1F3F4] p-3 text-xs leading-relaxed text-[#3C4043] dark:bg-[#2D2E30] dark:text-[#C4C7C5]">
-            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#70757A] mb-1">Mô tả</span>
+            <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#70757A] mb-1">{ui("Description")}</span>
             {task.note}
           </div>
         )}
@@ -3090,7 +3116,7 @@ const EventDetailsModal: React.FC<{
             }`}
           >
             <Check className="h-3.5 w-3.5" />
-            {task.status === "done" ? "Đánh dấu chưa xong" : "Đánh dấu hoàn thành"}
+            {task.status === "done" ? "Đánh dấu chưa xong" : ui("Mark as completed")}
           </button>
 
           <button
@@ -3112,6 +3138,8 @@ const CalendarDateField: React.FC<{
   ariaLabel?: string;
   containerClassName?: string;
 }> = ({ value, onChange, ariaLabel = "Ngày diễn ra", containerClassName = "" }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const selected = new Date(`${value}T00:00:00`);
   const [open, setOpen] = useState(false);
   const [visibleMonth, setVisibleMonth] = useState(() => new Date(selected.getFullYear(), selected.getMonth(), 1));
@@ -3149,9 +3177,9 @@ const CalendarDateField: React.FC<{
       {open && (
         <div className="absolute left-0 top-[calc(100%+0.4rem)] z-30 w-72 rounded-xl border border-[#DADCE0] bg-white p-3 shadow-xl dark:border-[#5F6368] dark:bg-[#2D2E30]">
           <div className="mb-2 flex items-center justify-between">
-            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label="Tháng trước"><ChevronLeft className="h-4 w-4" /></button>
+            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label={ui("Previous month")}><ChevronLeft className="h-4 w-4" /></button>
             <span className="text-xs font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">{visibleMonth.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })}</span>
-            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label="Tháng sau"><ChevronRight className="h-4 w-4" /></button>
+            <button type="button" onClick={() => setVisibleMonth(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1))} className="rounded-full p-1 hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]" aria-label={ui("Next month")}><ChevronRight className="h-4 w-4" /></button>
           </div>
           <div className="grid grid-cols-7 text-center text-[10px] font-medium text-[#70757A]">
             {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((day) => <span key={day} className="py-1">{day}</span>)}
@@ -3176,6 +3204,8 @@ const CalendarTimeField: React.FC<{
   ariaLabel?: string;
   className?: string;
 }> = ({ value, onChange, ariaLabel = "Giờ", className = "" }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const [open, setOpen] = useState(false);
   const [showValidationError, setShowValidationError] = useState(false);
   const optionsRef = useRef<HTMLDivElement | null>(null);
@@ -3262,7 +3292,7 @@ const CalendarTimeField: React.FC<{
       {open && (
         <div className="absolute left-0 top-[calc(100%+0.4rem)] z-30 w-full max-w-full rounded-xl border border-[#DADCE0] bg-white p-2 shadow-xl dark:border-[#5F6368] dark:bg-[#2D2E30]">
           {showValidationError && (
-            <p className="px-2 pb-2 text-[11px] text-red-600 dark:text-red-300">Thời gian không hợp lệ.</p>
+            <p className="px-2 pb-2 text-[11px] text-red-600 dark:text-red-300">{ui("Invalid time.")}</p>
           )}
           <div ref={optionsRef} className="max-h-56 overflow-y-auto py-1" role="listbox" aria-label={`${ariaLabel}: các mốc 15 phút`}>
             {timeOptions.map((time) => (
@@ -3293,6 +3323,8 @@ const Modal: React.FC<{
   maxWidth?: string;
   popoverAnchor?: DetailPopoverAnchor | null;
 }> = ({ title, onClose, children, maxWidth = "max-w-md", popoverAnchor = null }) => {
+  const ui = useT();
+  const uiLanguage = useLanguage();
   const isDetailsPopover = typeof title === "string" && title.startsWith("Chi tiết");
   const isAnchoredPopover = Boolean(popoverAnchor);
   const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
@@ -3331,7 +3363,7 @@ const Modal: React.FC<{
             <h2 className="text-base font-semibold text-[#1F1F1F] dark:text-[#E3E3E3]">{title}</h2>
             <button
               onClick={onClose}
-              aria-label="Đóng"
+              aria-label={ui("Close")}
               className="rounded-full p-1.5 text-[#70757A] hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
             >
               <X className="h-5 w-5" />

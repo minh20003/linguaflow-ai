@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { LanguageProvider } from '../chat/language-context';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
@@ -23,6 +24,7 @@ import {
   FeedbackOverview,
   AdminInterfaceLanguage,
 } from './types';
+import { useT } from "../chat/language-context";
 
 type ApiPair = { count: number; p50_ms: number; p95_ms: number; avg_input_tokens: number; avg_output_tokens: number };
 type ApiStats = { total_attempts: number; outcomes?: Record<string, number>; fallback_rate: number; input_tokens: number; output_tokens: number; estimated_cost_usd?: number; cost_coverage_rate?: number; total_ms_p50: number; total_ms_p95: number; models_served?: Record<string, number>; language_pairs?: Record<string, ApiPair> };
@@ -52,14 +54,14 @@ async function adminRequest<T>(path: string, init: RequestInit = {}): Promise<T>
 }
 
 const METRIC_DEFINITIONS: MetricCardData[] = [
-  { id: 'total_translations', title: 'Tổng số lần dịch', value: 0, unit: 'lượt', description: 'Tổng lượt yêu cầu dịch trong khoảng thời gian đã chọn', iconName: 'Languages' },
-  { id: 'fallback_rate', title: 'Tỷ lệ fallback', value: 0, description: 'Tỷ lệ yêu cầu chuyển sang đường dịch dự phòng', iconName: 'ShieldAlert' },
-  { id: 'input_tokens', title: 'Input Tokens', value: 0, unit: 'tokens', description: 'Tổng token đầu vào thực tế', iconName: 'ArrowDownToLine' },
-  { id: 'output_tokens', title: 'Output Tokens', value: 0, unit: 'tokens', description: 'Tổng token đầu ra thực tế', iconName: 'ArrowUpFromLine' },
-  { id: 'estimated_ai_cost', title: 'Chi phí AI ước tính', value: 0, unit: 'USD', description: 'Ước tính từ token của các model đã nhận diện', iconName: 'Gauge' },
-  { id: 'success_rate', title: 'Tỷ lệ dịch thành công', value: 0, description: 'Tỷ lệ yêu cầu hoàn tất trên đường dịch chính', iconName: 'Timer' },
-  { id: 'p50_latency', title: 'Độ trễ P50', value: 0, unit: 'ms', description: 'Độ trễ phân vị 50', iconName: 'Gauge' },
-  { id: 'p95_latency', title: 'Độ trễ P95', value: 0, unit: 'ms', description: 'Độ trễ phân vị 95', iconName: 'Timer' },
+  { id: 'total_translations', title: "Tổng số lần dịch", value: 0, unit: 'lượt', description: "Tổng lượt yêu cầu dịch trong khoảng thời gian đã chọn", iconName: 'Languages' },
+  { id: 'fallback_rate', title: "Tỷ lệ fallback", value: 0, description: "Tỷ lệ yêu cầu chuyển sang đường dịch dự phòng", iconName: 'ShieldAlert' },
+  { id: 'input_tokens', title: 'Input Tokens', value: 0, unit: 'tokens', description: "Tổng token đầu vào thực tế", iconName: 'ArrowDownToLine' },
+  { id: 'output_tokens', title: 'Output Tokens', value: 0, unit: 'tokens', description: "Tổng token đầu ra thực tế", iconName: 'ArrowUpFromLine' },
+  { id: 'estimated_ai_cost', title: "Chi phí AI ước tính", value: 0, unit: 'USD', description: "Ước tính từ token của các model đã nhận diện", iconName: 'Gauge' },
+  { id: 'success_rate', title: "Tỷ lệ dịch thành công", value: 0, description: "Tỷ lệ yêu cầu hoàn tất trên đường dịch chính", iconName: 'Timer' },
+  { id: 'p50_latency', title: "Độ trễ P50", value: 0, unit: 'ms', description: "Độ trễ phân vị 50", iconName: 'Gauge' },
+  { id: 'p95_latency', title: "Độ trễ P95", value: 0, unit: 'ms', description: "Độ trễ phân vị 95", iconName: 'Timer' },
 ];
 
 function mapGlossaryEntries(glossary: ApiGlossaryEntry[]): TermItem[] {
@@ -79,6 +81,7 @@ function mapGlossaryEntries(glossary: ApiGlossaryEntry[]): TermItem[] {
 }
 
 export default function App() {
+  const ui = useT();
   const [currentTab, setCurrentTab] = useState<AdminTab>('analytics');
   const [timeRange, setTimeRange] = useState<TimeRangeFilter>('7d');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -274,11 +277,11 @@ export default function App() {
       } catch {
         setTerms([]);
       }
-      setToasts([{ id: 'admin-api-error', message: 'Không thể đồng bộ dữ liệu quản trị từ máy chủ', type: 'error' }]);
+      setToasts([{ id: 'admin-api-error', message: ui("Failed to sync admin data from server"), type: 'error' }]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [adminLanguage, clearServerData, timeRange]);
+  }, [adminLanguage, clearServerData, timeRange, ui]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => void loadAdminData());
@@ -436,7 +439,12 @@ export default function App() {
     }
   }, []);
 
+  // The admin workspace keeps its own language switch and its own storage key,
+  // so it feeds the provider from `adminLanguage` rather than from the chat
+  // shell's setting. Without a provider above them, the `useT()` calls in these
+  // views would silently answer in English for everybody.
   return (
+    <LanguageProvider language={adminLanguage}>
     <div id="admin-app-shell" data-theme={adminTheme} className="min-h-screen overflow-x-hidden bg-[#F9FAFB] font-sans text-gray-900 antialiased">
       {/* Sidebar Navigation */}
       <Sidebar
@@ -523,5 +531,6 @@ export default function App() {
       {/* Toast Notification Container */}
       <ToastContainer toasts={toasts} onDismiss={removeToast} />
     </div>
+    </LanguageProvider>
   );
 }

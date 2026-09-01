@@ -10,6 +10,8 @@
  *  either — `ProposeCalendarEventArguments` says as much where it declines to
  *  accept them, and leaves both to the approval step.
  */
+import { interactionText } from "./i18n";
+import type { LanguageCode } from "./types";
 import type { ApiActionProposal } from "./api/chat-api";
 
 export interface ApprovalOptions {
@@ -26,18 +28,49 @@ export const DEFAULT_APPROVAL: ApprovalOptions = {
 
 export const DURATION_CHOICES = [15, 30, 45, 60, 90, 120];
 
-export const REMINDER_CHOICES: Array<{ value: number | null; label: string }> = [
-  { value: 0, label: "Đúng giờ" },
-  { value: 5, label: "5 phút" },
-  { value: 15, label: "15 phút" },
-  { value: 30, label: "30 phút" },
-  { value: 60, label: "1 giờ" },
-  { value: 1440, label: "1 ngày" },
-  { value: null, label: "Không nhắc" },
-];
+/** How long before the event to nudge, in the reader's own language.
+ *
+ *  A function rather than a constant because the labels are language-dependent
+ *  and a module-level array is evaluated once, before anybody has logged in.
+ */
+export function reminderChoices(
+  language: LanguageCode,
+): Array<{ value: number | null; label: string }> {
+  return [
+    { value: 0, label: interactionText(language, "On time") },
+    { value: 5, label: durationLabel(5, language) },
+    { value: 15, label: durationLabel(15, language) },
+    { value: 30, label: durationLabel(30, language) },
+    { value: 60, label: durationLabel(60, language) },
+    { value: 1440, label: durationLabel(1440, language) },
+    { value: null, label: interactionText(language, "No reminder") },
+  ];
+}
 
-export function durationLabel(minutes: number): string {
-  return minutes < 60 ? `${minutes} phút` : `${minutes / 60} giờ`;
+/** A duration, spelled the way the reader's language spells it.
+ *
+ *  `Intl` rather than a catalogue entry per number: it already knows that
+ *  English wants "30 minutes", Vietnamese "30 phút" and Japanese "30 分", and a
+ *  translated string per value would be a row nobody can check for fourteen
+ *  languages times six durations.
+ */
+export function durationLabel(minutes: number, language: LanguageCode): string {
+  const [value, unit] =
+    minutes < 60
+      ? [minutes, "minute" as const]
+      : minutes < 1440
+        ? [minutes / 60, "hour" as const]
+        : [minutes / 1440, "day" as const];
+  try {
+    return new Intl.NumberFormat(language, {
+      style: "unit",
+      unit,
+      unitDisplay: "long",
+    }).format(value);
+  } catch {
+    // An engine without unit formatting, or a language tag it will not take.
+    return `${value} ${unit}`;
+  }
 }
 
 /** Whether this proposal is still waiting on a decision. */
@@ -70,10 +103,15 @@ export function approvalCorrections(
 }
 
 /** Render a proposal's time the way both surfaces show it. */
-export function formatProposalWhen(proposal: ApiActionProposal): string {
+export function formatProposalWhen(
+  proposal: ApiActionProposal,
+  language: LanguageCode,
+): string {
   const at = proposal.scheduled_start_at || proposal.due_at;
-  if (!at) return "Chưa có thời gian";
-  return new Date(at).toLocaleString("vi-VN", {
+  if (!at) return interactionText(language, "No time set yet");
+  // The reader's locale, not "vi-VN". A Japanese reader was shown a Vietnamese
+  // date order for an appointment on their own calendar.
+  return new Date(at).toLocaleString(language, {
     weekday: "short",
     day: "numeric",
     month: "numeric",
@@ -188,18 +226,30 @@ export function decisionCorrections(
  *  the person answers, and the assistant confirms what it did with the answer.
  *  `null` while the question is still open — there is nothing to report yet.
  */
-export function decisionReply(proposal: ApiActionProposal): string | null {
+export function decisionReply(
+  proposal: ApiActionProposal,
+  language: LanguageCode,
+  dateLanguage: LanguageCode = language,
+): string | null {
+  // Composed rather than interpolated into a translated sentence. A catalogue
+  // string carrying a `{title}` token is a token a machine translator can drop,
+  // and losing it would silently produce a sentence about nothing in
+  // particular; a fixed phrase followed by the quoted title cannot fail that
+  // way in any of the fourteen languages.
+  const when =
+    proposal.scheduled_start_at || proposal.due_at
+      // The sentence is in the reader's translation language; the date inside
+      // it still formats on the interface one, which is a reading convention
+      // rather than content and stays uniform across the app.
+      ? ` — ${formatProposalWhen(proposal, dateLanguage)}`
+      : "";
   switch (proposal.status) {
     case "confirmed":
-      return `Đã thêm "${proposal.title}" vào Lịch cá nhân${
-        proposal.scheduled_start_at || proposal.due_at
-          ? ` — ${formatProposalWhen(proposal)}`
-          : ""
-      }.`;
+      return `${interactionText(language, "Added to your personal calendar")}: "${proposal.title}"${when}.`;
     case "rejected":
-      return `Đã từ chối đề xuất "${proposal.title}". Tôi sẽ không đưa việc này vào lịch.`;
+      return `${interactionText(language, "Turned down, and left off your calendar")}: "${proposal.title}".`;
     case "stale":
-      return `Đề xuất "${proposal.title}" đã quá hạn nên tôi bỏ qua.`;
+      return `${interactionText(language, "This suggestion expired, so it was skipped")}: "${proposal.title}".`;
     default:
       return null;
   }

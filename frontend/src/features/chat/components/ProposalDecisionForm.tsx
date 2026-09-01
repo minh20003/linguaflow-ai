@@ -2,17 +2,21 @@
 
 import React from "react";
 import { AlertCircle } from "lucide-react";
+import type { LanguageCode } from "../types";
 import type { ApiActionProposal } from "../api/chat-api";
 import {
   ApprovalOptions,
   DURATION_CHOICES,
   ProposalDraft,
-  REMINDER_CHOICES,
+  reminderChoices,
   durationLabel,
   missingFields,
 } from "../proposal-approval";
+import { useTFor } from "../language-context";
 
 interface ProposalDecisionFormProps {
+  /** The reader's interface language. */
+  language: LanguageCode;
   proposal: ApiActionProposal;
   draft: ProposalDraft;
   chosen: ApprovalOptions;
@@ -46,12 +50,17 @@ const MISSING_LABELS: Record<string, string> = {
  */
 export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
   proposal,
+  language,
   draft,
   chosen,
   onDraftChange,
   onOptionsChange,
   compact = false,
 }) => {
+  // Bound to the prop, not the ambient interface language: the task inbox
+  // passes the interface one and the in-chat card passes the translation one,
+  // and this form has to answer to whichever asked for it.
+  const ui = useTFor(language);
   const missing = missingFields(proposal);
   const field = `w-full rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:border-[#2563EB] dark:bg-[#1B1D25] ${
     compact
@@ -72,16 +81,16 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <label className={label}>Tiêu đề</label>
+          <label className={label}>{ui("Title")}</label>
           <input
             value={draft.title}
             onChange={(event) => onDraftChange({ title: event.target.value })}
             className={field}
-            placeholder="Ví dụ: Họp review kiến trúc"
+            placeholder={ui("Example: Architecture review meeting")}
           />
         </div>
         <div>
-          <label className={label}>Bắt đầu</label>
+          <label className={label}>{ui("Start")}</label>
           <input
             type="datetime-local"
             value={draft.startsAtLocal}
@@ -90,12 +99,12 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
           />
         </div>
         <div>
-          <label className={label}>Địa điểm</label>
+          <label className={label}>{ui("Location")}</label>
           <input
             value={draft.location}
             onChange={(event) => onDraftChange({ location: event.target.value })}
             className={field}
-            placeholder="Không bắt buộc"
+            placeholder={ui("Optional")}
           />
         </div>
       </div>
@@ -103,20 +112,20 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         {draft.startsAtLocal && (
           <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-            <span className="font-semibold">Thời lượng</span>
+            <span className="font-semibold">{ui("Duration")}</span>
             <select
               value={chosen.durationMinutes}
               onChange={(event) => onOptionsChange({ durationMinutes: Number(event.target.value) })}
               className={field.replace("w-full ", "")}
             >
               {DURATION_CHOICES.map((minutes) => (
-                <option key={minutes} value={minutes}>{durationLabel(minutes)}</option>
+                <option key={minutes} value={minutes}>{durationLabel(minutes, language)}</option>
               ))}
             </select>
           </label>
         )}
         <label className="flex items-center gap-2 text-xs text-[#62687B] dark:text-[#C6CAD6]">
-          <span className="font-semibold">Nhắc trước</span>
+          <span className="font-semibold">{ui("Remind before")}</span>
           <select
             value={String(chosen.reminderMinutesBefore)}
             onChange={(event) =>
@@ -127,7 +136,7 @@ export const ProposalDecisionForm: React.FC<ProposalDecisionFormProps> = ({
             }
             className={field.replace("w-full ", "")}
           >
-            {REMINDER_CHOICES.map((choice) => (
+            {reminderChoices(language).map((choice) => (
               <option key={String(choice.value)} value={String(choice.value)}>{choice.label}</option>
             ))}
           </select>

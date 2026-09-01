@@ -20,6 +20,7 @@ import {
   type VoiceRecorderErrorCode,
   type VoiceRecorderStage,
 } from '../voice-recorder';
+import { useT } from "../language-context";
 
 interface MessageComposerProps {
   recipientName: string;
@@ -60,6 +61,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   mentionCandidates,
   language,
 }) => {
+  const ui = useT();
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -150,6 +152,10 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
     if (/(^|\s)@assistant(?=\s|$)/i.test(text)) mentions.push({ type: 'assistant' });
     onSendMessage(text.trim(), replyTo?.id, mentions);
     setText('');
+    // The reply is spent once it has been sent. Leaving the banner up meant the
+    // next message silently attached itself to the same quoted message unless
+    // the person noticed the strip and dismissed it by hand.
+    onCancelReply();
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -161,7 +167,11 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
       setActiveMention((current) => (current + (e.key === 'ArrowDown' ? 1 : mentionOptions.length - 1)) % mentionOptions.length);
       return;
     }
-    if (mentionOptions.length && e.key === 'Tab') {
+    // Enter completes the highlighted mention while the list is open, and only
+    // sends once it has closed. Tab alone was not enough: with the list on
+    // screen and "@assistant" highlighted, Enter is what everybody presses, and
+    // it used to fall through and send the half-typed "@" as the message.
+    if (mentionOptions.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) {
       e.preventDefault();
       insertMention(mentionOptions[activeMention]);
       return;
@@ -176,7 +186,14 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   const mentionQuery = mentionMatch?.[2].toLocaleLowerCase() ?? '';
   const mentionOptions = mentionMatch ? [
     ...mentionCandidates.filter((user) => `${user.name} ${user.username}`.toLocaleLowerCase().includes(mentionQuery)).map((user) => ({ type: 'user' as const, user })),
-    ...('trợ lý thông minh assistant ai'.includes(mentionQuery) ? [{ type: 'assistant' as const }] : []),
+    // Offered once something has been typed after the "@". On an empty
+    // query `''.includes` is true, so a bare "@" listed the assistant and
+    // Enter -- which now completes the highlighted entry -- inserted
+    // "@assistant " instead of sending. A message ending in a bare "@"
+    // should still be sendable.
+    ...(mentionQuery && 'trợ lý thông minh assistant ai'.includes(mentionQuery)
+      ? [{ type: 'assistant' as const }]
+      : []),
   ] : [];
   const insertMention = (option: typeof mentionOptions[number]) => {
     const cursor = textareaRef.current?.selectionStart ?? text.length;
@@ -267,7 +284,13 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
             await onSendVoice(file, replyTo?.id, (stage) => {
               if (mountedRef.current) setRecorderStage(stage);
             });
-            if (mountedRef.current) setRecorderStage('idle');
+            if (mountedRef.current) {
+              setRecorderStage('idle');
+              // Spent here for the same reason as a typed message. Cleared only
+              // on success: a failed send leaves the reply in place, because
+              // the person will try again and would have to re-pick it.
+              onCancelReply();
+            }
           } catch (error) {
             failRecording(
               error instanceof VoiceRecorderError
@@ -466,9 +489,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           />
           {mentionOptions.length > 0 && (
             <div className="absolute bottom-full left-0 mb-3 w-72 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-xl dark:border-[#2A2E3D] dark:bg-[#232630] z-40">
-              <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">Gợi ý tag</p>
+              <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">{ui("Tag suggestions")}</p>
               {mentionOptions.map((option, index) => option.type === 'assistant' ? (
-                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={ASSISTANT_AVATAR_URL} alt="Trợ lý thông minh" className="h-7 w-7 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">Trợ lý thông minh</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">Phản hồi ngay trong luồng</span></span></button>
+                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={ASSISTANT_AVATAR_URL} alt={ui("Smart Assistant")} className="h-7 w-7 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{ui("Smart Assistant")}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">{ui("Reply in thread")}</span></span></button>
               ) : (
                 <button key={option.user.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={option.user.avatar} alt="" className="h-7 w-7 rounded-full" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{option.user.name}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">@{option.user.username}</span></span></button>
               ))}

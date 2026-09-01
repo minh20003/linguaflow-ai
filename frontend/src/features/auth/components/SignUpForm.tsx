@@ -8,6 +8,7 @@ import { GoogleSignInButton } from './GoogleSignInButton';
 import { AuthScreen, UserProfile } from '../types';
 import { signUp, verifyRegisterOtp, resendRegisterOtp, signInWithGoogle } from '../api/auth-api';
 import { saveSession } from '@/shared/lib/session';
+import { useT } from "../../chat/language-context";
 
 const PENDING_REGISTRATION_STORAGE_KEY = 'linguaflow.pending-registration';
 
@@ -47,6 +48,7 @@ interface SignUpFormProps {
 }
 
 export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess }) => {
+  const ui = useT();
   const [step, setStep] = useState<'form' | 'otp'>('form');
   const [pendingId, setPendingId] = useState('');
   const [otp, setOtp] = useState('');
@@ -567,9 +569,9 @@ export const SignUpForm: React.FC<SignUpFormProps> = ({ onNavigate, onSuccess })
           </span>
           <span className="text-xs sm:text-sm text-slate-600 leading-relaxed">
             Tôi đồng ý với{' '}
-            <Link href="/terms" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">Điều khoản dịch vụ</Link>{' '}
+            <Link href="/terms" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">{ui("Terms of Service")}</Link>{' '}
             và{' '}
-            <Link href="/privacy" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">Chính sách riêng tư</Link>.
+            <Link href="/privacy" target="_blank" className="font-semibold text-[#0284C7] hover:text-[#08BCFD] hover:underline">{ui("Privacy Policy")}</Link>.
           </span>
         </label>
 

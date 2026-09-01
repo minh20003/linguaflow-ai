@@ -1,5 +1,6 @@
 "use client";
 
+import type { LanguageCode } from "../types";
 import React, { useState } from "react";
 import { CalendarPlus, Check, X } from "lucide-react";
 import { ASSISTANT_AVATAR_URL, type ApiActionProposal } from "../api/chat-api";
@@ -15,8 +16,25 @@ import {
   isAwaitingDecision,
 } from "../proposal-approval";
 import { ProposalDecisionForm } from "./ProposalDecisionForm";
+import { useTFor } from "../language-context";
 
 interface InlineProposalCardProps {
+  /** The reader's interface language. Used for the date only.
+   *
+   *  A date format is a reading convention rather than content -- day/month
+   *  order, AM/PM -- so it stays uniform across the app even here, where
+   *  every word around it follows the translation language. */
+  language: LanguageCode;
+  /** The reader's translation language, for the words the assistant says and
+   *  for the date.
+   *
+   *  Two languages because this card sits in the message thread: the
+   *  appointment it is about arrived translated into `contentLanguage`, so the
+   *  assistant confirming it in a different one would read as a second voice in
+   *  the conversation. The buttons around it are interface, and follow the
+   *  interface setting. The two are usually the same, which is why one prop
+   *  looked sufficient until they were not. */
+  contentLanguage: LanguageCode;
   proposal: ApiActionProposal;
   busy: boolean;
   onApprove: (proposal: ApiActionProposal, corrections: Record<string, unknown>) => void;
@@ -44,15 +62,21 @@ interface InlineProposalCardProps {
  */
 export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
   proposal,
+  language,
+  contentLanguage,
   busy,
   onApprove,
   onReject,
 }) => {
+  // Everything here follows the translation language, buttons included: a
+  // card whose sentence is in one language and whose buttons are in another
+  // reads as two voices talking about the same appointment.
+  const ui = useTFor(contentLanguage);
   const [chosen, setChosen] = useState<ApprovalOptions>(DEFAULT_APPROVAL);
   const [draft, setDraft] = useState<ProposalDraft>(() => draftFromProposal(proposal));
   const ready = canApprove(proposal, draft);
   const open = isAwaitingDecision(proposal);
-  const reply = decisionReply(proposal);
+  const reply = decisionReply(proposal, contentLanguage, language);
   const approved = proposal.status === "confirmed";
 
   return (
@@ -62,7 +86,7 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
       <div className="flex w-8 flex-shrink-0 items-end">
         <img
           src={ASSISTANT_AVATAR_URL}
-          alt="Trợ lý thông minh"
+          alt={ui("Smart Assistant")}
           className="h-8 w-8 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30"
           referrerPolicy="no-referrer"
         />
@@ -94,6 +118,7 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
                 draft={draft}
                 chosen={chosen}
                 compact
+          language={contentLanguage}
                 onDraftChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
                 onOptionsChange={(patch) => setChosen((current) => ({ ...current, ...patch }))}
               />
@@ -102,7 +127,7 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
                 <button
                   type="button"
                   disabled={busy || !ready}
-                  title={ready ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+                  title={ready ? undefined : ui("Fill in the missing information above")}
                   onClick={() => onApprove(proposal, decisionCorrections(proposal, draft, chosen))}
                   className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                 >
@@ -126,7 +151,7 @@ export const InlineProposalCard: React.FC<InlineProposalCardProps> = ({
                 {proposal.title}
               </p>
               <p className="mt-0.5 text-[11px] text-[#74798C] dark:text-[#9DA3B4]">
-                {formatProposalWhen(proposal)}
+                {formatProposalWhen(proposal, language)}
                 {proposal.location ? ` · ${proposal.location}` : ""}
               </p>
             </div>

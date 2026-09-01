@@ -606,6 +606,8 @@ export function endCall(token: string, callId: string) {
 
 /** Personal calendar and task inbox — `docs/CONTRACT.md` §3.16. */
 export interface ApiCalendarEvent {
+  /** Read-only. See `ApiActionProposal.display_title`. */
+  display_title?: string | null;
   id: string;
   title: string;
   details: string | null;
@@ -632,6 +634,11 @@ export interface ApiReminder {
 }
 
 export interface ApiActionProposal {
+  /** The title as the interface language should show it, when that differs
+   *  from the language the row was stored in. Read-only: edits and
+   *  approvals send `title`, which is always the stored value. */
+  display_title?: string | null;
+  display_details?: string | null;
   id: string;
   conversation_id: string;
   source_message_id: string;

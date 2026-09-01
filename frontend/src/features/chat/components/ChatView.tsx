@@ -49,6 +49,8 @@ interface ChatViewProps {
   onRejectProposal?: (proposal: ApiActionProposal) => void;
   onStartCall: (type: 'voice' | 'video') => void;
   language: User['nativeLanguage'];
+  /** The reader's translation language, for content rather than chrome. */
+  contentLanguage: User['nativeLanguage'];
   attachments: MessageAttachment[];
   onDownloadAttachment: (attachment: MessageAttachment) => void;
   onLoadAttachmentPreview: (attachment: MessageAttachment) => Promise<string>;
@@ -96,6 +98,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onRejectProposal,
   onStartCall,
   language,
+  contentLanguage,
   attachments,
   onDownloadAttachment,
   onLoadAttachmentPreview,
@@ -208,6 +211,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
           onLoadAttachmentPreview={onLoadAttachmentPreview}
           onStartDirectChat={onStartDirectChat}
           proposals={proposals}
+          contentLanguage={contentLanguage}
           proposalBusyId={proposalBusyId}
           onApproveProposal={onApproveProposal}
           onRejectProposal={onRejectProposal}

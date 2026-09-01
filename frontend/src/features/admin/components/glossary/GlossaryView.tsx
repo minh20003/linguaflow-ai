@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Archive, BookOpen, Check, ChevronDown, Copy, Edit2, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import { TermItem } from '../../types';
+import { useT } from "../../../chat/language-context";
 
 type TermDraft = Omit<TermItem, 'id' | 'createdAt' | 'updatedAt'>;
 
@@ -42,6 +43,7 @@ function csvCell(value: string) {
 export const GlossaryView: React.FC<GlossaryViewProps> = ({
   terms, languageCodes, onAddTerm, onUpdateTerm, onDeleteTerm, onPermanentDeleteTerm, onNotify,
 }) => {
+  const ui = useT();
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [targetFilter, setTargetFilter] = useState('all');
@@ -120,7 +122,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
       setModalOpen(false);
       setEditing(null);
     } catch {
-      onNotify('Không thể lưu thuật ngữ. Hãy kiểm tra dữ liệu hoặc mục trùng lặp.', 'error');
+      onNotify(ui("Unable to save term. Please check data or duplicates."), 'error');
     } finally {
       setBusy(false);
     }
@@ -136,7 +138,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
         onNotify(`Đã khôi phục “${term.sourceTerm}”`, 'success');
       }
     } catch {
-      onNotify('Không thể thay đổi trạng thái thuật ngữ.', 'error');
+      onNotify(ui("Unable to change term status."), 'error');
     }
   };
 
@@ -149,7 +151,7 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
       onNotify(`Đã xóa vĩnh viễn “${term?.sourceTerm ?? ''}”`, 'info');
       setConfirmingDelete(null);
     } catch {
-      onNotify('Không thể xóa vĩnh viễn thuật ngữ.', 'error');
+      onNotify(ui("Unable to permanently delete term."), 'error');
     } finally {
       setBusy(false);
     }
@@ -197,27 +199,27 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
         <div className="space-y-5 border-b border-gray-100 bg-gradient-to-b from-white to-slate-50/40 p-5 lg:p-6">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><BookOpen className="h-5 w-5" /></span><div><h2 className="font-semibold text-gray-900">Thuật ngữ đang quản lý</h2><p className="mt-1 text-xs text-gray-500">Đồng bộ trực tiếp với hệ thống dịch; phạm vi trống áp dụng cho mọi hội thoại.</p></div></div>
+              <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><BookOpen className="h-5 w-5" /></span><div><h2 className="font-semibold text-gray-900">{ui("Managed terms")}</h2><p className="mt-1 text-xs text-gray-500">{ui("Syncs directly with the translation system; empty scope applies to all conversations.")}</p></div></div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={exportCsv} className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">Xuất CSV</button>
-              <button type="button" onClick={openAdd} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"><Plus className="w-4 h-4" /> Thêm thuật ngữ</button>
+              <button type="button" onClick={exportCsv} className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-gray-50">{ui("Export CSV")}</button>
+              <button type="button" onClick={openAdd} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"><Plus className="w-4 h-4" /> {ui("Add term")}</button>
             </div>
           </div>
           <div className="space-y-2">
-            <div className="flex items-center justify-between"><span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Tìm kiếm và lọc</span><span className="text-[11px] text-gray-400">{filteredTerms.length}/{terms.length} thuật ngữ</span></div>
+            <div className="flex items-center justify-between"><span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{ui("Search and filter")}</span><span className="text-[11px] text-gray-400">{filteredTerms.length}/{terms.length} thuật ngữ</span></div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(210px,1fr)_180px_180px_150px_150px]">
-            <label className="relative sm:col-span-2 md:col-span-1"><span className="sr-only">Tìm kiếm thuật ngữ</span><Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm từ gốc, bản dịch, domain, audience…" className="w-full pl-9 pr-3 py-2.5 text-xs border border-gray-300 rounded-lg outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-100" /></label>
-            <SelectControl aria-label="Ngôn ngữ nguồn" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ nguồn</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
-            <SelectControl aria-label="Ngôn ngữ đích" value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi ngôn ngữ đích</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
-            <SelectControl aria-label="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi domain</option>{domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}</SelectControl>
-            <SelectControl aria-label="Trạng thái" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">Mọi trạng thái</option><option value="active">Đang áp dụng</option><option value="retired">Đã ngừng</option></SelectControl>
+            <label className="relative sm:col-span-2 md:col-span-1"><span className="sr-only">{ui("Search terms")}</span><Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={ui("Search source, translation, domain, audience…")} className="w-full pl-9 pr-3 py-2.5 text-xs border border-gray-300 rounded-lg outline-hidden focus:border-blue-600 focus:ring-2 focus:ring-blue-100" /></label>
+            <SelectControl aria-label={ui("Source language")} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">{ui("All source languages")}</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
+            <SelectControl aria-label={ui("Target language")} value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">{ui("All target languages")}</option>{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl>
+            <SelectControl aria-label="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">{ui("All domains")}</option>{domains.map((domain) => <option key={domain} value={domain}>{domain}</option>)}</SelectControl>
+            <SelectControl aria-label={ui("Status")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="w-full px-3 py-2.5 text-xs border border-gray-300 rounded-lg bg-white"><option value="all">{ui("All statuses")}</option><option value="active">{ui("Applying")}</option><option value="retired">{ui("Stopped")}</option></SelectControl>
             </div>
           </div>
         </div>
 
         {filteredTerms.length === 0 ? (
-          <div className="p-12 text-center"><BookOpen className="w-8 h-8 text-gray-300 mx-auto mb-3" /><p className="text-sm font-medium text-gray-700">Chưa có thuật ngữ phù hợp</p><p className="text-xs text-gray-400 mt-1">Đổi bộ lọc hoặc thêm thuật ngữ mới.</p></div>
+          <div className="p-12 text-center"><BookOpen className="w-8 h-8 text-gray-300 mx-auto mb-3" /><p className="text-sm font-medium text-gray-700">{ui("No matching terms")}</p><p className="text-xs text-gray-400 mt-1">{ui("Change filters or add a new term.")}</p></div>
         ) : (
           <>
           <div className="grid gap-3 p-4 lg:hidden">
@@ -226,30 +228,30 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
               return (
                 <article key={term.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-xs">
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono font-semibold text-gray-900 break-all">{term.sourceTerm}</span><span className="text-gray-300">→</span><span className="font-semibold text-blue-700 break-all">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div><div className="mt-2 flex flex-wrap gap-2"><span className="font-mono text-[11px] px-2 py-1 rounded-md bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span><span className={`text-[11px] px-2 py-1 rounded-md ${term.keepVerbatim ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{term.keepVerbatim ? 'Giữ nguyên văn' : 'Dùng bản dịch chuẩn'}</span></div></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono font-semibold text-gray-900 break-all">{term.sourceTerm}</span><span className="text-gray-300">→</span><span className="font-semibold text-blue-700 break-all">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title={ui("Copy")} className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div><div className="mt-2 flex flex-wrap gap-2"><span className="font-mono text-[11px] px-2 py-1 rounded-md bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span><span className={`text-[11px] px-2 py-1 rounded-md ${term.keepVerbatim ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{term.keepVerbatim ? 'Giữ nguyên văn' : 'Dùng bản dịch chuẩn'}</span></div></div>
                     <span className={`shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] ${retired ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'}`}><span className={`w-1.5 h-1.5 rounded-full ${retired ? 'bg-gray-400' : 'bg-green-500'}`} />{retired ? 'Đã ngừng' : 'Đang áp dụng'}</span>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-gray-50 p-3 text-xs"><div><div className="text-gray-400">Domain</div><div className="mt-1 font-medium text-gray-700">{term.domain || 'Mọi domain'}</div></div><div><div className="text-gray-400">Audience</div><div className="mt-1 font-medium text-gray-700">{term.audience || 'Mọi đối tượng'}</div></div></div>
-                  <div className="mt-3 flex items-center justify-between"><span className="text-[11px] text-gray-400">Cập nhật {formatDate(term.updatedAt)}</span><div className="flex items-center gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Chỉnh sửa"><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title="Xóa vĩnh viễn"><Trash2 className="w-4 h-4" /></button>}</div></div>
+                  <div className="mt-3 flex items-center justify-between"><span className="text-[11px] text-gray-400">Cập nhật {formatDate(term.updatedAt)}</span><div className="flex items-center gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title={ui("Edit")}><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg" title={ui("Delete permanently")}><Trash2 className="w-4 h-4" /></button>}</div></div>
                 </article>
               );
             })}
           </div>
           <div className="hidden overflow-x-auto lg:block">
             <table className="w-full text-left text-xs">
-              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">Nguồn</th><th className="px-5 py-3">Bản dịch</th><th className="px-5 py-3">Cặp</th><th className="px-5 py-3">Phạm vi</th><th className="px-5 py-3">Trạng thái</th><th className="px-5 py-3">Cập nhật</th><th className="px-5 py-3 text-right">Thao tác</th></tr></thead>
+              <thead className="bg-gray-50 text-gray-500 uppercase tracking-wider border-b border-gray-200"><tr><th className="px-5 py-3">{ui("Source")}</th><th className="px-5 py-3">{ui("Translation")}</th><th className="px-5 py-3">{ui("Pair")}</th><th className="px-5 py-3">{ui("Scope")}</th><th className="px-5 py-3">{ui("Status")}</th><th className="px-5 py-3">{ui("Update")}</th><th className="px-5 py-3 text-right">{ui("Actions")}</th></tr></thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredTerms.map((term) => {
                   const retired = term.status === 'retired';
                   return (
                     <tr key={term.id} className="hover:bg-gray-50/70">
                       <td className="px-5 py-4 min-w-44"><span className="font-mono font-semibold text-gray-900">{term.sourceTerm}</span></td>
-                      <td className="px-5 py-4 min-w-48"><div className="flex items-center gap-2"><span className="font-medium text-blue-700">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title="Sao chép cặp thuật ngữ" className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div></td>
+                      <td className="px-5 py-4 min-w-48"><div className="flex items-center gap-2"><span className="font-medium text-blue-700">{term.targetTerm}</span><button type="button" onClick={() => void copy(term)} title={ui("Copy term pair")} className="text-gray-400 hover:text-gray-700">{copiedId === term.id ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}</button></div></td>
                       <td className="px-5 py-4 whitespace-nowrap"><span className="font-mono px-2 py-1 rounded bg-gray-100 text-gray-700">{term.sourceLang.toUpperCase()} → {term.targetLang.toUpperCase()}</span></td>
                       <td className="px-5 py-4"><div className="text-gray-700">{term.domain || 'Mọi domain'}</div><div className="text-gray-400 mt-0.5">{term.audience || 'Mọi đối tượng'}</div></td>
                       <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${retired ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-green-700'}`}><span className={`w-1.5 h-1.5 rounded-full ${retired ? 'bg-gray-400' : 'bg-green-500'}`} />{retired ? 'Đã ngừng' : 'Đang áp dụng'}</span></td>
                       <td className="px-5 py-4 whitespace-nowrap text-gray-500">{formatDate(term.updatedAt)}</td>
-                      <td className="px-5 py-4"><div className="flex items-center justify-end gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title="Chỉnh sửa"><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded" title="Xóa vĩnh viễn"><Trash2 className="w-4 h-4" /></button>}</div></td>
+                      <td className="px-5 py-4"><div className="flex items-center justify-end gap-1">{!retired && <button type="button" onClick={() => openEdit(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title={ui("Edit")}><Edit2 className="w-4 h-4" /></button>}<button type="button" onClick={() => void changeStatus(term)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" title={retired ? 'Khôi phục' : 'Ngừng áp dụng'}>{retired ? <RotateCcw className="w-4 h-4" /> : <Archive className="w-4 h-4" />}</button>{retired && <button type="button" onClick={() => setConfirmingDelete(term.id)} className="p-2 text-gray-500 hover:text-rose-600 hover:bg-rose-50 rounded" title={ui("Delete permanently")}><Trash2 className="w-4 h-4" /></button>}</div></td>
                     </tr>
                   );
                 })}
@@ -266,25 +268,25 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
             <div className="flex items-start justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50/80 via-white to-white px-6 py-5">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm shadow-blue-600/25"><BookOpen className="h-5 w-5" /></span>
-                <div><h3 className="text-base font-semibold text-gray-900">{editing ? 'Chỉnh sửa thuật ngữ' : 'Thêm thuật ngữ'}</h3><p className="mt-1 text-xs text-gray-500">Mục từ sẽ được áp dụng trực tiếp cho các bản dịch phù hợp.</p></div>
+                <div><h3 className="text-base font-semibold text-gray-900">{editing ? 'Chỉnh sửa thuật ngữ' : 'Thêm thuật ngữ'}</h3><p className="mt-1 text-xs text-gray-500">{ui("The entry will be applied directly to matching translations.")}</p></div>
               </div>
-              <button type="button" aria-label="Đóng" onClick={() => setModalOpen(false)} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-700 hover:shadow-sm"><X className="h-4 w-4" /></button>
+              <button type="button" aria-label={ui("Close")} onClick={() => setModalOpen(false)} className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-white hover:text-gray-700 hover:shadow-sm"><X className="h-4 w-4" /></button>
             </div>
             <form onSubmit={submit} className="space-y-5 p-6 text-xs">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Ngôn ngữ nguồn"><SelectControl value={draft.sourceLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('sourceLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
-                <Field label="Ngôn ngữ đích"><SelectControl value={draft.targetLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('targetLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
+                <Field label={ui("Source language")}><SelectControl value={draft.sourceLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('sourceLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
+                <Field label={ui("Target language")}><SelectControl value={draft.targetLang} disabled={Boolean(editing)} onChange={(event) => changeDraft('targetLang', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100">{languageCodes.map((code) => <option key={code} value={code}>{languageLabel(code)} ({code.toUpperCase()})</option>)}</SelectControl></Field>
               </div>
-              {editing && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-2">Backend không cho đổi cặp ngôn ngữ của mục đã tạo. Hãy ngừng mục cũ và tạo mục mới nếu cặp bị sai.</p>}
-              <Field label="Thuật ngữ nguồn"><input required maxLength={200} value={draft.sourceTerm} onChange={(event) => changeDraft('sourceTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900" /></Field>
-              <Field label="Thuật ngữ đích"><input required maxLength={200} value={draft.targetTerm} disabled={draft.keepVerbatim} onChange={(event) => changeDraft('targetTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100" /></Field>
+              {editing && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md p-2">{ui("The backend does not allow changing the language pair of a created entry. Please deactivate the old entry and create a new one if the pair is incorrect.")}</p>}
+              <Field label={ui("Source term")}><input required maxLength={200} value={draft.sourceTerm} onChange={(event) => changeDraft('sourceTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900" /></Field>
+              <Field label={ui("Target term")}><input required maxLength={200} value={draft.targetTerm} disabled={draft.keepVerbatim} onChange={(event) => changeDraft('targetTerm', event.target.value)} className="w-full p-2.5 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900 disabled:bg-gray-100" /></Field>
               <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-4">
-                <div className="mb-3"><h4 className="font-semibold text-gray-800">Phạm vi áp dụng</h4><p className="mt-1 text-gray-500">Chọn lĩnh vực và nhóm người dùng mà thuật ngữ này được ưu tiên.</p></div>
+                <div className="mb-3"><h4 className="font-semibold text-gray-800">{ui("Applies to")}</h4><p className="mt-1 text-gray-500">{ui("Select the domain and user group where this term is prioritized.")}</p></div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <ScopeSelect label="Domain" value={draft.domain} options={DOMAIN_OPTIONS} onChange={(value) => changeDraft('domain', value)} />
                   <ScopeSelect label="Audience" value={draft.audience} options={AUDIENCE_OPTIONS} onChange={(value) => changeDraft('audience', value)} />
                 </div>
-                <p className="mt-3 text-gray-400">Không chọn phạm vi nghĩa là thuật ngữ được áp dụng cho mọi hội thoại phù hợp.</p>
+                <p className="mt-3 text-gray-400">{ui("If no scope is selected, the term will apply to all matching conversations.")}</p>
               </div>
               <label className="flex items-start gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg cursor-pointer">
                 <span className="relative mt-0.5 h-4 w-4 shrink-0">
@@ -296,9 +298,9 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
                   />
                   <Check className="pointer-events-none absolute left-0.5 top-0.5 h-3 w-3 text-white opacity-0 peer-checked:opacity-100" strokeWidth={3} />
                 </span>
-                <span><strong className="block text-gray-800">Giữ nguyên văn</strong><span className="text-gray-500">Không dịch thuật ngữ; giá trị đích sẽ luôn bằng giá trị nguồn.</span></span>
+                <span><strong className="block text-gray-800">{ui("Keep original")}</strong><span className="text-gray-500">{ui("Do not translate the term; the target value will always match the source.")}</span></span>
               </label>
-              <div className="-mx-6 -mb-6 flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-4"><button type="button" onClick={() => setModalOpen(false)} className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-100">Hủy</button><button type="submit" disabled={busy || !draft.sourceTerm.trim() || !draft.targetTerm.trim()} className="rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white shadow-sm shadow-blue-600/20 transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Thêm thuật ngữ'}</button></div>
+              <div className="-mx-6 -mb-6 flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-6 py-4"><button type="button" onClick={() => setModalOpen(false)} className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-100">{ui("Cancel")}</button><button type="submit" disabled={busy || !draft.sourceTerm.trim() || !draft.targetTerm.trim()} className="rounded-lg bg-blue-600 px-5 py-2 font-semibold text-white shadow-sm shadow-blue-600/20 transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Đang lưu…' : editing ? 'Lưu thay đổi' : 'Thêm thuật ngữ'}</button></div>
             </form>
           </div>
         </div>
@@ -308,9 +310,9 @@ export const GlossaryView: React.FC<GlossaryViewProps> = ({
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4" onClick={() => setConfirmingDelete(null)}>
           <div className="bg-white rounded-xl max-w-sm w-full p-6 shadow-lg border border-gray-200" onClick={(event) => event.stopPropagation()}>
             <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto"><Trash2 className="w-5 h-5" /></div>
-            <h3 className="text-center font-semibold text-gray-900 mt-4">Xóa vĩnh viễn thuật ngữ?</h3>
-            <p className="text-center text-xs text-gray-500 mt-2">Chỉ mục đã ngừng áp dụng mới có thể xóa. Hành động này không thể hoàn tác.</p>
-            <div className="grid grid-cols-2 gap-2 mt-5"><button type="button" onClick={() => setConfirmingDelete(null)} className="py-2 border border-gray-300 rounded-md text-xs">Hủy</button><button type="button" onClick={() => void permanentlyDelete()} disabled={busy} className="py-2 bg-rose-600 text-white rounded-md text-xs disabled:opacity-50">Xóa vĩnh viễn</button></div>
+            <h3 className="text-center font-semibold text-gray-900 mt-4">{ui("Permanently delete term?")}</h3>
+            <p className="text-center text-xs text-gray-500 mt-2">{ui("Only inactive entries can be deleted. This action cannot be undone.")}</p>
+            <div className="grid grid-cols-2 gap-2 mt-5"><button type="button" onClick={() => setConfirmingDelete(null)} className="py-2 border border-gray-300 rounded-md text-xs">{ui("Cancel")}</button><button type="button" onClick={() => void permanentlyDelete()} disabled={busy} className="py-2 bg-rose-600 text-white rounded-md text-xs disabled:opacity-50">{ui("Delete permanently")}</button></div>
           </div>
         </div>
       )}

@@ -109,6 +109,16 @@ class ActionProposalResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # What to *show* on a screen whose chrome is the interface language, when
+    # that differs from the language the row was stored in. Separate fields
+    # rather than a rewritten `title`, because the client sends `title` back
+    # when the owner approves: overwriting it in the response meant approving
+    # without touching the field persisted the machine translation over what
+    # the person actually said, and every later edit compounded it. `title`
+    # stays the stored value; this is only ever read.
+    display_title: str | None = None
+    display_details: str | None = None
+
     id: str
     conversation_id: str
     source_message_id: str
