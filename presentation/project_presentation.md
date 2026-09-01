@@ -64,35 +64,6 @@ graph LR
     Gap --> P4["Song Agent: Dịch real-time<br/>+ Trợ lý trích xuất Task/Lịch hẹn"]
 ```
 
-#### Vì sao bản dịch của công cụ phổ thông không dùng được cho chat công việc
-
-Không phải vì máy dịch của họ kém. DeepL và GPT dịch **từng câu** rất tốt — có khi tốt hơn chúng tôi. Vấn đề là **từng câu không phải là đơn vị đúng** khi người ta nhắn tin cho nhau.
-
-Ba cơ chế, ba ví dụ có thể tự kiểm chứng:
-
-**1. Không có ngữ cảnh thì phải bịa ra chủ ngữ.** Tiếng Việt lược chủ ngữ liên tục.
-
-> — Anh gửi bản hợp đồng cho khách chưa?
-> — **Gửi rồi nhé.**
-
-Câu thứ hai không có chủ ngữ, không có thì, không có tân ngữ. Dịch riêng lẻ, công cụ phổ thông buộc phải đoán và thường ra *"Already sent"* hoặc *"I sent it"* — mất luôn thông tin **gửi cái gì, cho ai**. LinguaFlow nạp 3–5 tin gần nhất trước khi dịch, nên câu trả lời giữ được đối tượng của nó.
-
-**2. Xưng hô là thông tin, và tiếng Anh làm phẳng nó.** *Anh, em, chị, bác, cháu* — tiếng Anh gộp hết vào **"you"**. Dịch chiều ngược lại, công cụ phổ thông chọn ngẫu nhiên một cái. Gọi "em" một khách hàng lớn tuổi không phải lỗi ngữ pháp; đó là **lỗi xã giao**, và trong hội thoại với khách thì nó đắt hơn nhiều một câu dịch vụng. LinguaFlow suy ra vai vế từ chính hội thoại và giữ nguyên trục xưng hô đó.
-
-**3. Cùng một thuật ngữ phải ra hai bản khác nhau tuỳ người đọc.** Nói với đồng nghiệp thì *"con Jenkins nó đỏ rồi"*; nói với khách thì phải là *"pipeline CI hiện đang lỗi"*. Glossary tĩnh chỉ có một đáp án cho mỗi từ. LinguaFlow tra glossary **theo đối tượng đọc** (nội bộ hay khách hàng), và tự khai phá thuật ngữ mới từ chính những lần người dùng sửa bản dịch.
-
-#### Tóm lại, khoảng trống nằm ở đâu
-
-| | Công cụ dịch phổ thông | LinguaFlow |
-|:---|:---|:---|
-| Đơn vị dịch | Một câu, độc lập | Một lượt trong hội thoại, có 3–5 tin trước làm nền |
-| Xưng hô | Chọn một cách, giữ nguyên cả cuộc | Suy ra từ hội thoại, nhất quán theo vai vế |
-| Thuật ngữ | Một đáp án cho mỗi từ | Khác nhau theo đối tượng đọc; tự dày lên từ chỉnh sửa của chính doanh nghiệp |
-| Sau khi dịch xong | Hết việc | Cam kết trong tin nhắn thành lịch của từng người, chờ duyệt |
-| Khi dịch lỗi | Trả về gì đó, không nói gì | Chuyển nhà cung cấp dự phòng, cuối cùng trả nguyên văn và **đánh dấu là bản dự phòng** |
-
-Dòng cuối là chỗ dễ bị bỏ qua nhất nhưng quyết định nhất trong môi trường công việc: một bản dịch sai mà **trông như đúng** nguy hiểm hơn hẳn một chỗ trống có ghi chú.
-
 ---
 
 ## 2. Giải pháp Kỹ thuật — Kiến trúc Agent
@@ -270,34 +241,69 @@ Chạy trên `eval/golden_set.jsonl` (62 mẫu), chấm bằng LLM-as-judge (`mi
 | **Độ trễ p95** | < 5000ms | **4608ms** | **đạt** |
 | **Đúng ngôn ngữ đích** | 100% | **96,6%** | **chưa đạt** |
 
-### 5.4. Tính khả thi
-Câu hỏi thẳng nhất mà một người mua sẽ đặt ra: **Zoom, Teams và Google Meet đều đã có dịch tự động, phần lớn miễn phí — vậy còn chỗ nào cho LinguaFlow?**
+### 5.4. Tính khả thi — vì sao sản phẩm này sống được
 
-**Vì việc cần làm không phải là dịch.** Zoom dịch xong cuộc họp rồi thôi. Không nền tảng nào biến câu *"mai 6h gặp ở quán cà phê"* thành **một mục lịch trên máy của từng người có mặt, bằng ngôn ngữ của từng người, để từng người tự duyệt**. Đó là chuỗi phát hiện → đề xuất → duyệt → lịch mà nhóm đã dựng, và nó nằm ở tầng khác hẳn tầng dịch.
+**Một câu:** thứ đắt nhất trong làm việc xuyên ngôn ngữ không phải là một câu dịch sai, mà là **một lời hứa rơi mất giữa hai thứ tiếng**. Google Translate và Zoom dịch câu. Không ai nhặt lời hứa lên.
 
-**Vì cam kết không sinh ra trong cuộc họp.** Trong outsourcing và xuất nhập khẩu, cuộc họp chỉ chốt; còn *"gửi báo giá trước thứ Sáu nhé"* thì nằm rải trong chat giữa các cuộc họp. AI Companion sống trong phòng họp và tắt khi phòng đóng — nó không nhìn thấy bề mặt này.
+#### Một cảnh
 
-**Vì từ chối đoán là một tính năng không ai bundle.** Sản phẩm miễn phí đi kèm được tối ưu để **trông thông minh**; ở đây phản đối lớn nhất của người mua là *"AI sai thì ai chịu?"*, nên phải tối ưu để **không sai**:
+Nhóm dự án Việt Nam nhắn với khách Nhật, 4 giờ chiều thứ Năm:
 
-| Cơ chế | Hành vi |
-|:---|:---|
-| `normalize_action_time` | Không có múi giờ đáng tin thì **từ chối** mốc giờ treo tường, thay vì đặt lệch giờ mà không báo |
-| Ngữ pháp thời gian | Máy chủ tự tính; ngày giờ do model đoán **không bao giờ** là căn cứ cho diễn đạt tương đối |
-| `action_proposals` | Không có ghi thẳng lên lịch; mọi thứ đều chờ duyệt và **sửa được trước khi duyệt** |
-| `translation_attempts` | Ghi cả 5 lối thoát, kể cả 4 lối không sinh ra bản dịch |
+> **Khách:** 来週の金曜午後3時でいかがでしょうか。
+> **PM:** Ok chốt nhé, chiều thứ Sáu tuần sau 3 giờ.
 
-Ba dòng đầu là câu trả lời cho trách nhiệm; dòng cuối là thứ khiến trách nhiệm **quy được về đâu** — và cũng là điều kiện để chấm Attribution 8/10 ở khung định vị Day 25.
+Hai người vừa hẹn nhau. Với mọi công cụ dịch hiện có, **đến đây là hết**: hai câu được dịch, cuộc trò chuyện trôi tiếp, và cuộc hẹn nằm lại trong lịch sử chat cho tới khi ai đó nhớ ra.
 
-**Vì cấu trúc chi phí chịu được quy mô SMB.** Biên gộp 72,65% ở containment đo được, hoà vốn ở 71,63% — không cần giá enterprise mới sống. Đây là thứ quyết định sản phẩm có tồn tại được ở phân khúc 20–200 nhân sự hay không.
+Với LinguaFlow, cùng lúc đó:
 
-#### Phản biện — bốn chỗ lập luận trên có thể sụp
+- Cuộc hẹn thành **một mục lịch trên máy của từng người**, đúng 15:00 thứ Sáu tuần sau, theo múi giờ **người vừa nói ra nó** — không phải giờ máy chủ, không phải giờ người đọc.
+- Người Việt thấy *"Gặp ở quán cà phê"*, khách Nhật thấy bản của họ. Cùng một cuộc hẹn, hai ngôn ngữ.
+- **Chưa ai bị ghi gì vào lịch cả.** Mỗi người thấy một thẻ hỏi, tự duyệt hoặc từ chối, sửa được giờ và tiêu đề trước khi đồng ý. Một người duyệt không đẩy lịch sang máy người kia.
 
-Một phân tích khả thi chỉ liệt kê điểm mạnh thì không dùng được:
+Khoảng cách giữa hai đoạn trên chính là sản phẩm.
 
-1. **Nếu Zoom/Teams ship action item theo từng người kèm bước duyệt**, khoảng cách thu hẹp rất nhanh. Lợi thế hiện nay là *chưa ai làm*, không phải *khó làm*. Thứ khó sao chép hơn là glossary theo đối tượng đọc và dữ liệu chỉnh sửa của chính doanh nghiệp — càng dùng càng dày, và đó mới là chỗ nên đầu tư.
-2. **96,6% đúng ngôn ngữ đích là chính lời hứa cốt lõi.** Sai 1/30 tin thì lập luận "dịch chuẩn" mất hiệu lực trước khi nói tới lịch với nhắc việc.
-3. **Giới hạn một bản sao** vừa là trần công suất vừa là điểm chết đơn lẻ. Chưa có backplane thì chưa mở rộng được, và một sự cố là mất toàn bộ dịch vụ.
-4. **Containment 82% đến từ bộ eval, không từ người dùng.** Dưới 71,63% là mô hình giá hết lãi lành mạnh — nên đây là số phải đo lại đầu tiên khi có người dùng thật, không phải số để trích dẫn tiếp.
+#### Vì sao công cụ miễn phí không lấp được khoảng đó
+
+Không phải vì máy dịch của họ kém — DeepL và GPT dịch **từng câu** rất tốt, có khi tốt hơn chúng tôi. Vấn đề là **câu không phải là đơn vị đúng** khi người ta nhắn tin cho nhau. Ba chỗ hỏng, đều tự kiểm chứng được:
+
+**Tiếng Việt lược chủ ngữ.**
+
+> — Anh gửi bản hợp đồng cho khách chưa?
+> — Gửi rồi nhé.
+
+Câu sau không có chủ ngữ, không thì, không tân ngữ. Dịch riêng lẻ thì buộc phải đoán, và **mất luôn gửi cái gì, cho ai**. LinguaFlow đọc 3–5 tin trước khi dịch.
+
+**Xưng hô là thông tin, tiếng Anh làm phẳng nó.** *Anh, em, chị, bác* đều thành "you". Dịch ngược lại là chọn ngẫu nhiên — gọi "em" một khách hàng lớn tuổi không phải lỗi ngữ pháp mà là **lỗi xã giao**, và trong hội thoại với khách nó đắt hơn nhiều một câu dịch vụng.
+
+**Một thuật ngữ, hai bản.** Với đồng nghiệp là *"con Jenkins nó đỏ rồi"*; với khách phải là *"pipeline CI hiện đang lỗi"*. Glossary tĩnh chỉ có một đáp án cho mỗi từ.
+
+#### Vì sao các ông lớn chưa nuốt mất
+
+Nói thẳng: **họ làm được**. Lợi thế hiện nay là *chưa ai làm*, không phải *khó làm*. Nhưng có ba lý do khoảng cách này không tự đóng trong một sớm một chiều:
+
+1. **Sai bề mặt.** Zoom AI Companion sống trong phòng họp và tắt khi phòng đóng. Cuộc họp chỉ để chốt; *"gửi báo giá trước thứ Sáu nhé"* nằm trong chat giữa các cuộc họp — nơi họ không nhìn thấy.
+2. **Sai động cơ.** Một tính năng miễn phí đi kèm được tối ưu để **trông thông minh**. Ở đây câu hỏi của người mua là *"AI đặt sai lịch thì ai chịu?"*, nên phải tối ưu để **không sai**: không có múi giờ đáng tin thì hệ thống **từ chối** đặt lịch và hỏi lại, thay vì đặt lệch giờ mà không báo; và không có gì lên lịch mà chưa qua tay người duyệt.
+3. **Dữ liệu không sao chép được.** Glossary theo đối tượng đọc dày lên từ chính những lần nhân viên doanh nghiệp sửa bản dịch. Đối thủ copy được tính năng, không copy được ba tháng chỉnh sửa của khách hàng bạn.
+
+#### Con số
+
+Mô hình chỉ sống nếu **mỗi cuộc họp xử lý xong vẫn còn lãi**:
+
+| | |
+|---|---|
+| Giá đề xuất | **$1,50** / cuộc họp hoàn tất |
+| Chi phí thực / cuộc họp | **$0,41** |
+| Biên gộp | **72,65%** |
+| Ngưỡng hoà vốn | tỷ lệ tự xử lý ≥ **71,63%** — đo được **82%** |
+
+Không cần giá enterprise mới sống. Đây là thứ quyết định sản phẩm tồn tại được ở phân khúc 20–200 nhân sự, chứ không chỉ ở doanh nghiệp lớn.
+
+#### Bốn chỗ lập luận trên có thể sụp
+
+1. **Nếu Zoom/Teams ship action item theo từng người kèm bước duyệt**, khoảng cách đóng nhanh. Thứ giữ được lâu là dữ liệu chỉnh sửa tích luỹ, không phải tính năng.
+2. **96,6% đúng ngôn ngữ đích** — sai 1 trên 30 tin. Đó là chính lời hứa cốt lõi, hỏng trước khi kịp nói tới lịch với nhắc việc.
+3. **Chỉ chạy được một bản sao** (ADR-18): vừa là trần công suất, vừa là điểm chết đơn lẻ.
+4. **82% tự xử lý đến từ bộ eval, chưa từ người dùng.** Dưới 71,63% là hết lãi lành mạnh — nên đây là số phải **đo lại đầu tiên**, không phải số để trích dẫn tiếp.
 
 ### 5.5. Phiên bản triển khai
 
