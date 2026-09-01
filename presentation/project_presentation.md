@@ -241,69 +241,66 @@ Chạy trên `eval/golden_set.jsonl` (62 mẫu), chấm bằng LLM-as-judge (`mi
 | **Độ trễ p95** | < 5000ms | **4608ms** | **đạt** |
 | **Đúng ngôn ngữ đích** | 100% | **96,6%** | **chưa đạt** |
 
-### 5.4. Tính khả thi — vì sao sản phẩm này sống được
+### 5.4. Phân tích tính khả thi
 
-**Một câu:** thứ đắt nhất trong làm việc xuyên ngôn ngữ không phải là một câu dịch sai, mà là **một lời hứa rơi mất giữa hai thứ tiếng**. Google Translate và Zoom dịch câu. Không ai nhặt lời hứa lên.
+Mục này đánh giá khả năng tồn tại của sản phẩm trên bốn trục: khác biệt chức năng so với giải pháp sẵn có, cơ sở kỹ thuật của khác biệt đó, khả năng duy trì, và tính khả thi kinh tế. Mỗi số liệu được dẫn nguồn tại chỗ.
 
-#### Một cảnh
+#### 5.4.1. Khác biệt chức năng so với giải pháp sẵn có
 
-Nhóm dự án Việt Nam nhắn với khách Nhật, 4 giờ chiều thứ Năm:
+Các giải pháp hiện có xử lý ở **mức câu**: nhận một đoạn văn bản, trả về bản dịch, kết thúc. Phạm vi xử lý của LinguaFlow mở rộng thêm một bước — từ nội dung hội thoại tới **hành động được ghi nhận**.
 
-> **Khách:** 来週の金曜午後3時でいかがでしょうか。
-> **PM:** Ok chốt nhé, chiều thứ Sáu tuần sau 3 giờ.
+| Bước xử lý | Google Translate / DeepL | Zoom AI Companion / Teams | LinguaFlow |
+|---|:---:|:---:|:---:|
+| Dịch một câu | có | có | có |
+| Giữ ngữ cảnh 3–5 lượt trước | không | trong phiên họp | có |
+| Bề mặt hoạt động | ứng dụng rời | phòng họp, kết thúc khi họp tan | luồng chat, liên tục |
+| Trích cam kết thành mục lịch | không | không | có |
+| Cá thể hoá theo từng người nhận | không | không | một hàng đề xuất / thành viên |
+| Bước xác nhận của người dùng | không áp dụng | không áp dụng | bắt buộc trước khi ghi |
 
-Hai người vừa hẹn nhau. Với mọi công cụ dịch hiện có, **đến đây là hết**: hai câu được dịch, cuộc trò chuyện trôi tiếp, và cuộc hẹn nằm lại trong lịch sử chat cho tới khi ai đó nhớ ra.
+Khác biệt trọng yếu nằm ở ba dòng cuối. Trong quy trình outsourcing và xuất nhập khẩu, cam kết công việc (*"gửi báo giá trước thứ Sáu"*) phát sinh chủ yếu trong chat giữa các cuộc họp, không phải trong cuộc họp. Giải pháp gắn với phòng họp không quan sát được bề mặt này.
 
-Với LinguaFlow, cùng lúc đó:
+#### 5.4.2. Cơ sở kỹ thuật của khác biệt
 
-- Cuộc hẹn thành **một mục lịch trên máy của từng người**, đúng 15:00 thứ Sáu tuần sau, theo múi giờ **người vừa nói ra nó** — không phải giờ máy chủ, không phải giờ người đọc.
-- Người Việt thấy *"Gặp ở quán cà phê"*, khách Nhật thấy bản của họ. Cùng một cuộc hẹn, hai ngôn ngữ.
-- **Chưa ai bị ghi gì vào lịch cả.** Mỗi người thấy một thẻ hỏi, tự duyệt hoặc từ chối, sửa được giờ và tiêu đề trước khi đồng ý. Một người duyệt không đẩy lịch sang máy người kia.
+Chất lượng dịch ở mức câu của DeepL và các mô hình ngôn ngữ lớn là tốt; dự án không có số liệu nào chứng minh điều ngược lại, do bộ đánh giá tại §5.3 chấm trên golden set nội bộ và không so sánh chéo với sản phẩm khác. Khác biệt chức năng vì vậy **không dựa trên giả định chất lượng dịch cao hơn**, mà dựa trên ba đặc điểm ngôn ngữ khiến đơn vị "một câu" không đủ:
 
-Khoảng cách giữa hai đoạn trên chính là sản phẩm.
+| Hiện tượng ngôn ngữ | Hệ quả khi dịch rời từng câu | Cơ chế xử lý trong hệ thống |
+|---|---|---|
+| Tiếng Việt lược chủ ngữ, không đánh dấu thì | *"Gửi rồi nhé"* mất chủ thể, thời điểm và tân ngữ; bộ dịch buộc phải suy đoán | Nạp 3–5 lượt gần nhất vào ngữ cảnh trước khi dịch (`build_context`) |
+| Đại từ xưng hô mã hoá vai vế; tiếng Anh quy về "you" | Dịch chiều ngược lại chọn xưng hô ngẫu nhiên, sai vai vế trong hội thoại với khách hàng | Suy luận hồ sơ hội thoại, giữ trục xưng hô nhất quán (`profile_inference`) |
+| Một thuật ngữ cần hai cách diễn đạt tuỳ người đọc | Glossary tĩnh chỉ có một ánh xạ cho mỗi thuật ngữ | Glossary tra theo đối tượng đọc (nội bộ / khách hàng), bổ sung tự động từ log chỉnh sửa của người dùng |
 
-#### Vì sao công cụ miễn phí không lấp được khoảng đó
+#### 5.4.3. Khả năng duy trì khác biệt
 
-Không phải vì máy dịch của họ kém — DeepL và GPT dịch **từng câu** rất tốt, có khi tốt hơn chúng tôi. Vấn đề là **câu không phải là đơn vị đúng** khi người ta nhắn tin cho nhau. Ba chỗ hỏng, đều tự kiểm chứng được:
+Về mặt kỹ thuật, các nền tảng lớn **có đủ năng lực triển khai** chức năng tương đương. Khác biệt hiện tại đến từ việc chưa nền tảng nào triển khai, không đến từ rào cản kỹ thuật. Ba yếu tố làm chậm quá trình thu hẹp khoảng cách:
 
-**Tiếng Việt lược chủ ngữ.**
+1. **Khác bề mặt vận hành.** Trợ lý gắn với phòng họp chỉ hoạt động trong thời gian họp. Việc mở rộng sang luồng chat liên tục là thay đổi phạm vi sản phẩm, không phải bổ sung tính năng.
+2. **Khác ràng buộc thiết kế.** Tính năng miễn phí đi kèm tối ưu cho độ phủ. Bài toán ở đây có ràng buộc trách nhiệm — hệ thống từ chối đặt lịch khi chưa có múi giờ đáng tin thay vì đặt sai giờ, và không ghi bất kỳ mục lịch nào trước bước xác nhận của người dùng (ADR-30, ADR-34). Ràng buộc này làm giảm tỷ lệ tự động hoá nhưng là điều kiện để bán theo kết quả.
+3. **Dữ liệu tích luỹ không sao chép được.** Glossary theo đối tượng đọc được bồi đắp từ chính log chỉnh sửa của doanh nghiệp sử dụng. Chức năng có thể sao chép; dữ liệu vận hành của một khách hàng cụ thể thì không.
 
-> — Anh gửi bản hợp đồng cho khách chưa?
-> — Gửi rồi nhé.
+#### 5.4.4. Tính khả thi kinh tế
 
-Câu sau không có chủ ngữ, không thì, không tân ngữ. Dịch riêng lẻ thì buộc phải đoán, và **mất luôn gửi cái gì, cho ai**. LinguaFlow đọc 3–5 tin trước khi dịch.
+Số liệu lấy từ mô hình chi phí Track 1 — Day 25, đối chiếu giá API tại thời điểm 27/08/2026.
 
-**Xưng hô là thông tin, tiếng Anh làm phẳng nó.** *Anh, em, chị, bác* đều thành "you". Dịch ngược lại là chọn ngẫu nhiên — gọi "em" một khách hàng lớn tuổi không phải lỗi ngữ pháp mà là **lỗi xã giao**, và trong hội thoại với khách nó đắt hơn nhiều một câu dịch vụng.
+| Chỉ tiêu | Giá trị | Nguồn |
+|---|---:|---|
+| Giá bán đề xuất | $1,50 / cuộc họp hoàn tất | mô hình định giá theo kết quả |
+| Chi phí biến đổi thực tế | $0,4102 / cuộc họp hoàn tất | bóc tách LLM + STT + hạ tầng + retry + HITL |
+| Biên lợi nhuận gộp | 72,65% | suy ra từ hai dòng trên |
+| Ngưỡng hoà vốn (biên 60%) | tỷ lệ tự xử lý ≥ 71,63% | giải phương trình breakeven |
+| Tỷ lệ tự xử lý đo được | 82,0% | bộ đánh giá Day 21–22 |
 
-**Một thuật ngữ, hai bản.** Với đồng nghiệp là *"con Jenkins nó đỏ rồi"*; với khách phải là *"pipeline CI hiện đang lỗi"*. Glossary tĩnh chỉ có một đáp án cho mỗi từ.
+Biên độ an toàn hiện tại là 10,37 điểm phần trăm trên ngưỡng hoà vốn. Mức giá này nằm trong khả năng chi trả của phân khúc doanh nghiệp 20–200 nhân sự, không phụ thuộc vào định giá enterprise.
 
-#### Vì sao các ông lớn chưa nuốt mất
+#### 5.4.5. Rủi ro đã nhận diện
 
-Nói thẳng: **họ làm được**. Lợi thế hiện nay là *chưa ai làm*, không phải *khó làm*. Nhưng có ba lý do khoảng cách này không tự đóng trong một sớm một chiều:
-
-1. **Sai bề mặt.** Zoom AI Companion sống trong phòng họp và tắt khi phòng đóng. Cuộc họp chỉ để chốt; *"gửi báo giá trước thứ Sáu nhé"* nằm trong chat giữa các cuộc họp — nơi họ không nhìn thấy.
-2. **Sai động cơ.** Một tính năng miễn phí đi kèm được tối ưu để **trông thông minh**. Ở đây câu hỏi của người mua là *"AI đặt sai lịch thì ai chịu?"*, nên phải tối ưu để **không sai**: không có múi giờ đáng tin thì hệ thống **từ chối** đặt lịch và hỏi lại, thay vì đặt lệch giờ mà không báo; và không có gì lên lịch mà chưa qua tay người duyệt.
-3. **Dữ liệu không sao chép được.** Glossary theo đối tượng đọc dày lên từ chính những lần nhân viên doanh nghiệp sửa bản dịch. Đối thủ copy được tính năng, không copy được ba tháng chỉnh sửa của khách hàng bạn.
-
-#### Con số
-
-Mô hình chỉ sống nếu **mỗi cuộc họp xử lý xong vẫn còn lãi**:
-
-| | |
-|---|---|
-| Giá đề xuất | **$1,50** / cuộc họp hoàn tất |
-| Chi phí thực / cuộc họp | **$0,41** |
-| Biên gộp | **72,65%** |
-| Ngưỡng hoà vốn | tỷ lệ tự xử lý ≥ **71,63%** — đo được **82%** |
-
-Không cần giá enterprise mới sống. Đây là thứ quyết định sản phẩm tồn tại được ở phân khúc 20–200 nhân sự, chứ không chỉ ở doanh nghiệp lớn.
-
-#### Bốn chỗ lập luận trên có thể sụp
-
-1. **Nếu Zoom/Teams ship action item theo từng người kèm bước duyệt**, khoảng cách đóng nhanh. Thứ giữ được lâu là dữ liệu chỉnh sửa tích luỹ, không phải tính năng.
-2. **96,6% đúng ngôn ngữ đích** — sai 1 trên 30 tin. Đó là chính lời hứa cốt lõi, hỏng trước khi kịp nói tới lịch với nhắc việc.
-3. **Chỉ chạy được một bản sao** (ADR-18): vừa là trần công suất, vừa là điểm chết đơn lẻ.
-4. **82% tự xử lý đến từ bộ eval, chưa từ người dùng.** Dưới 71,63% là hết lãi lành mạnh — nên đây là số phải **đo lại đầu tiên**, không phải số để trích dẫn tiếp.
+| Rủi ro | Mức độ | Trạng thái hiện tại |
+|---|:---:|---|
+| Tỷ lệ đúng ngôn ngữ đích 96,6% (§5.3) — sai khoảng 1/30 tin nhắn, ảnh hưởng trực tiếp cam kết cốt lõi | Cao | Nút `validate_output` đã phát hiện và ghi nhận `wrong_language`; chưa chốt hành vi khi phát hiện — thử lại hay trả nguyên văn |
+| Hệ thống chỉ chạy được một bản sao (ADR-18) — vừa là trần công suất, vừa là điểm chết đơn lẻ | Cao | Cần backplane dùng chung trước khi mở rộng |
+| Tỷ lệ tự xử lý 82% đo trên bộ eval, chưa đo trên người dùng thật | Trung bình | Là chỉ số phải đo lại đầu tiên khi có lưu lượng thật |
+| Nền tảng lớn bổ sung chức năng trích cam kết theo từng người | Trung bình | Phụ thuộc dữ liệu tích luỹ (5.4.3) để giữ khác biệt |
+| Luồng phát hiện cam kết timeout ở 10 giây, thất bại không phát tín hiệu | Trung bình | Quan sát được khi chạy thử 01/09; chưa có retry hoặc chỉ báo |
 
 ### 5.5. Phiên bản triển khai
 
