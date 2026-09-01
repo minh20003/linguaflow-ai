@@ -2,43 +2,64 @@
 
 Realtime multilingual chat with context-aware AI translation. Users chat in their preferred language while the system automatically translates messages between participants.
 
+## 📦 Deliverables nộp bài Demo Day (10/10 Deliverables)
+
+Dự án hoàn thành đầy đủ **10/10 deliverables** theo quy định của BTC AI20K ([docs/guide/chapter-09.md](docs/guide/chapter-09.md)):
+
+| # | Deliverable | Vị trí trong Repository / Đường dẫn | Trạng thái |
+|---|---|---|---|
+| 1 | **Source Code** | [`src/`](src/), [`frontend/`](frontend/), [`tests/`](tests/) | Complete |
+| 2 | **README.md** | [`README.md`](README.md) | Complete |
+| 3 | **Architecture Diagram** | [`docs/architecture.md`](docs/architecture.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`docs/architecture_diagram.md`](docs/architecture_diagram.md) | Complete |
+| 4 | **AI Logs & Observability** | [`docs/ai-logs.md`](docs/ai-logs.md), Braintrust / Langfuse Tracing, [`.ai-log/`](.ai-log/) | Complete |
+| 5 | **Live URL** | [`docs/live-url.md`](docs/live-url.md), [https://c3-lingua-flow-217.dquangminh2003.id.vn](https://c3-lingua-flow-217.dquangminh2003.id.vn) | Complete |
+| 6 | **Video Demo** | [`docs/video-demo.md`](docs/video-demo.md), [`presentation/video_demo.mp4`](presentation/video_demo.mp4) | Complete |
+| 7 | **Pitch Deck** | [`docs/pitch-deck.md`](docs/pitch-deck.md), [`presentation/LinguaFlow_Pitch_Upgraded_v3.pptx`](presentation/LinguaFlow_Pitch_Upgraded_v3.pptx) | Complete |
+| 8 | **Development Journal** | [`docs/journal.md`](docs/journal.md), [`JOURNAL.md`](JOURNAL.md) | Complete |
+| 9 | **Worklog** | [`docs/worklog.md`](docs/worklog.md), [`WORKLOG.md`](WORKLOG.md) | Complete |
+| 10 | **Evaluation Evidence** | [`docs/evaluation.md`](docs/evaluation.md), [`eval/results/report.md`](eval/results/report.md) | Complete |
+
 ## Live Demo
 
-| | |
+| Dịch vụ | URL Trực tuyến |
 |---|---|
-| App | https://c3-lingua-flow-217.dquangminh2003.id.vn |
-| API health | https://api-c3-lingua-flow-217.dquangminh2003.id.vn/health |
+| App Frontend | https://c3-lingua-flow-217.dquangminh2003.id.vn |
+| API Health Check | https://api-c3-lingua-flow-217.dquangminh2003.id.vn/health |
 
 Sign up with your own email — registration sends a one-time code — or use the
 seeded demo accounts in [Development Accounts](#development-accounts) below.
 
 ## What LinguaFlow Does
 
-- Realtime direct and group messaging
-- Per-user preferred translation language
-- Automatic source-language detection
-- Context-aware translation using recent conversation messages
-- Recipient-language fan-out in group chats
-- Toggle between original and translated text
-- Translation fallback when LLM fails
-- Translation feedback and correction
-- WebSocket reconnection with idempotent message delivery
-- Recorded voice messages with durable transcription, retry, playback, and the
-  same context-aware translation UI as text
-- Admin translation statistics
-- Multilingual interface
-- Human-approved appointment and task proposals extracted from selected chat history
-- Optional Google Calendar synchronization; Google Meet room creation is not yet implemented
+- **Translation Agent Core (Phase 1)**:
+  - Realtime direct and group messaging
+  - Per-user preferred translation language
+  - Automatic source-language detection
+  - Context-aware translation using recent conversation messages
+  - Recipient-language fan-out in group chats
+  - Toggle between original and translated text
+  - Translation fallback when LLM fails
+  - Translation feedback and correction
+  - WebSocket reconnection with idempotent message delivery
+  - Recorded voice messages with durable transcription, retry, playback, and context-aware translation
+  - Admin translation statistics and multilingual interface
+- **Assistant Agent (Developed in later phase / Phát triển bổ sung ở pha sau này)**:
+  - Human-approved appointment and task proposals extracted from selected chat history (Human-in-the-Loop approval per ADR-30)
+  - Personal task inbox and reminder notifications
+  - Semantic RAG retrieval over dedicated `assistant_chunks` vector store
+  - Two-way Google Calendar synchronization
 
 ## How It Works
 
 ```
-Text → WebSocket ───────────────────────────────┐
-                                               ├→ persisted original_text → existing Translation Service → LangGraph Agent → LLM
-Voice → authenticated upload → Gemini 3.5 Transcribe (verbatim) ┘
+Text → WebSocket Gateway ───────────────────────┐
+                                               ├→ persisted original_text → Translation Service → LangGraph Agent → LLM
+Voice → authenticated upload → Gemini 3.5 Transcribe ┘
+
+Assistant Agent (Later Phase) → Planner → Tool execution → Action proposals → Human approval → Google Calendar / Reminders
 ```
 
-[Architecture diagram](docs/gate2_architecture.md)
+[Architecture documentation](docs/architecture.md) · [Architecture diagrams](docs/architecture_diagram.md)
 
 Operational safeguards are documented in [Runtime reliability](docs/RUNTIME_RELIABILITY.md).
 

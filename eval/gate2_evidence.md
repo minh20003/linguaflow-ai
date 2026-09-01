@@ -237,3 +237,13 @@ Key observations:
 5. **Multilingual group chat** context is properly utilized
 
 The LinguaFlow translation agent demonstrates robust context-aware translation across multiple languages and scenarios.
+
+---
+
+## 6. Mở rộng: Đánh giá Trợ lý AI (Assistant Agent — Phát triển bổ sung ở pha sau)
+
+Ở pha phát triển bổ sung sau Gate 2, hệ thống bổ sung đánh giá cho Assistant Agent:
+- **Retrieval Chunk Sweep (`eval/assistant_chunk_sweep.py`)**: Đạt **Recall@4 từ 83.3% đến 100%**, nDCG ≥ **0.750**, MRR ≥ **0.722**.
+- **End-to-End Assistant Harness (`eval/run_assistant_eval.py`)**: Coverage = **1.00**, Faithfulness = **1.00**, Clarify Accuracy = **1.00**.
+
+Chi tiết đầy đủ báo cáo bằng chứng đánh giá 10/10 deliverables: [`docs/evaluation.md`](../docs/evaluation.md) và [`eval/results/report.md`](results/report.md).
