@@ -23,6 +23,7 @@ import {
   RequestLog,
   TimeRangeFilter,
 } from '../../types';
+import { useT } from "../../../chat/language-context";
 
 interface AnalyticsViewProps {
   metrics: MetricCardData[];
@@ -54,6 +55,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   timeRange,
   onOpenLiveChat,
 }) => {
+  const ui = useT();
   const [selectedLog, setSelectedLog] = useState<RequestLog | null>(null);
   const [activeChartTab, setActiveChartTab] = useState<'volume' | 'latency' | 'tokens'>('volume');
   const activeSegmentStyle: React.CSSProperties = {
@@ -277,20 +279,20 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         {/* Latency & AI Model Breakdown - Matching Clean Utility Theme */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
           <div>
-            <h3 className="font-semibold text-gray-900 mb-6">Độ trễ trung bình</h3>
+            <h3 className="font-semibold text-gray-900 mb-6">{ui("Average latency")}</h3>
 
             {/* P50 & P95 progress bars */}
             <div className="space-y-6">
               <div>
                 <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5 text-sm">
-                  <span className="text-gray-600">Độ trễ P50</span>
+                  <span className="text-gray-600">{ui("P50 latency")}</span>
                   <span className="font-semibold text-gray-900">{p50Latency.toLocaleString()} ms</span>
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5 text-sm">
-                  <span className="text-gray-600">Độ trễ P95</span>
+                  <span className="text-gray-600">{ui("P95 latency")}</span>
                   <span className="font-semibold text-gray-900">{p95Latency.toLocaleString()} ms</span>
                 </div>
               </div>
@@ -314,7 +316,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                       <span className="font-medium text-gray-900">{model.servedCount.toLocaleString()} lần ({model.percentage.toFixed(1)}%)</span>
                     </div>
                   ))}
-                  {aiModels.length === 0 && <p className="text-xs text-gray-500">Chưa có dữ liệu model.</p>}
+                  {aiModels.length === 0 && <p className="text-xs text-gray-500">{ui("No model data.")}</p>}
                 </div>
               </div>
             </div>
@@ -325,7 +327,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               onClick={onOpenLiveChat}
               className="w-full flex items-center justify-center gap-1.5 py-2 px-3 border border-gray-300 rounded-md text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
             >
-              <span>Thử nghiệm trong Chat</span>
+              <span>{ui("Test in Chat")}</span>
               <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
             </button>
           </div>
@@ -335,7 +337,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       {/* Language Pairs Statistics Table - Clean Utility Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-          <h3 className="font-semibold text-gray-900">Thống kê cặp ngôn ngữ</h3>
+          <h3 className="font-semibold text-gray-900">{ui("Language pair statistics")}</h3>
           <span className="text-xs text-gray-400 font-medium">{languagePairs.length} cặp đang hoạt động</span>
         </div>
 
@@ -343,12 +345,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           <table className="w-full text-left">
             <thead className="bg-gray-50 text-[11px] text-gray-400 uppercase font-bold tracking-wider border-b border-gray-100">
               <tr>
-                <th className="px-6 py-3">Cặp ngôn ngữ</th>
-                <th className="px-6 py-3 text-right">Số lần</th>
+                <th className="px-6 py-3">{ui("Language pairs")}</th>
+                <th className="px-6 py-3 text-right">{ui("Count")}</th>
                 <th className="px-6 py-3 text-right">P50</th>
                 <th className="px-6 py-3 text-right">P95</th>
-                <th className="px-6 py-3 text-right">TB Tokens / yêu cầu</th>
-                <th className="px-6 py-3 text-center">Trạng thái</th>
+                <th className="px-6 py-3 text-right">{ui("Avg. Tokens / request")}</th>
+                <th className="px-6 py-3 text-center">{ui("Status")}</th>
               </tr>
             </thead>
             <tbody className="text-sm divide-y divide-gray-100">
@@ -366,11 +368,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                     {pair.avgInputTokens} in / {pair.avgOutputTokens} out
                   </td>
                   <td className="px-6 py-3 text-center">
-                    <span className="inline-block w-2 h-2 rounded-full bg-green-500" title="Hoạt động tốt"></span>
+                    <span className="inline-block w-2 h-2 rounded-full bg-green-500" title={ui("Healthy")}></span>
                   </td>
                 </tr>
               ))}
-              {languagePairs.length === 0 && <tr><td colSpan={6} className="px-6 py-8 text-center text-sm text-gray-500">Chưa có dữ liệu cặp ngôn ngữ.</td></tr>}
+              {languagePairs.length === 0 && <tr><td colSpan={6} className="px-6 py-8 text-center text-sm text-gray-500">{ui("No language pair data.")}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -380,8 +382,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       <div className="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
           <div>
-            <h3 className="font-semibold text-gray-900">Nhật ký yêu cầu gần đây</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Thời gian thực</p>
+            <h3 className="font-semibold text-gray-900">{ui("Recent request logs")}</h3>
+            <p className="text-xs text-gray-400 mt-0.5">{ui("Real-time")}</p>
           </div>
           <span className="text-xs text-gray-500 font-mono">{requestLogs.length} bản ghi</span>
         </div>
@@ -390,13 +392,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           <table className="w-full text-left">
             <thead className="bg-gray-50 text-[11px] text-gray-400 uppercase font-bold tracking-wider border-b border-gray-100">
               <tr>
-                <th className="px-6 py-3">Thời gian</th>
-                <th className="px-6 py-3">Cặp</th>
+                <th className="px-6 py-3">{ui("Thời gian")}</th>
+                <th className="px-6 py-3">{ui("Pair")}</th>
                 <th className="px-6 py-3">Model</th>
-                <th className="px-6 py-3">Nội dung</th>
-                <th className="px-6 py-3 text-right">Độ trễ</th>
+                <th className="px-6 py-3">{ui("Nội dung")}</th>
+                <th className="px-6 py-3 text-right">{ui("Latency")}</th>
                 <th className="px-6 py-3 text-right">Tokens</th>
-                <th className="px-6 py-3 text-center">Chi tiết</th>
+                <th className="px-6 py-3 text-center">{ui("Details")}</th>
               </tr>
             </thead>
             <tbody className="text-sm divide-y divide-gray-100 text-gray-600">
@@ -423,7 +425,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                     <p className="truncate text-xs">{log.sourcePreview}</p>
                     {log.matchedGlossaryTerms && log.matchedGlossaryTerms.length > 0 && (
                       <div className="flex items-center gap-1 mt-0.5">
-                        <span className="text-[10px] text-gray-400">Thuật ngữ:</span>
+                        <span className="text-[10px] text-gray-400">{ui("Glossary:")}</span>
                         {log.matchedGlossaryTerms.map((t) => (
                           <span
                             key={t}
@@ -452,7 +454,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   </td>
                 </tr>
               ))}
-              {requestLogs.length === 0 && <tr><td colSpan={7} className="px-6 py-8 text-center text-sm text-gray-500">Chưa ghi nhận yêu cầu dịch trong khoảng thời gian này.</td></tr>}
+              {requestLogs.length === 0 && <tr><td colSpan={7} className="px-6 py-8 text-center text-sm text-gray-500">{ui("No translation requests recorded for this period.")}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -471,7 +473,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-gray-900 text-base">Chi tiết Yêu cầu</span>
+                <span className="font-semibold text-gray-900 text-base">{ui("Request Details")}</span>
                 <span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
                   {selectedLog.id}
                 </span>
@@ -486,11 +488,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <span className="text-gray-400 block mb-0.5">Thời gian:</span>
+                <span className="text-gray-400 block mb-0.5">{ui("Time:")}</span>
                 <span className="font-medium text-gray-900">{selectedLog.timestamp}</span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <span className="text-gray-400 block mb-0.5">Cặp ngôn ngữ:</span>
+                <span className="text-gray-400 block mb-0.5">{ui("Language pair:")}</span>
                 <span className="font-semibold text-gray-900">{selectedLog.pair}</span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
@@ -498,7 +500,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                 <span className="font-medium text-gray-900">{selectedLog.model}</span>
               </div>
               <div className="p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <span className="text-gray-400 block mb-0.5">Độ trễ & Tokens:</span>
+                <span className="text-gray-400 block mb-0.5">{ui("Latency & Tokens:")}</span>
                 <span className="font-mono text-gray-900">
                   {selectedLog.latency} ms | {selectedLog.inputTokens} in / {selectedLog.outputTokens} out
                 </span>
@@ -507,13 +509,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-gray-700 block mb-1">Văn bản gốc:</label>
+                <label className="font-semibold text-gray-700 block mb-1">{ui("Source text:")}</label>
                 <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-gray-900 leading-relaxed">
                   {selectedLog.sourcePreview}
                 </div>
               </div>
               <div>
-                <label className="font-semibold text-gray-700 block mb-1">Bản dịch AI:</label>
+                <label className="font-semibold text-gray-700 block mb-1">{ui("AI translation:")}</label>
                 <div className="p-3 bg-blue-50/50 rounded-lg border border-blue-100 text-gray-900 leading-relaxed">
                   {selectedLog.targetPreview}
                 </div>

@@ -9,6 +9,7 @@ import {
   syncGoogleCalendarNow,
   unlinkGoogleCalendar,
 } from "../api/chat-api";
+import { useT } from "../language-context";
 
 interface GoogleCalendarControlsProps {
   token: string;
@@ -40,6 +41,7 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
   onSynced,
   onNotify,
 }) => {
+  const ui = useT();
   const [status, setStatus] = useState<ApiCalendarCapability | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -85,7 +87,7 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
       onSynced?.();
       await refresh();
       if (result.last_sync_error) {
-        onNotify?.("Đồng bộ chưa xong", result.last_sync_error, "warning");
+        onNotify?.(ui(ui("Sync incomplete")), result.last_sync_error, "warning");
       } else {
         onNotify?.(
           "Đã đồng bộ Google Calendar",
@@ -170,8 +172,8 @@ export const GoogleCalendarControls: React.FC<GoogleCalendarControlsProps> = ({
         type="button"
         onClick={() => void disconnect()}
         disabled={isBusy}
-        title="Ngắt kết nối Google Calendar"
-        aria-label="Ngắt kết nối Google Calendar"
+        title={ui("Disconnect Google Calendar")}
+        aria-label={ui("Disconnect Google Calendar")}
         className="rounded-xl border border-[#E8EAF0] px-2 py-2 text-[#74798C] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#2E3342] dark:hover:bg-[#232630]"
       >
         <Link2Off className="h-4 w-4" />

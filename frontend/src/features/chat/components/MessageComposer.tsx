@@ -20,6 +20,7 @@ import {
   type VoiceRecorderErrorCode,
   type VoiceRecorderStage,
 } from '../voice-recorder';
+import { useT } from "../language-context";
 
 interface MessageComposerProps {
   recipientName: string;
@@ -60,6 +61,7 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
   mentionCandidates,
   language,
 }) => {
+  const ui = useT();
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
@@ -480,9 +482,9 @@ export const MessageComposer: React.FC<MessageComposerProps> = ({
           />
           {mentionOptions.length > 0 && (
             <div className="absolute bottom-full left-0 mb-3 w-72 overflow-hidden rounded-xl border border-[#E8EAF0] bg-white p-1 shadow-xl dark:border-[#2A2E3D] dark:bg-[#232630] z-40">
-              <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">Gợi ý tag</p>
+              <p className="px-2.5 py-1.5 text-[11px] font-medium text-[#74798C] dark:text-[#9DA3B4]">{ui("Tag suggestions")}</p>
               {mentionOptions.map((option, index) => option.type === 'assistant' ? (
-                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={ASSISTANT_AVATAR_URL} alt="Trợ lý thông minh" className="h-7 w-7 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">Trợ lý thông minh</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">Phản hồi ngay trong luồng</span></span></button>
+                <button key="assistant" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={ASSISTANT_AVATAR_URL} alt={ui("Smart Assistant")} className="h-7 w-7 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{ui("Smart Assistant")}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">{ui("Reply in thread")}</span></span></button>
               ) : (
                 <button key={option.user.id} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => insertMention(option)} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs ${index === activeMention ? 'bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/20' : 'hover:bg-[#F7F8FC] dark:hover:bg-[#2A2E3D]'}`}><img src={option.user.avatar} alt="" className="h-7 w-7 rounded-full" /><span><strong className="block text-[#2563EB] dark:text-[#60A5FA]">{option.user.name}</strong><span className="text-[10px] text-[#74798C] dark:text-[#9DA3B4]">@{option.user.username}</span></span></button>
               ))}

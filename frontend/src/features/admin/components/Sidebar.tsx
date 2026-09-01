@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BarChart3, BookOpen, Globe, Languages, Lightbulb, LogOut, MessageSquareText, Moon, Settings, Sun, User as UserIcon, X } from 'lucide-react';
 import { AdminInterfaceLanguage, AdminTab } from '../types';
+import { useT } from "../../chat/language-context";
 
 const DISPLAY_LANGUAGES: Array<{ value: AdminInterfaceLanguage; flag: string; name: string; nativeName: string }> = [
   { value: 'vi', flag: '🇻🇳', name: 'Vietnamese', nativeName: 'Tiếng Việt' },
@@ -30,6 +31,7 @@ interface SidebarProps {
 type SettingsSection = 'language' | 'profile';
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, interfaceLanguage, theme, onInterfaceLanguageChange, onThemeChange, adminName, adminEmail, adminRole }) => {
+  const ui = useT();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SettingsSection>('language');
@@ -54,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, inter
   };
 
   return (
-    <aside id="admin-navigation-sidebar" className="fixed inset-y-0 left-0 z-50 flex w-[72px] min-w-[72px] flex-col items-center justify-between border-r border-[#E8EAF0] bg-white py-4 transition-colors dark:border-[#232630] dark:bg-[#1C1F27]" aria-label="Điều hướng quản trị">
+    <aside id="admin-navigation-sidebar" className="fixed inset-y-0 left-0 z-50 flex w-[72px] min-w-[72px] flex-col items-center justify-between border-r border-[#E8EAF0] bg-white py-4 transition-colors dark:border-[#232630] dark:bg-[#1C1F27]" aria-label={ui("Admin navigation")}>
       <div className="flex w-full flex-col items-center gap-5">
         <button id="admin-brand-logo-btn" type="button" aria-label="LinguaFlow" onClick={() => onTabChange('analytics')} className="group relative flex h-12 w-12 items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer">
           <img
@@ -65,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabChange, inter
           <span className="pointer-events-none absolute left-[58px] z-50 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1 text-xs font-semibold text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100">LinguaFlow</span>
         </button>
         <div className="h-px w-8 bg-[#E8EAF0] dark:bg-[#2A2E3D]" />
-        <nav className="flex w-full flex-col items-center gap-2 px-2" aria-label="Chức năng quản trị">
+        <nav className="flex w-full flex-col items-center gap-2 px-2" aria-label={ui("Admin functions")}>
           {navItems.map((item) => { const Icon = item.icon; const active = currentTab === item.id; return (
             <div key={item.id} className="group relative flex w-full justify-center">
               <button type="button" id={`nav-item-${item.id}`} onClick={() => onTabChange(item.id)} aria-label={item.label} aria-current={active ? 'page' : undefined} className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-all ${active ? 'bg-[#EFF6FF] text-[#2563EB] shadow-sm dark:bg-[#2563EB]/20' : 'text-[#74798C] hover:bg-[#F7F8FC] hover:text-[#1E2230] dark:text-[#9DA3B4] dark:hover:bg-[#232630] dark:hover:text-white'}`}>

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation";
 import { WifiOff } from "lucide-react";
 import { clearSession, getAccessToken, getRefreshToken } from "@/shared/lib/session";
+import { LanguageProvider, useTFor } from "../language-context";
 import { signOut, updateInterfaceLanguage, updatePreferredLanguage, updateTimezone } from "@/shared/api/account-api";
 import type { AppSettings, Conversation, Message, MessageAttachment, MessageMention, SidebarTab, ToastItem, User } from "../types";
 import { DEFAULT_CHAT_SETTINGS } from "../constants";
@@ -119,12 +120,14 @@ function toAssistantConversation(
   return {
     ...toConversation(item, currentUserId, interfaceLanguage),
     type: "direct",
-    name: "Trợ lý thông minh",
+    // A plain function, not a component, so it translates against the language
+    // it was handed rather than through the hook.
+    name: interactionText(interfaceLanguage, "Smart Assistant"),
     avatar: ASSISTANT_AVATAR_URL,
     recipient: undefined,
     members: undefined,
     memberCount: undefined,
-    description: "Không gian riêng tư của bạn",
+    description: interactionText(interfaceLanguage, "Your private space"),
   };
 }
 
@@ -194,11 +197,17 @@ function toReactions(reactions: ApiMessageReaction[]) {
   return reactions.map((reaction) => ({ emoji: reaction.emoji, count: reaction.count, users: reaction.user_ids }));
 }
 export const AppShell: React.FC = () => {
+  // Bound explicitly rather than through `useT()`: this component *is* the
+  // provider, so the context above it is still the default. Toasts are
+  // interface chrome and follow the interface setting, not the language the
+  // conversation happens to be translated into.
+
   const router = useRouter();
   const socket = useRef<WebSocket | null>(null);
   const token = useRef<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(EMPTY_USER);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_CHAT_SETTINGS);
+  const ui = useTFor(settings.interfaceLanguage);
   // Empty until loaded, and an absent scope reads as not granted — the same
   // closed default the backend applies when no row exists.
   const [agentConsents, setAgentConsents] = useState<Partial<Record<AgentConsentScope, boolean>>>({});
@@ -259,8 +268,8 @@ export const AppShell: React.FC = () => {
   }, []);
 
   const handleCallMediaError = useCallback((message: string) => {
-    addToast("Cuộc gọi", message, "warning");
-  }, [addToast]);
+    addToast(ui(ui("Calls")), message, "warning");
+  }, [addToast, ui]);
 
   const handleLogout = useCallback(async () => {
     if (isLoggingOut) return;
@@ -308,14 +317,14 @@ export const AppShell: React.FC = () => {
   const initiateCall = async (type: "voice" | "video") => {
     if (!token.current || !selectedConversation) return;
     if (selectedConversation.type !== "direct") {
-      addToast("Cuộc gọi chưa khả dụng", "Hiện chỉ hỗ trợ gọi 1–1.", "warning");
+      addToast(ui(ui("Calling unavailable")), ui(ui("Currently only 1-on-1 calls are supported.")), "warning");
       return;
     }
     try {
       const call = await startRtcCall(token.current, selectedConversation.id, type);
       setActiveCall(toActiveCall(call, "outgoing"));
     } catch (error) {
-      addToast("Không thể gọi", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui(ui("Unable to call")), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -325,7 +334,7 @@ export const AppShell: React.FC = () => {
       const call = await acceptCall(token.current, activeCall.id);
       setActiveCall(toActiveCall(call, "active"));
     } catch (error) {
-      addToast("Không thể nhận cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui(ui("Unable to accept call")), error instanceof Error ? error.message : undefined, "warning");
       setActiveCall(null);
     }
   };
@@ -335,7 +344,7 @@ export const AppShell: React.FC = () => {
     try {
       await rejectCall(token.current, activeCall.id);
     } catch (error) {
-      addToast("Không thể từ chối cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui(ui("Unable to decline call")), error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setActiveCall(null);
     }
@@ -346,7 +355,7 @@ export const AppShell: React.FC = () => {
     try {
       await endCall(token.current, activeCall.id);
     } catch (error) {
-      addToast("Không thể kết thúc cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui(ui("Unable to end call")), error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setActiveCall(null);
     }
@@ -559,7 +568,7 @@ export const AppShell: React.FC = () => {
           const proposal = payload.proposal as ApiActionProposal | undefined;
           if (proposal) {
             setIncomingProposals((current) => [proposal, ...current].slice(0, 50));
-            addToast("Trợ lý đề xuất một việc", proposal.title, "info");
+            addToast(ui(ui("Assistant suggested a task")), proposal.title, "info");
           }
         }
         // A reminder came due. Kept as a toast rather than anything modal: it
@@ -675,7 +684,7 @@ export const AppShell: React.FC = () => {
             void joinCall(token.current, call.call_id)
               .then((join) => setActiveCall(toActiveCall(join, "active")))
               .catch((error: unknown) => {
-                addToast("Không thể kết nối cuộc gọi", error instanceof Error ? error.message : undefined, "warning");
+                addToast(ui(ui("Unable to connect call")), error instanceof Error ? error.message : undefined, "warning");
                 setActiveCall(null);
               });
           }
@@ -693,7 +702,7 @@ export const AppShell: React.FC = () => {
           }
         }
         if (eventType === "typing") setConversations((items) => items.map((item) => item.id === payload.conversation_id ? { ...item, isTyping: Boolean(payload.is_typing) } : item));
-        if (eventType === "mention") addToast("Bạn được nhắc tới", "Có một tin nhắn mới nhắc đến bạn.", "info");
+        if (eventType === "mention") addToast(ui(ui("You were mentioned")), ui(ui("You have a new message mentioning you.")), "info");
         if (eventType === "message_updated" || eventType === "message_deleted") {
           const messageId = payload.message_id as string;
           if (eventType === "message_deleted") cancelVoiceStatusRefresh(messageId);
@@ -724,13 +733,13 @@ export const AppShell: React.FC = () => {
             void refreshConversations();
           }
         }
-        if (eventType === "error") addToast("Chat error", payload.message as string, "warning");
+        if (eventType === "error") addToast(ui("Chat error"), payload.message as string, "warning");
       };
       ws.onclose = () => { if (!disposed) retry = window.setTimeout(connect, 1500); };
     };
     connect();
     return () => { disposed = true; if (retry) window.clearTimeout(retry); socket.current?.close(); };
-  }, [addToast, cancelVoiceStatusRefresh, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, scheduleVoiceStatusRefresh, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
+  }, [addToast, cancelVoiceStatusRefresh, conversations, currentUser.id, loadConversationAttachments, loadConversationMessages, refreshConversations, scheduleVoiceStatusRefresh, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById, ui]);
 
   useEffect(() => { soundEnabledRef.current = settings.soundEnabled; }, [settings.soundEnabled]);
   useEffect(() => { document.documentElement.classList.toggle("dark", settings.theme === "dark"); }, [settings.theme]);
@@ -749,11 +758,11 @@ export const AppShell: React.FC = () => {
         markRead(token.current!, conversation.id),
       ]);
       setConversations((items) => items.map((item) => item.id === conversation.id ? { ...item, unreadCount: 0 } : item));
-    } catch (error) { addToast("Could not load messages", error instanceof Error ? error.message : undefined, "warning"); }
+    } catch (error) { addToast(ui("Could not load messages"), error instanceof Error ? error.message : undefined, "warning"); }
   };
 
   const send = (text: string, replyToMessageId?: string, mentions: MessageMention[] = [], attachmentId?: string, forwardedFromMessageId?: string, destinationConversationId = selectedConversationId, optimisticAttachment?: MessageAttachment) => {
-    if (!destinationConversationId || socket.current?.readyState !== WebSocket.OPEN) { addToast("Reconnecting", "Your message will send when realtime reconnects.", "warning"); return; }
+    if (!destinationConversationId || socket.current?.readyState !== WebSocket.OPEN) { addToast(ui("Reconnecting"), ui("Your message will send when realtime reconnects."), "warning"); return; }
     const clientMessageId = newClientMessageId();
     const repliedMessage = replyToMessageId ? (messagesMap[destinationConversationId] ?? []).find((message) => message.id === replyToMessageId) : undefined;
     const optimistic: Message = { id: clientMessageId, clientMessageId, senderId: currentUser.id, senderName: currentUser.name, senderAvatar: currentUser.avatar, conversationId: destinationConversationId, content: text, messageType: "text", transcriptionStatus: null, timestamp: "Now", createdAt: new Date().toISOString(), status: "sending", mentions, forwardedFromMessageId, attachments: optimisticAttachment ? [optimisticAttachment] : undefined, replyTo: repliedMessage ? { id: repliedMessage.id, senderName: repliedMessage.senderName || "Message", content: repliedMessage.content } : undefined };
@@ -768,15 +777,15 @@ export const AppShell: React.FC = () => {
       setUsers((items) => [...items.filter((item) => item.id !== user.id), user]);
       setConversations((items) => [conversation, ...items.filter((value) => value.id !== conversation.id)]);
       await selectConversation(conversation); setActiveTab("chats");
-    } catch (error) { addToast("Could not start conversation", error instanceof Error ? error.message : undefined, "warning"); }
+    } catch (error) { addToast(ui("Could not start conversation"), error instanceof Error ? error.message : undefined, "warning"); }
   };
 
   const createGroup = async (name: string, memberIds: string[]) => {
     try {
       const item = await createConversation(token.current!, "group", memberIds, name);
       const conversation = toConversation(item, currentUser.id, settings.interfaceLanguage);
-      setConversations((items) => [conversation, ...items]); await selectConversation(conversation); setActiveTab("chats"); addToast("Group created", name, "success");
-    } catch (error) { addToast("Could not create group", error instanceof Error ? error.message : undefined, "warning"); }
+      setConversations((items) => [conversation, ...items]); await selectConversation(conversation); setActiveTab("chats"); addToast(ui("Group created"), name, "success");
+    } catch (error) { addToast(ui("Could not create group"), error instanceof Error ? error.message : undefined, "warning"); }
   };
 
   const attach = async (file: File, destinationConversationId = selectedConversationId, mentions: MessageMention[] = []) => {
@@ -785,7 +794,7 @@ export const AppShell: React.FC = () => {
       const attachment = await uploadAttachment(token.current, destinationConversationId, file);
       send(`Shared ${file.name}`, undefined, mentions, attachment.id, undefined, destinationConversationId, toMessageAttachment(attachment));
     }
-    catch (error) { addToast("Could not upload attachment", error instanceof Error ? error.message : undefined, "warning"); }
+    catch (error) { addToast(ui("Could not upload attachment"), error instanceof Error ? error.message : undefined, "warning"); }
   };
 
   const sendVoice = async (
@@ -883,7 +892,7 @@ export const AppShell: React.FC = () => {
       return;
     }
     try { setUserSearchResults((await listUsers(token.current, trimmed)).map(toChatUser)); }
-    catch (error) { addToast("Could not search contacts", error instanceof Error ? error.message : undefined, "warning"); }
+    catch (error) { addToast(ui("Could not search contacts"), error instanceof Error ? error.message : undefined, "warning"); }
   };
 
   const downloadSharedFile = async (attachment: MessageAttachment) => {
@@ -891,7 +900,7 @@ export const AppShell: React.FC = () => {
     try {
       await downloadAttachment(token.current, attachment);
     } catch (error) {
-      addToast("Could not download file", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not download file"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -910,9 +919,9 @@ export const AppShell: React.FC = () => {
           ? { ...message, translation: { ...message.translation, rating } }
           : message),
       ])));
-      addToast("Translation feedback saved", rating === 5 ? "Marked helpful." : "Marked unhelpful.", "success");
+      addToast(ui("Translation feedback saved"), rating === 5 ? ui("Marked helpful.") : ui("Marked unhelpful."), "success");
     } catch (error) {
-      addToast("Could not save feedback", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not save feedback"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -926,9 +935,9 @@ export const AppShell: React.FC = () => {
           ? { ...message, translation: { ...message.translation, editedText: result.edited_text } }
           : message),
       ])));
-      addToast("Translation suggestion saved", "Saved for translation-quality review.", "success");
+      addToast(ui("Translation suggestion saved"), ui("Saved for translation-quality review."), "success");
     } catch (error) {
-      addToast("Could not save suggestion", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not save suggestion"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -968,7 +977,7 @@ export const AppShell: React.FC = () => {
       const mapped = toConversation(updated, currentUser.id, settings.interfaceLanguage);
       setConversations((items) => sortConversations(items.map((item) => item.id === conversationId ? mapped : item)));
     } catch (error) {
-      addToast("Could not update conversation", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not update conversation"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -992,9 +1001,9 @@ export const AppShell: React.FC = () => {
         return rest;
       });
       if (selectedConversationId === conversationId) setSelectedConversationId(null);
-      addToast("Left group", undefined, "success");
+      addToast(ui("Left group"), undefined, "success");
     } catch (error) {
-      addToast("Could not leave group", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not leave group"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1004,9 +1013,9 @@ export const AppShell: React.FC = () => {
     if (!conversation?.recipient) return;
     try {
       await blockContact(token.current, conversation.recipient.id);
-      addToast("Contact blocked", conversation.recipient.name, "success");
+      addToast(ui("Contact blocked"), conversation.recipient.name, "success");
     } catch (error) {
-      addToast("Could not block contact", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not block contact"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1025,7 +1034,7 @@ export const AppShell: React.FC = () => {
           : item),
       }));
     } catch (error) {
-      addToast("Could not save message", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not save message"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1044,7 +1053,7 @@ export const AppShell: React.FC = () => {
           : item),
       }));
     } catch (error) {
-      addToast("Could not update reaction", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not update reaction"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1063,9 +1072,9 @@ export const AppShell: React.FC = () => {
           ? { ...message, translation: { ...message.translation, status: "pending" } }
           : message),
       }));
-      addToast("Translation requested", "A fresh translation is being generated.", "translation");
+      addToast(ui("Translation requested"), ui("A fresh translation is being generated."), "translation");
     } catch (error) {
-      addToast("Could not retry translation", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not retry translation"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1124,9 +1133,9 @@ export const AppShell: React.FC = () => {
       if (value.avatar?.startsWith("data:image/")) changes.avatar_url = value.avatar;
       const profile = await updateProfile(token.current, changes);
       setCurrentUser((previous) => ({ ...previous, ...toChatUser(profile) }));
-      addToast("Profile saved", undefined, "success");
+      addToast(ui("Profile saved"), undefined, "success");
     } catch (error) {
-      addToast("Could not save profile", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not save profile"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1137,9 +1146,9 @@ export const AppShell: React.FC = () => {
       else await leaveGroup(token.current, conversationId);
       setConversations((items) => items.filter((item) => item.id !== conversationId));
       setSelectedConversationId(null);
-      addToast(removeForEveryone ? "Group deleted" : "Left group", undefined, "success");
+      addToast(removeForEveryone ? ui("Group deleted") : ui("Left group"), undefined, "success");
     } catch (error) {
-      addToast("Group action failed", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Group action failed"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1149,7 +1158,7 @@ export const AppShell: React.FC = () => {
       await refreshConversations();
       addToast(success, undefined, "success");
     } catch (error) {
-      addToast("Could not update group", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not update group"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
@@ -1162,16 +1171,16 @@ export const AppShell: React.FC = () => {
         loadConversationAttachments(activeConversationId),
         refreshConversations(),
       ]);
-      addToast("Message deleted", "The message has been removed for everyone.", "success");
+      addToast(ui("Message deleted"), ui("The message has been removed for everyone."), "success");
     } catch (error) {
-      addToast("Could not delete message", error instanceof Error ? error.message : undefined, "warning");
+      addToast(ui("Could not delete message"), error instanceof Error ? error.message : undefined, "warning");
     }
   };
 
   const handleUpdateAgentConsents = useCallback(
     (changes: Partial<Record<AgentConsentScope, boolean>>) => {
       if (!token.current) {
-        addToast("Could not save permissions", "Please sign in again.", "warning");
+        addToast(ui("Could not save permissions"), ui("Please sign in again."), "warning");
         return;
       }
       // No optimistic update. A switch that flips and then silently flips back
@@ -1203,7 +1212,7 @@ export const AppShell: React.FC = () => {
     if (value.aiSmartAssistance !== undefined) serverChanges.ai_smart_assistance = value.aiSmartAssistance;
     if (Object.keys(serverChanges).length > 0) {
       if (!token.current) {
-        addToast("Could not save settings", "Please sign in again.", "warning");
+        addToast(ui("Could not save settings"), ui("Please sign in again."), "warning");
       } else {
         void updateUserSettings(token.current, serverChanges)
           .then((saved) => {
@@ -1215,14 +1224,14 @@ export const AppShell: React.FC = () => {
               ])));
             }
           })
-          .catch((error: unknown) => addToast("Could not save settings", error instanceof Error ? error.message : undefined, "warning"));
+          .catch((error: unknown) => addToast(ui("Could not save settings"), error instanceof Error ? error.message : undefined, "warning"));
       }
     }
     const requestedInterfaceLanguage = value.interfaceLanguage;
     if (requestedInterfaceLanguage && requestedInterfaceLanguage !== settings.interfaceLanguage && token.current) {
       void updateInterfaceLanguage(token.current, requestedInterfaceLanguage)
         .then(() => setSettings((previous) => ({ ...previous, interfaceLanguage: requestedInterfaceLanguage })))
-        .catch((error: unknown) => addToast("Could not save interface language", error instanceof Error ? error.message : undefined, "warning"));
+        .catch((error: unknown) => addToast(ui("Could not save interface language"), error instanceof Error ? error.message : undefined, "warning"));
     }
     const requestedLanguage = value.preferredLanguage;
     if (!requestedLanguage || requestedLanguage === settings.preferredLanguage) {
@@ -1232,7 +1241,7 @@ export const AppShell: React.FC = () => {
       return;
     }
     if (!token.current) {
-      addToast("Could not save language", "Please sign in again.", "warning");
+      addToast(ui("Could not save language"), ui("Please sign in again."), "warning");
       return;
     }
 
@@ -1252,12 +1261,12 @@ export const AppShell: React.FC = () => {
             ),
           }));
         }
-        addToast("Language updated", "New messages will be translated in your selected language.", "success");
+        addToast(ui("Language updated"), ui("New messages will be translated in your selected language."), "success");
       })
       .catch((error: unknown) => {
-        addToast("Could not save language", error instanceof Error ? error.message : undefined, "warning");
+        addToast(ui("Could not save language"), error instanceof Error ? error.message : undefined, "warning");
       });
-  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById]);
+  }, [addToast, selectedConversationId, settings.interfaceLanguage, settings.preferredLanguage, settings.showOriginalByDefault, translationContextForConversation, usersById, ui]);
 
   const unreadChatsCount = conversations.reduce((total, item) => total + item.unreadCount, 0);
   const activeCallConversation = activeCall
@@ -1265,7 +1274,12 @@ export const AppShell: React.FC = () => {
     : null;
   if (!currentUser.id) return <div className="h-screen bg-[#F7F8FC]" />;
 
-  return <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
+  // Wrapped so anything below can read the interface language without a prop
+  // chain. The existing `language` props are unchanged and fed from the same
+  // setting; this only saves threading one through components that have no
+  // other reason to know about language.
+  return <LanguageProvider language={settings.interfaceLanguage}>
+    <div id="linguachat-app-shell" className="flex w-screen h-screen overflow-hidden bg-[#F7F8FC] dark:bg-[#14161C] select-none">
     {settings.offlineModeSimulation && <div className="absolute top-0 inset-x-0 z-50 flex items-center justify-center gap-2 py-1 px-4 bg-amber-500 text-white text-xs font-semibold"><WifiOff className="w-3.5 h-3.5" />You&apos;re offline. Messages will send automatically when you reconnect.</div>}
     <div className={mobileView === "chat" ? "hidden md:flex" : "flex"}><MiniSidebar activeTab={activeTab} onTabChange={(tab) => { if (tab === "settings") { setIsSettingsOpen(true); return; } setActiveTab(tab); if (tab !== "chats") setIsAssistantChatOpen(false); }} currentUser={currentUser} settings={settings} onOpenSettings={() => setIsSettingsOpen(true)} onToggleTheme={() => setSettings((value) => ({ ...value, theme: value.theme === "dark" ? "light" : "dark" }))} onLogout={handleLogout} isLoggingOut={isLoggingOut} unreadChatsCount={unreadChatsCount} pendingTaskCount={pendingTaskCount} /></div>
     {(activeTab === "chats" || activeTab === "contacts" || activeTab === "groups") && <div className={`h-screen flex-shrink-0 ${mobileView === "chat" ? "hidden md:flex" : "flex w-full md:w-[340px]"}`}>
@@ -1290,10 +1304,10 @@ export const AppShell: React.FC = () => {
           }
           setMessagesMap((previous) => ({ ...previous, [assistant.id]: messages }));
           setAttachmentsMap((previous) => ({ ...previous, [assistant.id]: attachments.map(toMessageAttachment) }));
-        }).catch((error: unknown) => addToast("Không thể mở Trợ lý", error instanceof Error ? error.message : undefined, "warning"));
-      }} assistantLastMessage={assistantConversation?.lastMessage || "Chào bạn! Tôi có thể hỗ trợ gì?"} assistantLastMessageTime={assistantConversation?.lastMessageTime || "Bây giờ"} language={settings.preferredLanguage} />}
-      {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.preferredLanguage} />}
-      {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.preferredLanguage} />}
+        }).catch((error: unknown) => addToast(ui(ui("Unable to open Assistant")), error instanceof Error ? error.message : undefined, "warning"));
+      }} assistantLastMessage={assistantConversation?.lastMessage || "Chào bạn! Tôi có thể hỗ trợ gì?"} assistantLastMessageTime={assistantConversation?.lastMessageTime || "Bây giờ"} language={settings.interfaceLanguage} />}
+      {activeTab === "contacts" && <ContactsPanel users={users} onSearchUsers={searchUsers} onStartChatWithUser={startConversation} onOpenNewChat={() => setIsNewChatOpen(true)} language={settings.interfaceLanguage} />}
+      {activeTab === "groups" && <GroupsPanel conversations={conversations} selectedConversationId={selectedConversationId} onSelectConversation={selectConversation} onCreateGroupClick={() => setIsCreateGroupOpen(true)} language={settings.interfaceLanguage} />}
     </div>}
     <div className={`flex-1 flex min-w-0 h-screen overflow-hidden ${activeTab === "calendar" ? "w-full" : mobileView === "list" ? "hidden md:flex" : "flex w-full"}`}>
       {/* Guarded on the token rather than defaulting it to "": an empty bearer
@@ -1309,6 +1323,7 @@ export const AppShell: React.FC = () => {
         <TaskInboxPanel
           token={accessToken}
           incoming={incomingProposals}
+          language={settings.interfaceLanguage}
           onProposalChanged={(proposal, removed) =>
             setIncomingProposals((current) => removed
               ? current.filter((item) => item.id !== proposal.id)
@@ -1346,6 +1361,7 @@ export const AppShell: React.FC = () => {
         onBlockContact={(conversationId) => void blockConversationContact(conversationId)}
         onSearchMessages={searchInConversation}
         onOpenNewChat={() => setIsNewChatOpen(true)}
+        contentLanguage={settings.preferredLanguage}
         proposals={currentProposals}
         proposalBusyId={proposalBusyId}
         onApproveProposal={(proposal, corrections) => void decideProposal(
@@ -1390,6 +1406,7 @@ export const AppShell: React.FC = () => {
       language={settings.interfaceLanguage}
     />
     <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((items) => items.filter((item) => item.id !== id))} />
-    <ForwardMessageModal message={forwardingMessage} conversations={conversations} onClose={() => setForwardingMessage(null)} onStartNewChat={() => { setForwardingMessage(null); setIsNewChatOpen(true); }} onSelect={(target) => { if (!forwardingMessage) return; send(forwardingMessage.content, undefined, [], undefined, forwardingMessage.id, target.id); setForwardingMessage(null); addToast("Message forwarded", `Sent to ${target.name}.`, "success"); }} language={settings.interfaceLanguage} />
-  </div>;
+    <ForwardMessageModal message={forwardingMessage} conversations={conversations} onClose={() => setForwardingMessage(null)} onStartNewChat={() => { setForwardingMessage(null); setIsNewChatOpen(true); }} onSelect={(target) => { if (!forwardingMessage) return; send(forwardingMessage.content, undefined, [], undefined, forwardingMessage.id, target.id); setForwardingMessage(null); addToast(ui("Message forwarded"), `Sent to ${target.name}.`, "success"); }} language={settings.interfaceLanguage} />
+  </div>
+  </LanguageProvider>;
 };

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bot, ShieldCheck, X } from 'lucide-react';
 import type { AgentConsentScope } from '../api/chat-api';
+import { useT } from "../language-context";
 
 export interface ConsentItem {
   scope: AgentConsentScope;
@@ -37,6 +38,7 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
   onCancel,
   onConfirm,
 }) => {
+  const ui = useT();
   const [selected, setSelected] = useState<Partial<Record<AgentConsentScope, boolean>>>(granted);
 
   if (!isOpen) return null;
@@ -70,7 +72,7 @@ export const AssistantConsentDialog: React.FC<AssistantConsentDialogProps> = ({
           <button
             type="button"
             onClick={onCancel}
-            aria-label="Đóng"
+            aria-label={ui("Close")}
             className="rounded-lg p-1 text-[#74798C] hover:bg-[#F7F8FC] dark:hover:bg-[#232630]"
           >
             <X className="h-4 w-4" />

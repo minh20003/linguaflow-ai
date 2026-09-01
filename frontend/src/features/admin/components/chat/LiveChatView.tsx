@@ -10,6 +10,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { LanguagePair, LanguageCode } from '../../types';
+import { useT } from "../../../chat/language-context";
 
 interface Message {
   id: string;
@@ -68,6 +69,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
   onSubmitSuggestion,
   onNotify,
 }) => {
+  const ui = useT();
   const [inputText, setInputText] = useState('');
   const [sourceLang, setSourceLang] = useState<LanguageCode>('EN');
   const [targetLang, setTargetLang] = useState<LanguageCode>('VI');
@@ -136,7 +138,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
 
       setMessages((prev) => [...prev, botMessage]);
       if (result.is_fallback) {
-        onNotify('Agent đã dùng đường dịch dự phòng. Hãy kiểm tra lại kết quả.', 'info');
+        onNotify(ui(ui("Agent used fallback translation. Please check the results.")), 'info');
       }
     } catch (error) {
       setMessages((prev) => prev.filter((message) => message.id !== userMessage.id));
@@ -177,10 +179,10 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
         userEmail: 'admin.tester@linguaflow.ai',
         reason: userReason || 'Đề xuất từ phiên thử nghiệm trực tiếp trên giao diện Chat.',
       });
-      onNotify('Đã gửi đề xuất chỉnh sửa đến Trung tâm Quản trị!', 'success');
+      onNotify(ui(ui("Edit proposal sent to Admin Center!")), 'success');
       setSuggestingMessage(null);
     } catch {
-      onNotify('Không thể lưu đề xuất vào máy chủ.', 'error');
+      onNotify(ui(ui("Could not save proposal to server.")), 'error');
     }
   };
 
@@ -195,7 +197,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-white hover:bg-gray-50 text-gray-700 text-xs font-medium border border-gray-300 shadow-xs transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Quay lại Quản trị</span>
+            <span>{ui("Back to Admin")}</span>
           </button>
 
           <div className="hidden sm:block h-5 w-px bg-gray-200" />
@@ -208,7 +210,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               className="py-1 px-2 text-xs font-semibold text-gray-900 bg-transparent outline-hidden cursor-pointer"
             >
               <option value="EN">English (EN)</option>
-              <option value="VI">Tiếng Việt (VI)</option>
+              <option value="VI">{ui("Vietnamese (VI)")}</option>
               <option value="JA">日本語 (JA)</option>
               <option value="ZH">中文 (ZH)</option>
               <option value="KO">한국어 (KO)</option>
@@ -217,7 +219,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               <option value="ES">Español (ES)</option>
               <option value="TH">ไทย (TH)</option>
               <option value="ID">Bahasa Indonesia (ID)</option>
-              <option value="PT">Português (PT)</option>
+              <option value="PT">{ui("Portuguese (PT)")}</option>
               <option value="RU">Русский (RU)</option>
               <option value="AR">العربية (AR)</option>
               <option value="HI">हिन्दी (HI)</option>
@@ -226,7 +228,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
             <button
               onClick={handleSwapLanguages}
               className="p-1 text-gray-400 hover:text-blue-600 rounded-md hover:bg-gray-50 transition-colors"
-              title="Đảo ngược cặp ngôn ngữ"
+              title={ui("Swap languages")}
             >
               <ArrowRightLeft className="w-3.5 h-3.5" />
             </button>
@@ -236,7 +238,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               onChange={(e) => setTargetLang(e.target.value as LanguageCode)}
               className="py-1 px-2 text-xs font-semibold text-blue-600 bg-transparent outline-hidden cursor-pointer"
             >
-              <option value="VI">Tiếng Việt (VI)</option>
+              <option value="VI">{ui("Vietnamese (VI)")}</option>
               <option value="EN">English (EN)</option>
               <option value="JA">日本語 (JA)</option>
               <option value="ZH">中文 (ZH)</option>
@@ -246,7 +248,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               <option value="ES">Español (ES)</option>
               <option value="TH">ไทย (TH)</option>
               <option value="ID">Bahasa Indonesia (ID)</option>
-              <option value="PT">Português (PT)</option>
+              <option value="PT">{ui("Portuguese (PT)")}</option>
               <option value="RU">Русский (RU)</option>
               <option value="AR">العربية (AR)</option>
               <option value="HI">हिन्दी (HI)</option>
@@ -348,7 +350,7 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
                       className="hover:text-amber-700 font-medium inline-flex items-center gap-1 text-amber-600"
                     >
                       <Lightbulb className="w-3 h-3" />
-                      <span>Đề xuất sửa</span>
+                      <span>{ui("Suggest edit")}</span>
                     </button>
                   </>
                 )}
@@ -391,8 +393,8 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
             type="button"
             onClick={() => void handleSend()}
             disabled={!inputText.trim() || isTranslating}
-            aria-label="Gửi nội dung để dịch"
-            title="Gửi bản dịch"
+            aria-label={ui("Submit content for translation")}
+            title={ui("Submit translation")}
             className="group flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-transparent bg-gradient-to-br from-[#3B82F6] to-[#2563EB] text-white shadow-md shadow-blue-600/25 transition-all duration-200 hover:-translate-y-0.5 hover:from-[#2563EB] hover:to-[#1D4ED8] hover:shadow-lg hover:shadow-blue-600/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#93C5FD] focus-visible:ring-offset-2 disabled:translate-y-0 disabled:cursor-not-allowed disabled:border-[#D8E2F1] disabled:bg-[#F3F6FB] disabled:bg-none disabled:text-[#94A3B8] disabled:shadow-none"
           >
             <Send className="h-[18px] w-[18px] transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" strokeWidth={2.2} />
@@ -416,14 +418,14 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
                 <Lightbulb className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900 text-sm">Gửi đề xuất sửa bản dịch</h3>
-                <p className="text-xs text-gray-400">Đóng góp cải thiện chất lượng AI</p>
+                <h3 className="font-semibold text-gray-900 text-sm">{ui("Submit translation edit proposal")}</h3>
+                <p className="text-xs text-gray-400">{ui("Help improve AI quality")}</p>
               </div>
             </div>
 
             <form onSubmit={handleSubmitSuggestionForm} className="space-y-3 text-xs">
               <div>
-                <label className="font-medium text-gray-700 block mb-1">Văn bản gốc:</label>
+                <label className="font-medium text-gray-700 block mb-1">{ui("Source text:")}</label>
                 <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-200 text-gray-800">
                   {suggestingMessage.sourceText || suggestingMessage.text}
                 </div>
@@ -443,12 +445,12 @@ export const LiveChatView: React.FC<LiveChatViewProps> = ({
               </div>
 
               <div>
-                <label className="font-medium text-gray-700 block mb-1">Lý do điều chỉnh:</label>
+                <label className="font-medium text-gray-700 block mb-1">{ui("Reason for edit:")}</label>
                 <input
                   type="text"
                   value={userReason}
                   onChange={(e) => setUserReason(e.target.value)}
-                  placeholder="Ví dụ: Thuật ngữ chuyên ngành, diễn đạt tự nhiên hơn..."
+                  placeholder={ui("Example: Technical terms, more natural phrasing...")}
                   className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900"
                 />
               </div>

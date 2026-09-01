@@ -12,6 +12,7 @@ import {
   BellOff,
   Filter
 } from 'lucide-react';
+import { useT } from "../language-context";
 
 interface ConversationPanelProps {
   conversations: Conversation[];
@@ -40,6 +41,7 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
   assistantLastMessageTime = 'Bây giờ',
   language,
 }) => {
+  const ui = useT();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -208,8 +210,8 @@ export const ConversationPanel: React.FC<ConversationPanelProps> = ({
             className={`group relative flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left transition-all duration-150 ${assistantSelected ? 'bg-[#EFF6FF] text-[#1E2230] dark:bg-[#2563EB]/15 dark:text-[#F5F6FA]' : 'text-[#1E2230] hover:bg-[#F7F8FC] dark:text-[#E2E5F0] dark:hover:bg-[#232630]/70'}`}
           >
             {assistantSelected && <span className="absolute left-0 top-3 bottom-3 w-1 rounded-r-full bg-[#2563EB]" />}
-            <img src={ASSISTANT_AVATAR_URL} alt="Trợ lý thông minh" className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" />
-            <span className="min-w-0 flex-1"><span className="mb-1 flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#1E2230] dark:text-[#E2E5F0]">Trợ lý thông minh</span><span className="shrink-0 whitespace-nowrap text-xs text-[#8A8F9E] dark:text-[#74798C]">{assistantLastMessageTime}</span></span><span className="block truncate text-xs text-[#74798C] dark:text-[#9DA3B4]">{assistantLastMessage}</span></span>
+            <img src={ASSISTANT_AVATAR_URL} alt={ui("Smart Assistant")} className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-violet-200 dark:ring-violet-400/30" referrerPolicy="no-referrer" />
+            <span className="min-w-0 flex-1"><span className="mb-1 flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#1E2230] dark:text-[#E2E5F0]">{ui("Smart Assistant")}</span><span className="shrink-0 whitespace-nowrap text-xs text-[#8A8F9E] dark:text-[#74798C]">{assistantLastMessageTime}</span></span><span className="block truncate text-xs text-[#74798C] dark:text-[#9DA3B4]">{assistantLastMessage}</span></span>
           </button>
         )}
         {filteredConversations.length > 0 ? (

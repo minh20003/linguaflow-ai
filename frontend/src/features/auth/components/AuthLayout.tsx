@@ -3,6 +3,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { Sparkles, Globe, ArrowRightLeft } from 'lucide-react';
+import { useT } from "../../chat/language-context";
 
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -17,6 +18,7 @@ const LinguaFlowLogoIcon: React.FC<{ className?: string }> = ({ className = "w-1
 );
 
 export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
+  const ui = useT();
   return (
     <div id="auth-app-shell" className="min-h-screen w-full bg-slate-50 text-slate-900 flex flex-col md:flex-row antialiased selection:bg-[#08BCFD] selection:text-white">
       {/* LEFT COLUMN (Desktop only: >= 768px - Perfectly balanced medium-light sky/slate tone) */}
@@ -65,7 +67,7 @@ export const AuthLayout: React.FC<AuthLayoutProps> = ({ children }) => {
                   <span className="text-xs font-bold text-slate-800">Minh Anh</span>
                   <span className="text-[10px] text-slate-400 font-mono">10:42 AM</span>
                 </div>
-                <p className="text-sm font-medium text-slate-900">Xin chào 👋</p>
+                <p className="text-sm font-medium text-slate-900">{ui("Hello 👋")}</p>
                 <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[#0284C7] font-medium bg-sky-50 border border-sky-100 px-2.5 py-1 rounded-lg w-fit">
                   <Sparkles className="w-3.5 h-3.5 text-[#08BCFD]" />
                   <span>Translated: "Hello there 👋"</span>

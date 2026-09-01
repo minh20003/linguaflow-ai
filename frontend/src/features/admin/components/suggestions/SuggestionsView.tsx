@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TranslationSuggestion } from '../../types';
+import { useT } from "../../../chat/language-context";
 
 interface SuggestionsViewProps {
   suggestions: TranslationSuggestion[];
@@ -27,6 +28,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
   onReject,
   onNotify,
 }) => {
+  const ui = useT();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedSuggestion, setSelectedSuggestion] = useState<TranslationSuggestion | null>(null);
@@ -71,7 +73,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
       onNotify(`Đã duyệt và áp dụng thuật ngữ "${approvingItem.suggestedTranslation.slice(0, 30)}..."`, 'success');
       setApprovingItem(null);
     } catch {
-      onNotify('Không thể duyệt đề xuất. Vui lòng thử lại.', 'error');
+      onNotify(ui(ui("Failed to approve suggestion. Please try again.")), 'error');
     }
   };
 
@@ -87,7 +89,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
       onNotify(`Đã từ chối đề xuất của ${rejectingItem.user}`, 'info');
       setRejectingItem(null);
     } catch {
-      onNotify('Không thể từ chối đề xuất. Vui lòng thử lại.', 'error');
+      onNotify(ui(ui("Failed to reject suggestion. Please try again.")), 'error');
     }
   };
 
@@ -126,13 +128,13 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Đang chờ duyệt</span>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui("Pending approval")}</span>
             <div className="p-1 rounded bg-amber-50 text-amber-700">
               <Clock className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{pendingCount}</div>
-          <div className="mt-2 text-xs text-amber-600 font-medium">Cần chuyên viên quản trị phản hồi</div>
+          <div className="mt-2 text-xs text-amber-600 font-medium">{ui("Requires admin response")}</div>
         </button>
 
         <button
@@ -145,13 +147,13 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Đã phê duyệt</span>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui("Đã phê duyệt")}</span>
             <div className="p-1 rounded bg-green-50 text-green-700">
               <CheckCircle className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{approvedCount}</div>
-          <div className="mt-2 text-xs text-green-600 font-medium">Đã được lưu thành thuật ngữ áp dụng</div>
+          <div className="mt-2 text-xs text-green-600 font-medium">{ui("Saved as applied term")}</div>
         </button>
 
         <button
@@ -164,13 +166,13 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Đã từ chối</span>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{ui("Rejected")}</span>
             <div className="p-1 rounded bg-gray-100 text-gray-600">
               <XCircle className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 text-2xl font-bold text-gray-900 tracking-tight">{rejectedCount}</div>
-          <div className="mt-2 text-xs text-gray-400 font-medium">Không đáp ứng chuẩn ngữ cảnh</div>
+          <div className="mt-2 text-xs text-gray-400 font-medium">{ui("Does not meet context standards")}</div>
         </button>
       </div>
 
@@ -184,7 +186,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Tìm kiếm theo câu gốc, đề xuất, người gửi hoặc lý do..."
+            placeholder={ui("Search by source text, suggestion, sender, or reason...")}
             className="w-full pl-9 pr-4 py-2 text-xs sm:text-sm bg-white border border-gray-300 rounded-md focus:border-blue-600 outline-hidden transition-colors"
           />
         </div>
@@ -242,7 +244,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
               <Lightbulb className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-gray-900">Không có đề xuất nào</p>
+              <p className="text-sm font-semibold text-gray-900">{ui("No suggestions")}</p>
               <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
                 Không tìm thấy đề xuất bản dịch nào khớp với bộ lọc hiện tại của bạn.
               </p>
@@ -360,7 +362,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-medium transition-colors"
                     >
                       <X className="w-3.5 h-3.5" />
-                      <span>Từ chối</span>
+                      <span>{ui("Reject")}</span>
                     </button>
                     <button
                       id={`btn-approve-sug-${item.id}`}
@@ -368,7 +370,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                       className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-green-600 hover:bg-green-700 text-white text-xs font-medium shadow-xs transition-colors"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      <span>Duyệt đề xuất</span>
+                      <span>{ui("Approve suggestion")}</span>
                     </button>
                   </div>
                 )}
@@ -394,13 +396,13 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 <CheckCircle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900 text-base">Phê duyệt bản dịch đề xuất</h3>
-                <p className="text-xs text-gray-400">Áp dụng chuẩn dịch mới vào hệ thống</p>
+                <h3 className="font-semibold text-gray-900 text-base">{ui("Approve suggested translation")}</h3>
+                <p className="text-xs text-gray-400">{ui("Apply new translation standard to the system")}</p>
               </div>
             </div>
 
             <div className="p-3 bg-green-50/50 rounded-lg border border-green-100 text-xs">
-              <span className="font-medium text-green-900 block mb-1">Bản dịch được duyệt:</span>
+              <span className="font-medium text-green-900 block mb-1">{ui("Approved translation:")}</span>
               <p className="text-gray-900 font-medium">{approvingItem.suggestedTranslation}</p>
             </div>
 
@@ -442,8 +444,8 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 <XCircle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900 text-base">Từ chối đề xuất chỉnh sửa</h3>
-                <p className="text-xs text-gray-400">Giữ nguyên bản dịch AI hiện tại</p>
+                <h3 className="font-semibold text-gray-900 text-base">{ui("Reject edit suggestion")}</h3>
+                <p className="text-xs text-gray-400">{ui("Keep current AI translation")}</p>
               </div>
             </div>
 
@@ -455,7 +457,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
                 rows={3}
                 value={rejectReason}
                 onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Ví dụ: Bản dịch ban đầu phù hợp với ngữ cảnh trang trọng hơn..."
+                placeholder={ui("Example: The original translation is more suitable for a formal context...")}
                 className="w-full p-2 bg-white border border-gray-300 rounded-md outline-hidden focus:border-blue-600 text-gray-900"
               />
             </div>
@@ -491,7 +493,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
           >
             <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-gray-900 text-base">Chi tiết Đề xuất</h3>
+                <h3 className="font-semibold text-gray-900 text-base">{ui("Proposal Details")}</h3>
                 <span className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
                   {selectedSuggestion.id}
                 </span>
@@ -507,17 +509,17 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
             <div className="space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-lg">
                 <div>
-                  <span className="text-gray-400 block">Người gửi:</span>
+                  <span className="text-gray-400 block">{ui("Sender:")}</span>
                   <span className="font-medium text-gray-900">{selectedSuggestion.user}</span>
                 </div>
                 <div>
-                  <span className="text-gray-400 block">Thời gian:</span>
+                  <span className="text-gray-400 block">{ui("Time:")}</span>
                   <span className="font-medium text-gray-700">{selectedSuggestion.submittedAt}</span>
                 </div>
               </div>
 
               <div>
-                <label className="font-medium text-gray-700 block mb-1">Văn bản gốc:</label>
+                <label className="font-medium text-gray-700 block mb-1">{ui("Source text:")}</label>
                 <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 text-gray-800 leading-relaxed font-sans">
                   {selectedSuggestion.sourceText}
                 </div>
@@ -529,7 +531,7 @@ export const SuggestionsView: React.FC<SuggestionsViewProps> = ({
               )}
 
               <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <span className="font-medium text-gray-700 block mb-1">Góp ý từ người dùng:</span>
+                <span className="font-medium text-gray-700 block mb-1">{ui("User feedback:")}</span>
                 <p className="text-gray-700 italic">&ldquo;{selectedSuggestion.reason}&rdquo;</p>
               </div>
             </div>

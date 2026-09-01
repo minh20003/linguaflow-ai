@@ -31,6 +31,9 @@ interface MessageListProps {
   onApproveProposal?: (proposal: ApiActionProposal, corrections: Record<string, unknown>) => void;
   onRejectProposal?: (proposal: ApiActionProposal) => void;
   language: LanguageCode;
+  /** The reader's translation language. Threaded through for the proposal
+   *  card, whose words belong with the messages rather than the chrome. */
+  contentLanguage: LanguageCode;
 }
 
 /** How close to the foot of the thread still counts as "reading the latest". */
@@ -65,6 +68,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   onApproveProposal,
   onRejectProposal,
   language,
+  contentLanguage,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -167,6 +171,8 @@ export const MessageList: React.FC<MessageListProps> = ({
       <InlineProposalCard
         key={proposal.id}
         proposal={proposal}
+        language={language}
+        contentLanguage={contentLanguage}
         busy={proposalBusyId === proposal.id}
         onApprove={onApproveProposal!}
         onReject={onRejectProposal!}
