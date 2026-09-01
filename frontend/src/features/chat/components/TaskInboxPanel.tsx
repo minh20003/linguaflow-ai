@@ -1,35 +1,33 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Clock3, ListTodo, MessageSquareQuote, Trash2, X } from "lucide-react";
-import type { LanguageCode } from "../types";
+import { AlertCircle, CalendarDays, Check, Clock3, ListTodo, Trash2, X } from "lucide-react";
 import type { ApiActionProposal } from "../api/chat-api";
+import type { LanguageCode } from "../types";
+import { tx } from "../i18n";
 import {
   ApprovalOptions,
-  DEFAULT_APPROVAL,
+  approvalOptionsFromProposal,
   ProposalDraft,
   canApprove,
   decisionCorrections,
-  missingFields,
   draftFromProposal,
   formatProposalWhen,
   toLocalInputValue,
 } from "../proposal-approval";
 import { ProposalDecisionForm } from "./ProposalDecisionForm";
+import { FullEventModal } from "./PersonalCalendar";
 import {
-  clarifyActionProposal,
   confirmActionProposal,
   dismissActionProposal,
   dismissDecidedActionProposals,
   listActionProposals,
   rejectActionProposal,
 } from "../api/chat-api";
-import { useT } from "../language-context";
 
 interface TaskInboxPanelProps {
-  /** The reader's interface language. */
-  language: LanguageCode;
   token: string;
+  language: LanguageCode;
   /** Proposals arriving live over the socket, newest first. */
   incoming?: ApiActionProposal[];
   onCountChange?: (pending: number) => void;
@@ -72,6 +70,41 @@ function whenOf(proposal: ApiActionProposal): number {
   return at ? new Date(at).getTime() : Number.POSITIVE_INFINITY;
 }
 
+function formatProposalTimestamp(value: string | null | undefined, fallback: string): string {
+  if (!value) return fallback;
+  return new Date(value).toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function processedAt(proposal: ApiActionProposal): string | null {
+  if (proposal.status === "confirmed") return proposal.confirmed_at ?? null;
+  if (proposal.status === "rejected") return proposal.rejected_at ?? null;
+  if (proposal.status === "stale") return proposal.stale_at ?? null;
+  return null;
+}
+
+function proposalSource(proposal: ApiActionProposal): string {
+  const sender = proposal.source_sender_name?.trim();
+  const isGroup = proposal.source_conversation_type === "group";
+  const group = proposal.source_conversation_name?.trim();
+  const prefix = proposal.source_mode === "proactive"
+    ? "Trợ lý nhận diện yêu cầu"
+    : "Yêu cầu";
+
+  if (sender) {
+    return `${prefix} từ ${sender}${isGroup && group ? ` · Nhóm ${group}` : ""}`;
+  }
+  if (isGroup && group) return `${prefix} từ nhóm ${group}`;
+  return proposal.source_mode === "proactive"
+    ? "Trợ lý nhận diện yêu cầu từ hội thoại"
+    : "Yêu cầu từ hội thoại";
+}
+
 function orderProposals(items: ApiActionProposal[]): ApiActionProposal[] {
   return [...items].sort((a, b) => {
     const byBand = rank(a) - rank(b);
@@ -84,17 +117,15 @@ function orderProposals(items: ApiActionProposal[]): ApiActionProposal[] {
 
 export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   token,
-  incoming,
   language,
+  incoming,
   onCountChange,
   onNotify,
   onProposalChanged,
 }) => {
-  const ui = useT();
   const [proposals, setProposals] = useState<ApiActionProposal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
   // What the approver chose for this proposal, keyed by id. Empty until they
   // touch a control, so an untouched card still approves with the server's
   // defaults and the extra fields are genuinely optional.
@@ -104,7 +135,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   const [editingProposal, setEditingProposal] = useState<ApiActionProposal | null>(null);
   const [tab, setTab] = useState<"awaiting" | "decided">("awaiting");
 
-  const optionsFor = (id: string): ApprovalOptions => options[id] ?? DEFAULT_APPROVAL;
+  const optionsFor = (proposal: ApiActionProposal): ApprovalOptions =>
+    options[proposal.id] ?? approvalOptionsFromProposal(proposal);
 
   const draftFor = (proposal: ApiActionProposal): ProposalDraft =>
     drafts[proposal.id] ?? draftFromProposal(proposal);
@@ -115,10 +147,10 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       [proposal.id]: { ...(current[proposal.id] ?? draftFromProposal(proposal)), ...patch },
     }));
 
-  const setOption = (id: string, patch: Partial<ApprovalOptions>) =>
+  const setOption = (proposal: ApiActionProposal, patch: Partial<ApprovalOptions>) =>
     setOptions((current) => ({
       ...current,
-      [id]: { ...(current[id] ?? DEFAULT_APPROVAL), ...patch },
+      [proposal.id]: { ...(current[proposal.id] ?? approvalOptionsFromProposal(proposal)), ...patch },
     }));
 
   const load = useCallback(async () => {
@@ -126,14 +158,14 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       setProposals(await listActionProposals(token));
     } catch (error) {
       onNotify?.(
-        ui("Failed to load task box"),
+        "Không tải được hộp nhiệm vụ",
         error instanceof Error ? error.message : undefined,
         "warning",
       );
     } finally {
       setIsLoading(false);
     }
-  }, [token, onNotify, ui]);
+  }, [token, onNotify]);
 
   useEffect(() => {
     void load();
@@ -179,7 +211,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       setProposals((current) => current.filter((item) => item.id !== proposal.id));
       onProposalChanged?.(proposal, true);
     } catch (error) {
-      onNotify?.(ui("Failed to delete"), error instanceof Error ? error.message : undefined, "warning");
+      onNotify?.("Không xoá được", error instanceof Error ? error.message : undefined, "warning");
     } finally {
       setBusyId(null);
     }
@@ -190,9 +222,9 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       await dismissDecidedActionProposals(token);
       setProposals((current) => current.filter(
         (item) => item.status === "pending_confirmation" || item.status === "needs_clarification"));
-      onNotify?.(ui("Removed from list"), ui("Calendar and reminders remain unchanged"), "success");
+      onNotify?.("Đã xoá khỏi danh sách", "Lịch và nhắc hẹn giữ nguyên", "success");
     } catch (error) {
-      onNotify?.(ui("Failed to delete"), error instanceof Error ? error.message : undefined, "warning");
+      onNotify?.("Không xoá được", error instanceof Error ? error.message : undefined, "warning");
     }
   };
   const pendingCount = useMemo(
@@ -208,7 +240,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   }, [pendingCount, onCountChange]);
 
   const replace = (updated: ApiActionProposal) => {
-    setProposals((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    setProposals((current) => current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)));
     onProposalChanged?.(updated);
   };
 
@@ -222,25 +254,11 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
   ) => {
     setBusyId(proposal.id);
     try {
-      const updated = await run();
-      replace(updated);
-      // A call that returns 200 having changed nothing is the worst outcome to
-      // render silently: the card looks identical and the button looks broken.
-      if (
-        updated.status === proposal.status &&
-        updated.missing_fields === proposal.missing_fields
-      ) {
-        onNotify?.(
-          ui("That answer cannot be used yet"),
-          ui("Fill in the Start box above directly, then click Approve."),
-          "warning",
-        );
-      } else {
-        onNotify?.(success, proposal.display_title || proposal.title, "success");
-      }
+      replace(await run());
+      onNotify?.(success, proposal.title, "success");
     } catch (error) {
       onNotify?.(
-        ui("Unable to complete"),
+        "Không thực hiện được",
         error instanceof Error ? error.message : undefined,
         "warning",
       );
@@ -253,81 +271,78 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
           const busy = busyId === proposal.id;
           const needsAnswer = proposal.status === "needs_clarification";
           const decided = proposal.status !== "pending_confirmation" && !needsAnswer;
+          const proposalWhen = formatProposalWhen(proposal);
 
           return (
             <article
               key={proposal.id}
               onClick={(event) => {
                 if ((event.target as HTMLElement).closest("button, input, textarea")) return;
-                if (proposal.status === "pending_confirmation") setEditingProposal(proposal);
+                if (!decided) setEditingProposal(proposal);
               }}
-              className={`relative overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow hover:shadow-md dark:bg-[#1C1F27] ${
-                needsAnswer
-                  ? "border-amber-300 dark:border-amber-400/30"
-                  : "border-[#E8EAF0] dark:border-[#2A2E3D]"
-              }`}
+              className="relative overflow-hidden rounded-2xl border border-[#E8EAF0] bg-white shadow-sm transition-shadow hover:shadow-md dark:border-[#2A2E3D] dark:bg-[#1C1F27]"
             >
-              <div className={`absolute inset-y-0 left-0 w-1 ${needsAnswer ? "bg-amber-400" : proposal.status === "confirmed" ? "bg-emerald-500" : "bg-[#2563EB]"}`} />
-              <div className={`p-4 pl-5 sm:p-5 sm:pl-6 ${proposal.status === "pending_confirmation" ? "cursor-pointer" : ""}`}>
+              <div className={`absolute inset-y-0 left-0 w-1 ${proposal.status === "confirmed" ? "bg-emerald-500" : "bg-[#2563EB]"}`} />
+              <div className={`p-4 pl-5 sm:p-5 sm:pl-6 ${!decided ? "cursor-pointer" : ""}`}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-bold leading-snug text-[#1E2230] dark:text-[#F5F6FA]">
-                        {proposal.display_title || proposal.title}
+                        {proposal.title}
                       </h3>
                       <span
                         className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     proposal.status === "confirmed"
                       ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
-                      : needsAnswer
-                        ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200"
-                        : "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
+                      : "bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]"
                         }`}
                       >
                         {proposal.status === "confirmed"
-                    ? ui("Approved")
+                    ? tx(language, "Approved")
                     : proposal.status === "rejected"
-                      ? ui("Rejected")
+                      ? tx(language, "Rejected")
                       : proposal.status === "stale"
-                        ? ui("Outdated")
-                        : needsAnswer
-                          ? ui("Response required")
-                          : ui("Pending")}
+                        ? "Đã lỗi thời"
+                        : tx(language, "Awaiting approval")}
+                      </span>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        proposal.action_type === "appointment"
+                          ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
+                          : "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
+                      }`}>
+                        {proposal.action_type === "appointment" ? <CalendarDays className="h-3 w-3" /> : <ListTodo className="h-3 w-3" />}
+                        {proposal.action_type === "appointment" ? tx(language, "Event") : tx(language, "Task")}
                       </span>
                     </div>
-                    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
-                      <span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5 flex-none" />{formatProposalWhen(proposal, language)}</span>
-                      {proposal.source_mode === "proactive" && (
-                        <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">{ui("auto-detect")}</span>
-                      )}
-                    </p>
-                    {proposal.details && (
-                      <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[#4E5568] dark:text-[#C6CAD6]">{proposal.details}</p>
+                    {(proposalWhen !== "Chưa có thời gian" || proposal.source_mode === "proactive") && (
+                      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#74798C] dark:text-[#9DA3B4]">
+                        {proposalWhen !== "Chưa có thời gian" && (
+                          <span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5 flex-none" />{proposalWhen}</span>
+                        )}
+                        {proposal.source_mode === "proactive" && (
+                          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-200">tự phát hiện</span>
+                        )}
+                      </p>
                     )}
-                    <dl className="mt-3 grid max-w-3xl grid-cols-1 gap-x-5 gap-y-1.5 border-t border-[#EEF0F5] pt-3 text-xs text-[#62687B] dark:border-[#2A2E3D] dark:text-[#C6CAD6] sm:grid-cols-2">
-                      <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{ui("Type")}</dt><dd className="font-medium">{proposal.action_type === 'appointment' ? 'Sự kiện' : 'Việc cần làm'}</dd></div>
-                      <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{ui("Source")}</dt><dd className="font-medium">{proposal.source_mode === 'proactive' ? 'Agent tự quét hội thoại' : 'Yêu cầu từ hội thoại'}</dd></div>
-                      {proposal.location && <div className="flex gap-2 sm:col-span-2"><dt className="shrink-0 text-[#8A8F9E]">{ui("Location / link")}</dt><dd className="min-w-0 break-words font-medium">{proposal.location}</dd></div>}
-                    </dl>
                   </div>
 
-                  {!decided && !needsAnswer && (
+                  {!decided && (
                     <div className="flex shrink-0 items-center gap-2">
                       <button
                         type="button"
                         disabled={busy || !canApprove(proposal, draftFor(proposal))}
-                        title={canApprove(proposal, draftFor(proposal)) ? undefined : ui("Fill in the missing information above")}
-                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id))), ui("Approved and added to calendar"))}
+                        title={canApprove(proposal, draftFor(proposal)) ? undefined : "Điền nốt thông tin còn thiếu ở trên"}
+                        onClick={() => void act(proposal, () => confirmActionProposal(token, proposal.id, decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal))), "Đã duyệt và thêm vào lịch")}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
                       >
-                        <Check className="h-3.5 w-3.5" /> Duyệt
+                        <Check className="h-3.5 w-3.5" /> {tx(language, "Approve")}
                       </button>
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => void act(proposal, () => rejectActionProposal(token, proposal.id), ui("Rejected"))}
+                        onClick={() => void act(proposal, () => rejectActionProposal(token, proposal.id), "Đã từ chối")}
                         className="rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#62687B] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:text-[#C6CAD6] dark:hover:bg-[#232630]"
-                      >{ui("Reject")}</button>
+                      >{tx(language, "Reject")}</button>
                     </div>
                   )}
 
@@ -337,7 +352,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                         type="button"
                         disabled={busy}
                         onClick={() => void dismissOne(proposal)}
-                        title={ui("Only hide from list. Calendar and reminders remain unchanged.")}
+                        title="Chỉ ẩn khỏi danh sách. Lịch và nhắc hẹn giữ nguyên."
                         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#74798C] hover:bg-[#F7F8FC] hover:text-[#1E2230] disabled:opacity-50 dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
                       >
                         <Trash2 className="h-3.5 w-3.5" /> Xoá
@@ -349,103 +364,12 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
               {!decided && (
                 <ProposalDecisionForm
                   proposal={proposal}
-                  language={language}
                   draft={draftFor(proposal)}
-                  chosen={optionsFor(proposal.id)}
+                  chosen={optionsFor(proposal)}
                   onDraftChange={(patch) => setDraft(proposal, patch)}
-                  onOptionsChange={(patch) => setOption(proposal.id, patch)}
+                  onOptionsChange={(patch) => setOption(proposal, patch)}
+                  readOnly
                 />
-              )}
-
-              {/* Only for clarifications a date picker cannot express. When the
-                  missing field is the time, the form above already has a
-                  datetime input, and a free-text answer there was worse than
-                  useless: the server understands a deliberately tiny grammar
-                  ("mai 14h", ui("tomorrow morning"), "next friday") and silently resolves
-                  nothing else, so a perfectly reasonable ui("9 AM Thursday") left
-                  the card unchanged and looked like a dead button. */}
-              {needsAnswer && !missingFields(proposal).includes("time") && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-400/20 dark:bg-amber-500/10">
-                  <p className="flex items-start gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-200">
-                    <MessageSquareQuote className="mt-0.5 h-3 w-3 flex-none" />
-                    {proposal.clarification_question ||
-                      proposal.clarification_prompt ||
-                      ui("Assistant needs more information to schedule.")}
-                  </p>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      value={answers[proposal.id] ?? ""}
-                      onChange={(event) =>
-                        setAnswers((current) => ({
-                          ...current,
-                          [proposal.id]: event.target.value,
-                        }))
-                      }
-                      placeholder={ui("Example: 9 AM Thursday")}
-                      className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200 dark:border-amber-400/30 dark:bg-[#232630]"
-                    />
-                    <button
-                      type="button"
-                      disabled={busy || !(answers[proposal.id] ?? "").trim()}
-                      onClick={() =>
-                        void act(
-                          proposal,
-                          () =>
-                            clarifyActionProposal(
-                              token,
-                              proposal.id,
-                              (answers[proposal.id] ?? "").trim(),
-                              Intl.DateTimeFormat().resolvedOptions().timeZone,
-                            ),
-                          ui("Response sent"),
-                        )
-                      }
-                      className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
-                    >
-                      Gửi
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {!decided && needsAnswer && (
-                <div className="mt-3 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(
-                        proposal,
-                        () =>
-                          confirmActionProposal(
-                            token,
-                            proposal.id,
-                            decisionCorrections(proposal, draftFor(proposal), optionsFor(proposal.id)),
-                          ),
-                        ui("Approved and added to calendar"),
-                      )
-                    }
-                    className="inline-flex items-center justify-center gap-1 rounded-lg bg-[#2563EB] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#1D4ED8] disabled:opacity-50"
-                  >
-                    <Check className="h-3 w-3" />
-                    Duyệt
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(
-                        proposal,
-                        () => rejectActionProposal(token, proposal.id),
-                        ui("Rejected"),
-                      )
-                    }
-                    className="inline-flex items-center gap-1 rounded-lg border border-[#D8DCE7] px-3.5 py-2 text-xs font-semibold text-[#74798C] hover:bg-[#F7F8FC] disabled:opacity-50 dark:border-[#3A3F50] dark:hover:bg-[#2E3342]"
-                  >
-                    <X className="h-3 w-3" />
-                    Từ chối
-                  </button>
-                </div>
               )}
 
               {proposal.status === "stale" && (
@@ -454,7 +378,18 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
                   Tin nhắn gốc đã bị sửa hoặc gỡ, nên đề xuất này không còn dùng được.
                 </p>
               )}
-              </div>
+
+              <dl className="mt-4 grid max-w-3xl grid-cols-1 gap-x-8 gap-y-2 border-t border-[#EEF0F5] pt-3 text-xs text-[#62687B] dark:border-[#2A2E3D] dark:text-[#C6CAD6] sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{tx(language, "Type")}</dt><dd className="font-medium">{proposal.action_type === 'appointment' ? tx(language, 'Event') : tx(language, 'Task')}</dd></div>
+                  <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{tx(language, "Source")}</dt><dd className="font-medium">{proposalSource(proposal)}</dd></div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{tx(language, "Created at")}</dt><dd className="font-medium">{formatProposalTimestamp(proposal.created_at, "—")}</dd></div>
+                  <div className="flex gap-2"><dt className="shrink-0 text-[#8A8F9E]">{tx(language, "Processed at")}</dt><dd className="font-medium">{formatProposalTimestamp(processedAt(proposal), tx(language, "Not processed"))}</dd></div>
+                </div>
+              </dl>
+            </div>
             </article>
           );
   };
@@ -468,8 +403,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             <ListTodo className="h-5 w-5" />
           </span>
           <div>
-            <h2 className="text-base font-bold tracking-tight text-[#1E2230] dark:text-[#F5F6FA]">{ui("Task box")}</h2>
-            <p className="mt-0.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">{ui("Track and approve assistant suggestions")}</p>
+            <h2 className="text-base font-bold tracking-tight text-[#1E2230] dark:text-[#F5F6FA]">{tx(language, "Task inbox")}</h2>
+            <p className="mt-0.5 text-xs text-[#74798C] dark:text-[#9DA3B4]">{tx(language, "Review proposals from your assistant")}</p>
           </div>
         </div>
         </div>
@@ -478,7 +413,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-7 sm:py-8">
         <div className="mx-auto max-w-4xl space-y-5">
         {isLoading && (
-          <p className="px-1 py-6 text-center text-xs text-[#74798C]">{ui("Loading...")}</p>
+          <p className="px-1 py-6 text-center text-xs text-[#74798C]">Đang tải…</p>
         )}
 
         {!isLoading && ordered.length === 0 ? (
@@ -486,7 +421,7 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#EFF6FF] text-[#2563EB] dark:bg-[#2563EB]/15 dark:text-[#93C5FD]">
               <ListTodo className="h-7 w-7" />
             </span>
-            <h3 className="mt-5 text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">{ui("No tasks to approve")}</h3>
+            <h3 className="mt-5 text-sm font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chưa có việc nào cần duyệt</h3>
           </div>
         ) : (
           <>
@@ -495,8 +430,8 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
             grows without bound, so merged it buries the first. */}
         <div className="flex items-center gap-1 rounded-2xl border border-[#E8EAF0] bg-white p-1.5 shadow-sm dark:border-[#2A2E3D] dark:bg-[#1C1F27]">
           {([
-            ["awaiting", ui("Needs approval"), awaiting.length],
-            ["decided", ui("Processed"), decidedList.length],
+            ["awaiting", tx(language, "Awaiting review"), awaiting.length],
+            ["decided", tx(language, "Processed"), decidedList.length],
           ] as const).map(([key, caption, count]) => (
             <button
               key={key}
@@ -519,18 +454,34 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
               type="button"
               onClick={() => void dismissAllDecided()}
               className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-[#74798C] hover:bg-white hover:text-[#1E2230] dark:text-[#9DA3B4] dark:hover:bg-[#232630]"
-              title={ui("Only hide from list. Calendar and reminders remain unchanged.")}
+              title="Chỉ ẩn khỏi danh sách. Lịch và nhắc hẹn giữ nguyên."
             >
               <Trash2 className="h-3.5 w-3.5" /> Xoá tất cả
             </button>
           </div>
         )}
 
-        {(tab === "awaiting" ? awaiting : decidedList).map(renderProposal)}
+        {(() => {
+          const visible = tab === "awaiting" ? awaiting : decidedList;
+          const events = visible.filter((proposal) => proposal.action_type === "appointment");
+          const tasks = visible.filter((proposal) => proposal.action_type !== "appointment");
+          const hasBothTypes = events.length > 0 && tasks.length > 0;
+
+          return <div className="space-y-5">
+            {events.length > 0 && <section className="space-y-2.5">
+              {hasBothTypes && <p className="px-1 text-xs font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300">{tx(language, "Events")} ({events.length})</p>}
+              {events.map(renderProposal)}
+            </section>}
+            {tasks.length > 0 && <section className="space-y-2.5">
+              {hasBothTypes && <p className="px-1 text-xs font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">{tx(language, "Tasks")} ({tasks.length})</p>}
+              {tasks.map(renderProposal)}
+            </section>}
+          </div>;
+        })()}
 
         {!isLoading && (tab === "awaiting" ? awaiting : decidedList).length === 0 && (
           <div className="rounded-2xl border border-dashed border-[#D8DCE7] bg-white px-5 py-12 text-center text-xs text-[#74798C] dark:border-[#3A3F50] dark:bg-[#1C1F27] dark:text-[#9DA3B4]">
-            {tab === "awaiting" ? "Không có việc nào đang chờ bạn duyệt." : ui("No tasks have been processed yet.")}
+            {tab === "awaiting" ? "Không có việc nào đang chờ bạn duyệt." : "Chưa có việc nào đã được xử lý."}
           </div>
         )}
           </>
@@ -538,58 +489,37 @@ export const TaskInboxPanel: React.FC<TaskInboxPanelProps> = ({
         </div>
       </div>
       {editingProposal && (
-        <ProposalEditModal
-          proposal={editingProposal}
+        <FullEventModal
+          token={token}
+          initialKind={editingProposal.action_type === "appointment" ? "event" : "task"}
+          initialTitle={editingProposal.title}
+          initialDate={toLocalInputValue(editingProposal.scheduled_start_at || editingProposal.due_at).slice(0, 10) || undefined}
+          initialStartTime={toLocalInputValue(editingProposal.scheduled_start_at || editingProposal.due_at).slice(11) || undefined}
+          initialEndTime={toLocalInputValue(editingProposal.scheduled_end_at).slice(11) || undefined}
+          initialLocation={editingProposal.location ?? ""}
+          initialNote={editingProposal.details ?? ""}
+          submitLabel="Duyệt"
           onClose={() => setEditingProposal(null)}
-          onConfirm={(corrections) => {
+          onSubmit={(calendarTask) => {
+            const reminder = calendarTask.reminders?.find((item) => item.method === "popup");
             void act(
               editingProposal,
-              () => confirmActionProposal(token, editingProposal.id, corrections),
-              ui("Approved and added to calendar"),
+              () =>
+                confirmActionProposal(token, editingProposal.id, {
+                  title: calendarTask.title,
+                  details: calendarTask.note ?? null,
+                  location: calendarTask.location ?? calendarTask.meetLink ?? null,
+                  scheduled_start_at: calendarTask.dueAt,
+                  scheduled_end_at: calendarTask.endAt ?? null,
+                  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  reminder_minutes_before: reminder?.minutes ?? null,
+                }),
+              "Đã duyệt và thêm vào lịch",
             );
             setEditingProposal(null);
           }}
         />
       )}
     </section>
-  );
-};
-
-const ProposalEditModal: React.FC<{
-  proposal: ApiActionProposal;
-  onClose: () => void;
-  onConfirm: (corrections: Record<string, unknown>) => void;
-}> = ({ proposal, onClose, onConfirm }) => {
-  const ui = useT();
-  const [title, setTitle] = useState(proposal.title);
-  const [location, setLocation] = useState(proposal.location ?? "");
-  const [details, setDetails] = useState(proposal.details ?? "");
-  const [startsAt, setStartsAt] = useState(toLocalInputValue(proposal.scheduled_start_at));
-  const [endsAt, setEndsAt] = useState(toLocalInputValue(proposal.scheduled_end_at));
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" role="dialog" aria-modal="true">
-      <form
-        className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl dark:bg-[#1C1F27]"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onConfirm({
-            title: title.trim(),
-            location: location.trim() || null,
-            details: details.trim() || null,
-            scheduled_start_at: startsAt ? new Date(startsAt).toISOString() : null,
-            scheduled_end_at: endsAt ? new Date(endsAt).toISOString() : null,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          });
-        }}
-      >
-        <div className="mb-5 flex items-center justify-between"><div><h3 className="text-lg font-bold text-[#1E2230] dark:text-[#F5F6FA]">Chỉnh sửa {proposal.action_type === "appointment" ? "sự kiện" : ui("to-do")}</h3><p className="mt-1 text-xs text-[#74798C]">{ui("Check details before adding to calendar.")}</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-[#74798C] hover:bg-[#F1F3F4] dark:hover:bg-[#2A2E3D]"><X className="h-5 w-5" /></button></div>
-        <label className="block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Title")}<input required value={title} onChange={(event) => setTitle(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Start")}<input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label><label className="text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("End")}<input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label></div>
-        <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Location or meeting link")}<input value={location} onChange={(event) => setLocation(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
-        <label className="mt-4 block text-xs font-semibold text-[#3C4043] dark:text-[#E3E3E3]">{ui("Description")}<textarea value={details} onChange={(event) => setDetails(event.target.value)} rows={4} className="mt-1.5 w-full resize-none rounded-xl border border-[#D8DCE7] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#2563EB] dark:border-[#3A3F50] dark:bg-[#232630]" /></label>
-        <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={onClose} className="rounded-lg px-4 py-2 text-sm font-semibold text-[#62687B] hover:bg-[#F7F8FC]">{ui("Cancel")}</button><button type="submit" className="rounded-lg bg-[#2563EB] px-4 py-2 text-sm font-bold text-white hover:bg-[#1D4ED8]">{ui("Approve and add to calendar")}</button></div>
-      </form>
-    </div>
   );
 };

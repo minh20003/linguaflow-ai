@@ -179,174 +179,24 @@ BOM nằm trước `#!` khiến git không nhận ra shebang → pre-push hook k
 
 ---
 
-> Các ngày từ 11/08/2026 trở đi được lập từ lịch sử commit của kho mã nguồn, nên mọi dòng đều đối chiếu được. Cột **Thời lượng** để trống: dự án không ghi nhận số giờ ở đâu, và điền số ước lượng sẽ khiến tài liệu trông đầy đủ hơn mức nó thật sự có.
+## 17/08/2026 - 31/08/2026 — Đóng góp trọng yếu của Nguyễn Ngọc Thuận
 
-## 12/08/2026
+> Chỉ ghi các commit có thay đổi chức năng hoặc ảnh hưởng kiến trúc lâu dài; không liệt kê commit merge, revert, đồng bộ nhánh hoặc chỉnh sửa nhỏ.
 
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+| Ngày | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
 |---|---|---|---|---|
-| Minh | Xóa plan md.; Thêm kiểm thử tích hợp kết nối lại WebSocket F-02.3 và tài liệu hợp đồng kết nối lại | Hoàn thành | 2 commit — Khác, Phát triển | — |
-| Thuận | Tổ chức các tính năng và tài liệu thiết kế.; Lưu trữ người dùng và quản lý phiên làm việc. | Hoàn thành | 2 commit — Phát triển, Tái cấu trúc | — |
-| Trà My | Thêm demo song song cho hai ngôn ngữ đọc.; Giữ khách truy cập đã đăng nhập ở lại trang chat.; Kết nối xử lý đăng ký và phiên làm việc với backend.; Thêm các endpoint đăng ký, tìm kiếm người dùng và ngôn ngữ.; và 4 thay đổi khác | Hoàn thành | 8 commit — Khắc phục, Phát triển | — |
+| 17/08 | Chuẩn hoá proxy API/WebSocket, tinh chỉnh dịch chat và điều khiển tài khoản | Hoàn thành | commit `b5ebe7a`, `4f5f0f8` | — |
+| 18/08 | Bản địa hoá giao diện chat và hỗ trợ forward message có provenance | Hoàn thành | commit `af2fe69` | — |
+| 19/08 | Bổ sung Google Sign-In đã xác thực, gồm migration, backend API, UI và kiểm thử | Hoàn thành | commit `41733ff` | — |
+| 21/08 | Tái cấu trúc frontend chat/auth theo component dùng chung | Hoàn thành | commit `858c947` | — |
+| 21/08 | Tích hợp Supabase Storage cho tệp đính kèm, giữ kiểm tra truy cập theo hội thoại | Hoàn thành | commit `b4e6e56` | — |
+| 21/08 | Bổ sung quản trị nhóm ở backend và frontend, cùng cơ chế session bền vững | Hoàn thành | commit `352df10`, `d2f8471` | — |
+| 24/08 | Lưu thay đổi glossary qua backend và cải thiện dữ liệu metric liên quan | Hoàn thành | commit `f236d91` | — |
+| 26/08 | Tích hợp live translation, dữ liệu quản trị và telemetry cho admin/chat | Hoàn thành | commit `3c61fd1`, `dfe2b1d` | — |
+| 28/08 | Hoàn thiện personal calendar, Task Inbox và private assistant messages/visibility | Hoàn thành | commit `d0a6290` | — |
+| 29/08 | Làm mới UI calendar, admin, auth; tinh chỉnh Task Inbox và assistant settings | Hoàn thành | commit `933b186`, `df06385` | — |
+| 31/08 | Bổ sung tài liệu runtime reliability và feature operations | Hoàn thành | commit `8439a10` | — |
 
----
+**Tổng kết:** Các commit trên tập trung vào nền tảng trải nghiệm người dùng, xác thực/tích hợp, quản trị dữ liệu dịch, calendar/task inbox và tài liệu vận hành. Chi tiết commit không trọng yếu hoặc commit tích hợp được truy vết trực tiếp trong Git history.
 
-## 13/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Khôi phục nhánh main về trạng thái khởi tạo dự án; Ghi nhận telemetry contract và phương pháp đánh giá; Lưu trữ lịch sử đánh giá và so sánh hai lần chạy; Đo lường đúng các chỉ số mà quá trình đánh giá yêu cầu; và 5 thay đổi khác | Hoàn thành | 9 commit — Khắc phục, Phát triển, Tài liệu, revert | — |
-
----
-
-## 15/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Lưu trữ mọi bản ghi nhật ký AI trong thư mục .ai-log của kho lưu trữ; Ghi lại cấu trúc triển khai và các phần mở rộng của API; Cấu hình ứng dụng để có thể triển khai bên ngoài máy này — Postgres, Alembic, $PORT; Không lưu bản dịch của văn bản đã được người gửi thay đổi (F-03); và 3 thay đổi khác | Hoàn thành | 7 commit — Khắc phục, Phát triển, Tài liệu | — |
-
----
-
-## 16/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Thêm tài liệu kiến trúc và bằng chứng benchmark đánh giá; Giới hạn và cung cấp số liệu thống kê dịch thuật; Thêm bộ nhớ đệm dịch thuật thận trọng; Hoàn tất khôi phục kết nối lại websocket; và 1 thay đổi khác | Hoàn thành | 5 commit — Khắc phục, Phát triển, Tài liệu | — |
-| Thuận | Đồng bộ frontend nhánh develop để khớp chính xác với feature/chat-integration-ui (xóa các tệp thừa); Ghi đè frontend bằng phiên bản của feature/chat-integration-ui; Xóa các tệp không được cập nhật trong ngày (dọn dẹp các tệp cũ từ 5 ngày trước); Tích hợp giao diện chat với backend | Hoàn thành | 4 commit — Hạ tầng, Phát triển | — |
-| Trà My | Ghi lại hai tính năng và các quyết định đằng sau chúng; Hộp chỉnh sửa F-05, ngôn ngữ giao diện và các sửa lỗi thực tế; Các chỉnh sửa dịch thuật riêng tư và ngôn ngữ giao diện riêng biệt | Hoàn thành | 3 commit — Phát triển, Tài liệu | — |
-
----
-
-## 17/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Hoàn thành bản địa hóa UI đa ngôn ngữ; Chuẩn hóa lockfile đã khôi phục; Hoàn tác "feat(frontend): overwrite frontend with feature/chat-integration-ui version"; Hoàn tác "chore(frontend): sync develop frontend to exactly match feature/chat-integration-ui (remove extra files)" | Hoàn thành | 4 commit — Hạ tầng, Khác, Phát triển | — |
-| Thuận | Xóa pnpm store khỏi repository; Tinh chỉnh tính năng dịch chat và kiểm soát tài khoản; Cấu hình proxy API chat và URL websocket; Thay thế mã nguồn nhánh bằng develop | Hoàn thành | 4 commit — Hạ tầng, Khác, Khắc phục | — |
-
----
-
-## 18/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Thuận | Bản địa hóa giao diện chat và hỗ trợ tin nhắn chuyển tiếp; Tăng cường bảo mật quy trình khởi chạy container production; Cập nhật ví dụ cấu hình môi trường cơ sở dữ liệu; Thay thế frontend develop bằng tích hợp chat; và 2 thay đổi khác | Hoàn thành | 6 commit — Hạ tầng, Khắc phục, Phát triển | — |
-
----
-
-## 19/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Thêm tính năng đăng ký bằng OTP qua email; Khôi phục frontend P0 sau khi bị ghi đè bởi tích hợp chat | Hoàn thành | 2 commit — Khắc phục, Phát triển | — |
-| Thuận | Chuẩn hóa định danh hồ sơ và nội dung tiếng Anh; Tinh chỉnh nút đăng nhập Google tương thích giao diện; Thêm tính năng đăng nhập bằng Google đã xác thực; Sử dụng đầu ra Next mặc định trên Vercel | Hoàn thành | 4 commit — Khắc phục, Phát triển | — |
-| Trà My | Sửa đổi ADR-13 và ghi lại kiểm toán guardrail.; Ngăn rò rỉ ngữ cảnh và phản hồi từ chối tiếp cận người nhận.; Đảm bảo ruff chạy thành công sau khi hợp nhất email-OTP | Hoàn thành | 3 commit — Chuẩn hoá mã, Phát triển, Tài liệu | — |
-
----
-
-## 20/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Cung cấp bộ thuật ngữ khởi đầu để tính năng hoạt động ngay từ ngày đầu; Xem xét hàng đợi các thuật ngữ được đề xuất; Đề xuất các thuật ngữ từ các bản sửa lỗi được nhiều người đồng ý; Truy xuất ngữ cảnh cũ hơn theo ngữ nghĩa, không chỉ theo thời gian.; và 9 thay đổi khác | Hoàn thành | 13 commit — Hạ tầng, Khắc phục, Phát triển, Tài liệu | — |
-
----
-
-## 21/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Hỗ trợ đăng ký OTP qua email trên UI, sửa Google button client ID env, và ánh xạ lại cổng Postgres thành 5433; Đồng bộ các route xác thực Google, schema và migration head để tích hợp develop_v2; Hoàn thành lõi conversation intelligence; Liên kết migration của Batch G sau ef06ca79ef49; và 1 thay đổi khác | Hoàn thành | 5 commit — Hạ tầng, Khắc phục, Phát triển | — |
-| Thuận | Làm rõ cách diễn đạt về ngôn ngữ ưu tiên; Thêm quản trị nhóm và xử lý phiên auth bền bỉ; Thêm quản trị nhóm và xử lý phiên auth bền bỉ; Giữ lại cơ chế dự phòng Google env và cổng cơ sở dữ liệu local; và 7 thay đổi khác | Hoàn thành | 11 commit — Khác, Khắc phục, Phát triển | — |
-| Trà My | Đánh giá liệu đối tượng người nghe và vị thế có thực sự làm thay đổi bản dịch | Hoàn thành | 1 commit — Kiểm thử | — |
-
----
-
-## 22/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Liên kết bản triển khai thực tế; Liệt kê các biến SMTP mà production guard thực sự yêu cầu; Ghim thanh điều hướng và thêm lối quay lại màn hình quản trị cho mục Settings; Chỉnh sửa và khôi phục một thuật ngữ, đồng thời mô tả chức năng của tùy chọn "keep as is"; và 18 thay đổi khác | Hoàn thành | 22 commit — Khắc phục, Kiểm thử, Phát triển, Tài liệu | — |
-
----
-
-## 24/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Sử dụng URL API công khai đã cấu hình; Thêm view phản hồi dịch thuật và các endpoint admin; Đồng bộ package-lock và sửa các import sau khi merge develop_v2; Thêm luồng đặt lại mật khẩu và các cấu hình triển khai VPS; và 3 thay đổi khác | Hoàn thành | 7 commit — Hạ tầng, Khắc phục, Phát triển | — |
-| Thuận | Lưu trữ các thay đổi glossary qua backend; Tích hợp trợ lý admin dashboard và lịch | Hoàn thành | 2 commit — Khắc phục, Phát triển | — |
-| Trà My | Khôi phục các tệp frontend/ của develop_v2 bị mất do cơ chế phát hiện đổi tên; Trỏ các tham chiếu đường dẫn còn lại đến frontend-v1/; Đổi tên frontend/ thành frontend-v1/ trước khi hợp nhất develop_v2; Sửa lỗi chính xác của số liệu thống kê, thêm chi phí theo từng mô hình và hiển thị từ ngữ của chính người gửi; và 1 thay đổi khác | Hoàn thành | 5 commit — Hạ tầng, Khắc phục, Phát triển, Tài liệu | — |
-
----
-
-## 25/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Thêm bài nộp Day 23 Product Metrics Lab cho Nguyen Thi Tra My (MSSV: 2A202601026) | Hoàn thành | 1 commit — Phát triển | — |
-
----
-
-## 26/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Khắc phục lỗi phân giải đường dẫn tệp .env và chuẩn hóa ký tự phân cách định giá mô hình.; Khắc phục lỗi xác thực CI và kéo dài timeout.; Tăng timeout kiểm thử CI; Tránh xung đột cổng PostgreSQL trong CI; và 1 thay đổi khác | Hoàn thành | 5 commit — Khắc phục | — |
-| Thuận | Tinh chỉnh tính năng dịch trò chuyện và telemetry của admin.; Tích hợp dịch thuật trực tiếp và dữ liệu quản lý | Hoàn thành | 2 commit — Phát triển | — |
-| Trà My | Thay đổi runner thành self-hosted và ubuntu-latest | Hoàn thành | 1 commit — Khác | — |
-
----
-
-## 27/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Khôi phục trạng thái các lượt thử lại voice transcription.; Đánh số phiên bản công cụ release VPS.; Thêm tin nhắn thoại được phiên âm bằng Gemini | Hoàn thành | 3 commit — CI/CD, Khắc phục, Phát triển | — |
-| Trà My | Cho phép người dùng kết nối Google Calendar.; Đẩy thay đổi lên Google ngay khi được thực hiện.; Vẽ sơ đồ luồng của assistant, các bảng mới và đường dẫn đến Google; Ghi lại liên kết Google Calendar và các sự kiện thời gian thực của assistant; và 18 thay đổi khác | Hoàn thành | 22 commit — Kiểm thử, Phát triển, Tài liệu | — |
-
----
-
-## 28/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Tăng cường bảo mật truyền tải portable release; Cho phép thành viên tải xuống các tệp đính kèm đang chờ.; Sửa thứ tự import auth schema.; Tự động hóa quy trình phát hành production của develop_v2. | Hoàn thành | 4 commit — CI/CD, Chuẩn hoá mã, Khắc phục | — |
-| Thuận | Tinh chỉnh quyền riêng tư của calendar, task inbox và assistant. | Hoàn thành | 1 commit — Phát triển | — |
-| Trà My | Cập nhật .env.example khớp với các cấu hình thực tế mã nguồn đọc; Cấu hình run.sh khởi động frontend và backend thực tế của dự án; Đo lường riêng biệt quá trình truy xuất và tạo của assistant.; Bao phủ chunking, retrieval, tool registry và gate.; và 2 thay đổi khác | Hoàn thành | 6 commit — Hạ tầng, Khắc phục, Kiểm thử, Phát triển | — |
-
----
-
-## 29/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Tăng cường độ ổn định cho STT runtime và cơ chế khôi phục thử lại.; Trỏ README tới VPS production | Hoàn thành | 2 commit — Khắc phục, Tài liệu | — |
-| Thuận | Tinh chỉnh giao diện hộp thư nhiệm vụ và cài đặt trợ lý.; Làm mới giao diện lịch, quản trị và xác thực. | Hoàn thành | 2 commit — Khắc phục, Phát triển | — |
-| Trà My | Đọc thời gian từ tin nhắn và nhận diện cả các cuộc hẹn.; Ngăn giới hạn token của trình dịch làm tắt tính năng phát hiện đề xuất.; Cho phép hoàn thành và phê duyệt đề xuất chưa hoàn tất; Quyết định đề xuất tại nơi đề xuất được đưa ra và dọn dẹp sau đó; và 7 thay đổi khác | Hoàn thành | 11 commit — Hạ tầng, Khắc phục, Phát triển | — |
-
----
-
-## 30/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Minh | Khôi phục các bài kiểm tra trợ lý độc lập và cổng kiểm duyệt production. | Hoàn thành | 1 commit — Khắc phục | — |
-
----
-
-## 31/08/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Thuận | Thêm hướng dẫn vận hành runtime và tính năng. | Hoàn thành | 1 commit — Tài liệu | — |
-| Trà My | Thêm kịch bản demo, slide thuyết trình và kịch bản xây dựng slide.; Cung cấp cho trợ lý nguồn thời gian đáng tin cậy và cho phép thẻ của trợ lý phản hồi lại. | Hoàn thành | 2 commit — Phát triển, Tài liệu | — |
-
----
-
-## 01/09/2026
-
-| Thành viên | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
-|---|---|---|---|---|
-| Trà My | Trình bày lại phân tích khả thi trong report register.; Tối ưu hóa độ đọc hiểu của kịch bản khả thi, sau đó áp dụng các số liệu thực tế.; Lập luận về sai lệch biên dịch bằng các cơ chế và định danh nhóm phát triển.; Lập luận lý do sản phẩm tồn tại và chỉ ra điểm giới hạn của lập luận đó.; và 11 thay đổi khác | Hoàn thành | 15 commit — Khắc phục, Phát triển, Tài liệu | — |
-
+<!-- Bổ sung theo mẫu trên cho mỗi ngày làm việc -->

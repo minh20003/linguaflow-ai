@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from src.config import get_settings
 from src.core.deps import get_user_by_token
+from src.core.rate_limit import WebSocketRateLimitError, check_websocket_message_rate
 from src.database import get_db
 from src.schemas.chat import (
     AttachmentResponse,
@@ -388,6 +389,17 @@ async def websocket_endpoint(
             if not isinstance(raw_event, dict):
                 await _send_error(websocket, "invalid_event", "Unsupported event type")
                 continue
+
+            if raw_event.get("type") in {"send_message", "send_voice_message"}:
+                try:
+                    check_websocket_message_rate(user_id)
+                except WebSocketRateLimitError as exc:
+                    await _send_error(
+                        websocket,
+                        "rate_limited",
+                        f"Too many messages. Retry after {exc.retry_after} seconds.",
+                    )
+                    continue
 
             if raw_event.get("type") == "typing":
                 await _relay_typing(

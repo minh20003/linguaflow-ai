@@ -11,9 +11,11 @@ with feature/f-01-2-auth-user-config, which rewrites conftest.
 from __future__ import annotations
 
 import time
+from unittest.mock import Mock
 
 import pytest
 
+from src.core.circuit_breaker import CircuitState, fallback_translator_breaker
 from src.services.fallback_translator import translate_with_secondary_provider
 
 MODULE = "src.services.fallback_translator"
@@ -21,12 +23,12 @@ MODULE = "src.services.fallback_translator"
 
 def make_fallback_settings(is_enabled: bool = True, timeout: int = 5):
     """Create a mock settings object for fallback translator tests."""
+
     class FakeSettings:
         fallback_translator_enabled = is_enabled
         fallback_translator_timeout_seconds = timeout
 
     return FakeSettings()
-
 
 
 @pytest.fixture
@@ -111,6 +113,19 @@ async def test_returns_none_when_provider_returns_blank(monkeypatch, settings_en
 
     monkeypatch.setattr(f"{MODULE}._translate_sync", lambda *a: None)
     assert await translate_with_secondary_provider("Chào bạn", "en", "vi") is None
+    assert fallback_translator_breaker.status()["failure_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_open_circuit_skips_secondary_provider(monkeypatch, settings_enabled):
+    provider = Mock(side_effect=AssertionError("open circuit must skip provider"))
+    monkeypatch.setattr(f"{MODULE}._translate_sync", provider)
+    for _ in range(fallback_translator_breaker.failure_threshold):
+        fallback_translator_breaker.record_failure()
+
+    assert fallback_translator_breaker.state == CircuitState.OPEN
+    assert await translate_with_secondary_provider("Chào bạn", "en", "vi") is None
+    provider.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -126,5 +141,3 @@ async def test_lets_provider_detect_when_source_unknown(monkeypatch, settings_en
 
     assert await translate_with_secondary_provider("Chào bạn", "en") == "Hello"
     assert captured["source"] == ""
-
-
