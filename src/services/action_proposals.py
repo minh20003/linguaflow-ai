@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import ActionProposal, Message, User
 from src.schemas.intelligence import ActionCandidateDTO
+from src.services.fallback_translator import translate_with_secondary_provider
 from src.services.relative_time import mentions_relative_time, resolve_relative_time
 
 MAX_CLARIFICATION_ROUNDS = 2
@@ -345,6 +346,37 @@ class ActionProposalService:
         await self.db.commit()
         return int(result.rowcount or 0)
 
+    @staticmethod
+    async def _in_owner_language(
+        *,
+        title: str,
+        details: str | None,
+        owner_language: str | None,
+        source_language: str | None,
+    ) -> tuple[str, str | None]:
+        """Render a proposal's words for its owner, or leave them alone.
+
+        The secondary translator rather than the agent: a title is a handful of
+        words, this runs on a detached background task behind every scanned
+        message, and spending LLM quota per member of every group to reword one
+        line is not a trade worth making. It returns `None` on any failure --
+        disabled, unreachable, same language -- and `None` here means keeping
+        what the speaker actually said, which is always a defensible answer.
+        """
+        if not owner_language or owner_language == source_language:
+            return title, details
+        rendered_title = await translate_with_secondary_provider(
+            title, owner_language, source_language or ""
+        )
+        rendered_details = (
+            await translate_with_secondary_provider(
+                details, owner_language, source_language or ""
+            )
+            if details
+            else None
+        )
+        return rendered_title or title, rendered_details or details
+
     async def create_proposals_from_candidates(
         self,
         conversation_id: str,
@@ -386,6 +418,16 @@ class ActionProposalService:
             select(User.timezone).where(User.id == (timezone_user_id or owner_user_id))
         )
 
+        # The language the owner reads. A title extracted from a Vietnamese
+        # message used to reach an English-speaking owner in Vietnamese, which
+        # in a translation product is the one thing that must not happen. It
+        # matters more now that a proactive proposal is offered to everybody in
+        # the conversation: one message becomes several rows for several people
+        # who need not share a language.
+        owner_language = await self.db.scalar(
+            select(User.preferred_language).where(User.id == owner_user_id)
+        )
+
         saved: list[ActionProposal] = []
         for candidate in candidates:
             normalized = normalize_action_time(
@@ -412,6 +454,12 @@ class ActionProposalService:
                 continue
 
             missing = list(normalized.missing_fields)
+            title, details = await self._in_owner_language(
+                title=candidate.title,
+                details=candidate.details,
+                owner_language=owner_language,
+                source_language=source.source_language,
+            )
             proposal = ActionProposal(
                 conversation_id=conversation_id,
                 source_message_id=source_message_id,
@@ -420,8 +468,11 @@ class ActionProposalService:
                 source_mode=source_mode,
                 action_type=candidate.action_type,
                 status="needs_clarification" if missing else "pending_confirmation",
-                title=candidate.title,
-                details=candidate.details,
+                title=title,
+                details=details,
+                # Left as it was said. A place is usually a name rather than a
+                # phrase, and a translated name is one the person cannot use to
+                # find the place or repeat back to whoever suggested it.
                 location=getattr(candidate, "location", None),
                 raw_time_expression=normalized.raw_time_expression,
                 scheduled_start_at=normalized.scheduled_start_at,

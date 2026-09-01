@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import create_access_token, get_password_hash
 from src.database.models import ActionProposal, Conversation, ConversationMember, Message, User
+from src.schemas.intelligence import ActionCandidateDTO
+from src.services.action_proposals import ActionProposalService
 from src.services.agent_consent import set_consents
 
 
@@ -138,7 +140,13 @@ async def test_extract_actions_task_success(client: AsyncClient, test_db: AsyncS
     assert p["action_type"] == "task"
     assert p["owner_user_id"] == bob.id
     assert p["status"] == "pending_confirmation"
-    assert "backend" in p["title"].lower()
+    # The title reaches Bob in Bob's language. The message is English and his
+    # account reads Vietnamese, so asserting the English word "backend" survives
+    # is asserting the bug this replaced. What the extraction has to get right
+    # is which commitment it found and whose it is; the wording it arrives in is
+    # `test_a_proposal_is_worded_in_its_owners_language` below, where the
+    # translator is stubbed rather than called over the network.
+    assert p["title"].strip()
     assert p["source_message_id"] == m_task.id
     assert p["conversation_id"] == conv.id
 
@@ -386,3 +394,87 @@ async def test_requester_assignment_and_self_commitment_are_eligible(client: Asy
             )
             assert response.status_code == 200
             assert response.json()[0]["owner_user_id"] == alice.id
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_is_worded_in_its_owners_language(
+    test_db: AsyncSession, extraction_setup, monkeypatch
+):
+    """A title extracted from one language reaches its owner in theirs.
+
+    The translator is stubbed. It reaches an unofficial endpoint over the
+    network, and a test that calls it is a test that fails on a train.
+    """
+    bob = extraction_setup["bob"]
+    conv = extraction_setup["conv"]
+    m_task = extraction_setup["m_task"]
+    assert bob.preferred_language == "vi"
+
+    seen: list[tuple[str, str, str]] = []
+
+    async def fake_translate(text, target_language, source_language=""):
+        seen.append((text, target_language, source_language))
+        return f"[{target_language}] {text}"
+
+    monkeypatch.setattr(
+        "src.services.action_proposals.translate_with_secondary_provider",
+        fake_translate,
+    )
+
+    saved = await ActionProposalService(test_db).create_proposals_from_candidates(
+        conversation_id=conv.id,
+        source_message_id=m_task.id,
+        candidates=[
+            ActionCandidateDTO(
+                action_type="task",
+                title="Deploy the backend server",
+                details="Before tomorrow at 5 PM",
+                confidence_score=0.9,
+            )
+        ],
+        owner_user_id=bob.id,
+        source_mode="on_demand",
+        created_by_user_id=bob.id,
+    )
+
+    assert saved[0].title == "[vi] Deploy the backend server"
+    assert saved[0].details == "[vi] Before tomorrow at 5 PM"
+    # Translated out of the language the message was written in, not guessed.
+    assert [target for _, target, _ in seen] == ["vi", "vi"]
+    assert {source for _, _, source in seen} == {"en"}
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_in_the_owners_own_language_is_left_alone(
+    test_db: AsyncSession, extraction_setup, monkeypatch
+):
+    """No translator call at all when the languages already match."""
+    alice = extraction_setup["alice"]
+    conv = extraction_setup["conv"]
+    m_task = extraction_setup["m_task"]
+    assert alice.preferred_language == "en"
+
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("the translator must not be called")
+
+    monkeypatch.setattr(
+        "src.services.action_proposals.translate_with_secondary_provider", fail
+    )
+
+    saved = await ActionProposalService(test_db).create_proposals_from_candidates(
+        conversation_id=conv.id,
+        source_message_id=m_task.id,
+        candidates=[
+            ActionCandidateDTO(
+                action_type="task",
+                title="Deploy the backend server",
+                details=None,
+                confidence_score=0.9,
+            )
+        ],
+        owner_user_id=alice.id,
+        source_mode="on_demand",
+        created_by_user_id=alice.id,
+    )
+
+    assert saved[0].title == "Deploy the backend server"

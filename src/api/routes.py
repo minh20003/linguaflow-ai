@@ -194,6 +194,7 @@ from src.services.connection_manager import ConnectionManager
 from src.services.conversation_intelligence import ConversationIntelligenceService
 from src.services.correction_log import schedule_correction_record
 from src.services.customization import resolve_conversation_profile
+from src.services.display_language import in_interface_language
 from src.services.email import (
     EmailDeliveryError,
     send_password_reset_email,
@@ -291,6 +292,13 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ) -> PendingRegisterResponse:
     """Start registration by sending an OTP; the account is created after verification."""
+    # The interface language for an account that does not exist yet. The
+    # registration form offers one language, and it becomes both settings;
+    # naming it here keeps the two `PendingRegistration` builds and the OTP
+    # email from drifting apart, which is how the resend already ended up
+    # reading a different field from the first send.
+    pending_interface_language = request.preferred_language
+
     duplicate = await db.execute(
         select(User).where((User.email == request.email) | (User.username == request.username))
     )
@@ -331,7 +339,7 @@ async def register(
                 display_name=display_name,
                 password_hash=password_hash,
                 preferred_language=request.preferred_language,
-                interface_language=request.preferred_language,
+                interface_language=pending_interface_language,
                 otp_hash=otp_hash,
                 attempts=0,
                 expires_at=now + timedelta(minutes=5),
@@ -388,7 +396,7 @@ async def register(
             display_name=display_name,
             password_hash=password_hash,
             preferred_language=request.preferred_language,
-            interface_language=request.preferred_language,
+            interface_language=pending_interface_language,
             otp_hash=otp_hash,
             expires_at=now + timedelta(minutes=5),
             attempts=0,
@@ -431,7 +439,13 @@ async def register(
         await send_registration_otp_email(
             to_email=request.email,
             otp=otp,
-            language=request.preferred_language,
+            # System email follows the interface language, like every other
+            # notification. At first registration there is no account yet and
+            # the form offers only one language, which line 392 also stores as
+            # the interface language -- so this is that value, named for what it
+            # is rather than for where it came from. The resend path reads the
+            # stored `interface_language` and now agrees with this one.
+            language=pending_interface_language,
         )
     except EmailDeliveryError as exc:
         logger.error("Email delivery failed for pending registration %s: %s", pending_id, type(exc).__name__)
@@ -1218,7 +1232,24 @@ async def list_calendar_events(
         starts_before=starts_before,
         include_cancelled=include_cancelled,
     )
-    return [CalendarEventResponse.model_validate(event) for event in events]
+    # Same reason as the task inbox: the calendar screen is chrome, and a title
+    # stored in the translation language would be the only thing on it reading
+    # in another language.
+    rendered = []
+    for event in events:
+        row = CalendarEventResponse.model_validate(event)
+        rendered.append(
+            row.model_copy(
+                update={
+                    "title": await in_interface_language(
+                        row.title,
+                        stored_language=current_user.preferred_language,
+                        interface_language=current_user.interface_language,
+                    )
+                }
+            )
+        )
+    return rendered
 
 
 @router.post(
@@ -2726,7 +2757,32 @@ async def list_conversation_proposals(
     service = ActionProposalService(db)
     try:
         proposals = await service.list_for_owner(current_user.id, status_filter, conversation_id)
-        return [ActionProposalResponse.model_validate(p) for p in proposals]
+        # The inbox is chrome, so its rows read in the interface language even
+        # though the title was stored in the owner's translation language --
+        # which is the right language for the card in the chat thread, beside
+        # the message it came from, and the wrong one for a screen whose labels
+        # are all in the other setting. Does nothing when the two agree, which
+        # is the usual case.
+        rendered = []
+        for proposal in proposals:
+            row = ActionProposalResponse.model_validate(proposal)
+            rendered.append(
+                row.model_copy(
+                    update={
+                        "title": await in_interface_language(
+                            row.title,
+                            stored_language=current_user.preferred_language,
+                            interface_language=current_user.interface_language,
+                        ),
+                        "details": await in_interface_language(
+                            row.details,
+                            stored_language=current_user.preferred_language,
+                            interface_language=current_user.interface_language,
+                        ),
+                    }
+                )
+            )
+        return rendered
     except ConversationMembershipError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -43,16 +43,43 @@ logger = logging.getLogger(__name__)
 DEFAULT_SCAN_SECONDS = 60
 
 
-def _reminder_text(event: Any) -> str:
+# What the reminder says, per language. It lands in the person's chat thread
+# beside the appointment it is about, and `calendar_events.title` is already
+# stored in that person's translation language -- so a Vietnamese sentence
+# wrapped around an English title, which is what this was for every account,
+# read as two voices. English rather than Vietnamese is the last resort, as
+# everywhere else.
+_REMINDER_PHRASES: dict[str, tuple[str, str]] = {
+    "en": ("Reminder: \"{title}\" starts at {when}.", " Location: {location}."),
+    "vi": ("Nhắc bạn: \"{title}\" bắt đầu lúc {when}.", " Địa điểm: {location}."),
+    "ja": ("リマインダー：「{title}」は {when} に始まります。", " 場所: {location}。"),
+    "ko": ("알림: \"{title}\" 일정이 {when}에 시작합니다.", " 장소: {location}."),
+    "zh": ("提醒：“{title}” 将于 {when} 开始。", " 地点：{location}。"),
+    "es": ("Recordatorio: \"{title}\" empieza a las {when}.", " Lugar: {location}."),
+    "fr": ("Rappel : « {title} » commence à {when}.", " Lieu : {location}."),
+    "de": ("Erinnerung: \"{title}\" beginnt um {when}.", " Ort: {location}."),
+    "th": ("เตือนความจำ: \"{title}\" เริ่มเวลา {when}", " สถานที่: {location}"),
+    "id": ("Pengingat: \"{title}\" dimulai pukul {when}.", " Lokasi: {location}."),
+    "pt": ("Lembrete: \"{title}\" começa às {when}.", " Local: {location}."),
+    "ru": ("Напоминание: «{title}» начнётся в {when}.", " Место: {location}."),
+    "ar": ("تذكير: \"{title}\" يبدأ في {when}.", " المكان: {location}."),
+    "hi": ("रिमाइंडर: \"{title}\" {when} बजे शुरू होगा।", " स्थान: {location}।"),
+}
+
+
+def _reminder_text(event: Any, language: str | None = None) -> str:
     """The sentence the assistant says when a reminder falls due.
 
     Plain text with no Markdown, for the reason the answering prompt gives: the
     chat shows it verbatim.
     """
     when = event.starts_at.strftime("%H:%M %d/%m/%Y")
-    line = f"Nhắc bạn: \"{event.title}\" bắt đầu lúc {when}."
+    sentence, place = _REMINDER_PHRASES.get(
+        (language or "").lower(), _REMINDER_PHRASES["en"]
+    )
+    line = sentence.format(title=event.title, when=when)
     if event.location:
-        line += f" Địa điểm: {event.location}."
+        line += place.format(location=event.location)
     return line
 
 
@@ -74,14 +101,23 @@ async def _post_reminder_message(
     -- the row was claimed before anything was sent -- so a failure here costs
     one message in a thread, and must not take down the scan behind it.
     """
+    from sqlalchemy import select
+
+    from src.database.models import User
     from src.schemas.chat import MessageReceivedEvent, RealtimeMessage
     from src.services.chat import ChatService
 
     try:
         async with factory() as session:
+            # The reader's translation language, because this lands in their
+            # chat thread beside the appointment, and `event.title` is already
+            # stored in it.
+            language = await session.scalar(
+                select(User.preferred_language).where(User.id == user_id)
+            )
             posted = await ChatService(session).post_assistant_notice(
                 user_id=user_id,
-                text=_reminder_text(event),
+                text=_reminder_text(event, language),
                 idempotency_key=f"reminder:{reminder_id}",
             )
             if posted is None:

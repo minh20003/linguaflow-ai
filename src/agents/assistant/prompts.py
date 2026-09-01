@@ -19,6 +19,8 @@ answer (ADR-40).
 
 from __future__ import annotations
 
+from typing import Literal
+
 PLANNER_SYSTEM_PROMPT = """\
 # Role
 You are the planning stage of an assistant embedded in a chat application. You
@@ -165,8 +167,13 @@ holds the answer, give it, and if the observations are empty say that nothing
 was found -- which is a different sentence and a true one.
 
 # Task
-Write the answer in the same language the question was asked in. Be short —
-two or three sentences unless the question genuinely needs more.
+Write the answer in the same language the question was asked in. Not the
+reader's configured translation language: somebody whose setting is English who
+types a question in Vietnamese has chosen Vietnamese by typing it, and answering
+them in English because of a setting they made last week is the wrong reading of
+what they wanted.
+
+Be short -- two or three sentences unless the question genuinely needs more.
 
 # Constraints
 - Use only what is inside the <observation> tags. Not your own knowledge, not
@@ -216,3 +223,135 @@ def build_answer_user_prompt(*, request_text: str, observations: list[dict]) -> 
             f'status="{status}">\n{observation.get("summary", "")}\n</observation>'
         )
     return "\n\n".join(blocks)
+
+
+# --- Fixed replies -----------------------------------------------------------
+#
+# What the graph says when there is no model output to say it with: a missing
+# permission, an executed action, proposals awaiting a decision, a failure, and
+# the empty prompt. They were Vietnamese literals inline, which meant an English
+# or Japanese reader of a translation product was answered in Vietnamese by the
+# one component that should never do that.
+#
+# A table rather than a call to the model: these are the paths taken *because*
+# the model produced nothing usable, so they cannot depend on it. The fourteen
+# languages are the ones the interface already offers in
+# `frontend/src/features/chat/i18n.ts`; anything else falls back to English,
+# which is a defensible default for a reader the product knows nothing about in
+# a way that Vietnamese is not.
+
+FixedReply = Literal[
+    "missing_consent", "executed", "proposals_pending", "run_failed", "no_request"
+]
+
+_FIXED_REPLIES: dict[str, dict[FixedReply, str]] = {
+    "en": {
+        "missing_consent": "I need your permission first. Turn on the matching setting under Settings -> Assistant ({scope}), then ask me again.",
+        "executed": "Added to your calendar: {titles}.",
+        "proposals_pending": "I found {count} thing(s) to do in this conversation. Have a look and approve them when you are ready.",
+        "run_failed": "I could not handle that just now. Try again, or tell me more precisely what you need.",
+        "no_request": "What would you like me to help with in this conversation?",
+    },
+    "vi": {
+        "missing_consent": "Mình cần bạn cho phép trước đã. Hãy bật quyền tương ứng trong phần Cài đặt → Trợ lý ({scope}), rồi nhờ mình lại nhé.",
+        "executed": "Đã thêm vào lịch của bạn: {titles}.",
+        "proposals_pending": "Mình tìm thấy {count} việc cần làm trong hội thoại này. Bạn xem lại rồi duyệt giúp mình nhé.",
+        "run_failed": "Mình chưa xử lý được yêu cầu này ngay lúc này. Bạn thử lại, hoặc nói rõ hơn điều bạn muốn mình hỗ trợ.",
+        "no_request": "Bạn muốn mình hỗ trợ điều gì trong cuộc trò chuyện này?",
+    },
+    "ja": {
+        "missing_consent": "先に許可が必要です。設定 → アシスタント（{scope}）で該当の権限をオンにしてから、もう一度お声がけください。",
+        "executed": "カレンダーに追加しました: {titles}。",
+        "proposals_pending": "この会話から{count}件のタスクを見つけました。確認して承認してください。",
+        "run_failed": "今回はうまく処理できませんでした。もう一度お試しいただくか、ご要望をもう少し具体的にお知らせください。",
+        "no_request": "この会話について、どのようなお手伝いをしましょうか。",
+    },
+    "ko": {
+        "missing_consent": "먼저 권한이 필요합니다. 설정 → 어시스턴트({scope})에서 해당 권한을 켠 뒤 다시 말씀해 주세요.",
+        "executed": "캘린더에 추가했습니다: {titles}.",
+        "proposals_pending": "이 대화에서 할 일 {count}건을 찾았습니다. 확인 후 승인해 주세요.",
+        "run_failed": "지금은 처리하지 못했습니다. 다시 시도하시거나 원하시는 바를 조금 더 구체적으로 알려 주세요.",
+        "no_request": "이 대화에서 무엇을 도와드릴까요?",
+    },
+    "zh": {
+        "missing_consent": "需要先获得你的许可。请在“设置 → 助理（{scope}）”中打开相应权限，然后再叫我。",
+        "executed": "已添加到你的日历：{titles}。",
+        "proposals_pending": "我在这个对话中找到 {count} 项待办。请查看并确认。",
+        "run_failed": "这次没能处理成功。请再试一次，或者更具体地告诉我你的需求。",
+        "no_request": "在这个对话中，需要我帮你做什么？",
+    },
+    "es": {
+        "missing_consent": "Primero necesito tu permiso. Activa el ajuste correspondiente en Configuración -> Asistente ({scope}) y vuelve a pedírmelo.",
+        "executed": "Añadido a tu calendario: {titles}.",
+        "proposals_pending": "Encontré {count} tarea(s) en esta conversación. Revísalas y apruébalas cuando quieras.",
+        "run_failed": "No he podido gestionarlo ahora mismo. Inténtalo de nuevo o dime con más detalle qué necesitas.",
+        "no_request": "¿En qué puedo ayudarte en esta conversación?",
+    },
+    "fr": {
+        "missing_consent": "J'ai d'abord besoin de votre autorisation. Activez le réglage correspondant dans Paramètres -> Assistant ({scope}), puis redemandez-moi.",
+        "executed": "Ajouté à votre agenda : {titles}.",
+        "proposals_pending": "J'ai trouvé {count} tâche(s) dans cette conversation. Relisez-les et validez-les quand vous voulez.",
+        "run_failed": "Je n'ai pas pu traiter cette demande pour le moment. Réessayez, ou précisez ce dont vous avez besoin.",
+        "no_request": "Que puis-je faire pour vous dans cette conversation ?",
+    },
+    "de": {
+        "missing_consent": "Ich brauche zuerst deine Erlaubnis. Aktiviere die passende Einstellung unter Einstellungen -> Assistent ({scope}) und frag mich dann erneut.",
+        "executed": "Zu deinem Kalender hinzugefügt: {titles}.",
+        "proposals_pending": "Ich habe {count} Aufgabe(n) in dieser Unterhaltung gefunden. Sieh sie dir an und bestätige sie.",
+        "run_failed": "Das konnte ich gerade nicht bearbeiten. Versuch es noch einmal oder sag mir genauer, was du brauchst.",
+        "no_request": "Womit kann ich dir in dieser Unterhaltung helfen?",
+    },
+    "th": {
+        "missing_consent": "ฉันต้องขออนุญาตก่อน กรุณาเปิดสิทธิ์ที่เกี่ยวข้องใน การตั้งค่า -> ผู้ช่วย ({scope}) แล้วเรียกฉันอีกครั้ง",
+        "executed": "เพิ่มลงในปฏิทินของคุณแล้ว: {titles}",
+        "proposals_pending": "ฉันพบงาน {count} รายการในการสนทนานี้ กรุณาตรวจสอบและอนุมัติ",
+        "run_failed": "ตอนนี้ฉันยังจัดการคำขอนี้ไม่ได้ กรุณาลองอีกครั้ง หรือบอกให้ชัดเจนขึ้นว่าต้องการอะไร",
+        "no_request": "ในการสนทนานี้ให้ฉันช่วยอะไรดี",
+    },
+    "id": {
+        "missing_consent": "Saya perlu izin Anda dulu. Aktifkan pengaturan terkait di Pengaturan -> Asisten ({scope}), lalu minta saya lagi.",
+        "executed": "Ditambahkan ke kalender Anda: {titles}.",
+        "proposals_pending": "Saya menemukan {count} tugas dalam percakapan ini. Silakan tinjau dan setujui.",
+        "run_failed": "Saya belum bisa memproses permintaan ini sekarang. Coba lagi, atau jelaskan lebih rinci kebutuhan Anda.",
+        "no_request": "Ada yang bisa saya bantu dalam percakapan ini?",
+    },
+    "pt": {
+        "missing_consent": "Preciso da sua permissão primeiro. Ative a configuração correspondente em Configurações -> Assistente ({scope}) e peça de novo.",
+        "executed": "Adicionado ao seu calendário: {titles}.",
+        "proposals_pending": "Encontrei {count} tarefa(s) nesta conversa. Revise e aprove quando quiser.",
+        "run_failed": "Não consegui tratar isso agora. Tente novamente ou diga com mais detalhe o que precisa.",
+        "no_request": "Como posso ajudar nesta conversa?",
+    },
+    "ru": {
+        "missing_consent": "Сначала нужно ваше разрешение. Включите соответствующую настройку в «Настройки -> Ассистент ({scope})» и попросите меня снова.",
+        "executed": "Добавлено в ваш календарь: {titles}.",
+        "proposals_pending": "Я нашёл {count} задач(и) в этой беседе. Просмотрите и подтвердите их.",
+        "run_failed": "Сейчас не получилось выполнить запрос. Попробуйте ещё раз или уточните, что именно вам нужно.",
+        "no_request": "Чем помочь вам в этой беседе?",
+    },
+    "ar": {
+        "missing_consent": "أحتاج إذنك أولاً. فعّل الإعداد المناسب في الإعدادات -> المساعد ({scope})، ثم اطلب مني مجددًا.",
+        "executed": "تمت الإضافة إلى تقويمك: {titles}.",
+        "proposals_pending": "وجدت {count} مهمة في هذه المحادثة. راجعها ووافق عليها.",
+        "run_failed": "لم أتمكن من تنفيذ الطلب الآن. حاول مرة أخرى أو وضّح ما تحتاجه.",
+        "no_request": "كيف يمكنني مساعدتك في هذه المحادثة؟",
+    },
+    "hi": {
+        "missing_consent": "पहले आपकी अनुमति चाहिए। सेटिंग्स -> सहायक ({scope}) में संबंधित अनुमति चालू करें, फिर मुझसे दोबारा कहें।",
+        "executed": "आपके कैलेंडर में जोड़ दिया गया: {titles}।",
+        "proposals_pending": "मुझे इस बातचीत में {count} काम मिले हैं। कृपया देखकर स्वीकृत करें।",
+        "run_failed": "अभी यह अनुरोध पूरा नहीं कर सका। दोबारा कोशिश करें, या अपनी ज़रूरत और स्पष्ट बताएं।",
+        "no_request": "इस बातचीत में मैं आपकी क्या मदद करूँ?",
+    },
+}
+
+
+def fixed_reply(language: str | None, key: FixedReply, **fields: object) -> str:
+    """One of the graph's own sentences, in the reader's language.
+
+    Falls back to English rather than to Vietnamese: an unrecognised setting
+    says the product does not know who is reading, and Vietnamese is a guess
+    about them while English is a neutral default.
+    """
+    table = _FIXED_REPLIES.get((language or "").lower()) or _FIXED_REPLIES["en"]
+    return table[key].format(**fields)
