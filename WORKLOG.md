@@ -179,4 +179,24 @@ BOM nằm trước `#!` khiến git không nhận ra shebang → pre-push hook k
 
 ---
 
+## 17/08/2026 - 31/08/2026 — Đóng góp trọng yếu của Nguyễn Ngọc Thuận
+
+> Chỉ ghi các commit có thay đổi chức năng hoặc ảnh hưởng kiến trúc lâu dài; không liệt kê commit merge, revert, đồng bộ nhánh hoặc chỉnh sửa nhỏ.
+
+| Ngày | Công việc | Trạng thái | Kết quả bàn giao | Thời lượng |
+|---|---|---|---|---|
+| 17/08 | Chuẩn hoá proxy API/WebSocket, tinh chỉnh dịch chat và điều khiển tài khoản | Hoàn thành | commit `b5ebe7a`, `4f5f0f8` | — |
+| 18/08 | Bản địa hoá giao diện chat và hỗ trợ forward message có provenance | Hoàn thành | commit `af2fe69` | — |
+| 19/08 | Bổ sung Google Sign-In đã xác thực, gồm migration, backend API, UI và kiểm thử | Hoàn thành | commit `41733ff` | — |
+| 21/08 | Tái cấu trúc frontend chat/auth theo component dùng chung | Hoàn thành | commit `858c947` | — |
+| 21/08 | Tích hợp Supabase Storage cho tệp đính kèm, giữ kiểm tra truy cập theo hội thoại | Hoàn thành | commit `b4e6e56` | — |
+| 21/08 | Bổ sung quản trị nhóm ở backend và frontend, cùng cơ chế session bền vững | Hoàn thành | commit `352df10`, `d2f8471` | — |
+| 24/08 | Lưu thay đổi glossary qua backend và cải thiện dữ liệu metric liên quan | Hoàn thành | commit `f236d91` | — |
+| 26/08 | Tích hợp live translation, dữ liệu quản trị và telemetry cho admin/chat | Hoàn thành | commit `3c61fd1`, `dfe2b1d` | — |
+| 28/08 | Hoàn thiện personal calendar, Task Inbox và private assistant messages/visibility | Hoàn thành | commit `d0a6290` | — |
+| 29/08 | Làm mới UI calendar, admin, auth; tinh chỉnh Task Inbox và assistant settings | Hoàn thành | commit `933b186`, `df06385` | — |
+| 31/08 | Bổ sung tài liệu runtime reliability và feature operations | Hoàn thành | commit `8439a10` | — |
+
+**Tổng kết:** Các commit trên tập trung vào nền tảng trải nghiệm người dùng, xác thực/tích hợp, quản trị dữ liệu dịch, calendar/task inbox và tài liệu vận hành. Chi tiết commit không trọng yếu hoặc commit tích hợp được truy vết trực tiếp trong Git history.
+
 <!-- Bổ sung theo mẫu trên cho mỗi ngày làm việc -->

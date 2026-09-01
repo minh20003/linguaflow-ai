@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LanguageCode } from "../types";
+import { tx } from "../i18n";
 import type { ApiCalendarEvent, ApiConversation, ApiUser } from "../api/chat-api";
 import { GoogleCalendarControls } from "./GoogleCalendarControls";
 import {
@@ -14,7 +16,7 @@ import {
 import {
   Bell, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft,
   ChevronRight, Clock, Clock3, Copy, FileText,
-  MapPin, Pencil, Plus, RefreshCw, RotateCw, Search, Trash2,
+  MapPin, Pencil, Plus, RotateCw, Search, Trash2,
   Users, Video, X,
 } from "lucide-react";
 
@@ -573,6 +575,7 @@ interface DragTimeSelection {
 
 interface PersonalCalendarProps {
   token: string;
+  language: LanguageCode;
   onNotify?: (title: string, detail?: string, tone?: "success" | "warning") => void;
   /** Bumped by the parent when a socket event says the calendar moved. */
   refreshToken?: number;
@@ -580,6 +583,7 @@ interface PersonalCalendarProps {
 
 export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
   token,
+  language,
   onNotify,
   refreshToken = 0,
 }) => {
@@ -587,6 +591,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
   const [mode, setMode] = useState<CalendarMode>("week");
   const [cursor, setCursor] = useState(() => new Date());
   const [query, setQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [newItemKind, setNewItemKind] = useState<EventKind>("event");
@@ -880,16 +885,16 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
   const currentPeriod = useMemo(() => {
     if (mode === "day") {
-      return formatVietnameseDate(cursor, true);
+      return cursor.toLocaleDateString(language, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
     }
     if (mode === "week") {
-      return `${weekStart.toLocaleDateString("vi-VN", { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString("vi-VN", { day: "numeric", month: "short", year: "numeric" })}`;
+      return `${weekStart.toLocaleDateString(language, { day: "numeric", month: "short" })} – ${weekDays[6].toLocaleDateString(language, { day: "numeric", month: "short", year: "numeric" })}`;
     }
     if (mode === "month") {
-      return `Tháng ${cursor.getMonth() + 1} năm ${cursor.getFullYear()}`;
+      return cursor.toLocaleDateString(language, { month: "long", year: "numeric" });
     }
-    return `Lịch biểu (${cursor.toLocaleDateString("vi-VN", { month: "long", year: "numeric" })})`;
-  }, [mode, cursor, weekStart, weekDays]);
+    return `${tx(language, "Schedule")} (${cursor.toLocaleDateString(language, { month: "long", year: "numeric" })})`;
+  }, [mode, cursor, weekStart, weekDays, language]);
 
   return (
     <section className="flex h-screen min-w-0 flex-1 bg-[#F8FAFD] text-[#1F1F1F] select-none dark:bg-[#131314] dark:text-[#E3E3E3]" aria-label="Lịch Google Calendar">
@@ -900,12 +905,12 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
           {/* Left: Calendar identity, Today, Navigation */}
           <div className="flex items-center gap-1.5 sm:gap-3">
             {/* Calendar logo */}
-            <div className="flex items-center gap-2.5 mr-2">
-              <div className="flex h-9 w-9 items-center justify-center text-[#2563EB] dark:text-[#A8C7FA]">
-                <CalendarDays className="h-5 w-5" />
+            <div className="mr-2 flex items-center gap-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#E8F0FE] text-[#1A73E8] shadow-sm dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">
+                <CalendarDays className="h-6 w-6" strokeWidth={2.25} />
               </div>
               <span className="hidden text-[22px] font-normal tracking-tight text-[#3C4043] dark:text-[#E3E3E3] md:inline">
-                Lịch
+                {tx(language, "Calendar")}
               </span>
             </div>
 
@@ -914,7 +919,7 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
               onClick={() => setCursor(new Date())}
               className="rounded-full border border-[#747775]/50 px-4 py-1.5 text-sm font-medium text-[#1F1F1F] transition-all hover:bg-[#F1F3F4] active:bg-[#E8EAED] dark:border-[#5F6368] dark:text-[#E3E3E3] dark:hover:bg-[#282A2C]"
             >
-              Hôm nay
+              {tx(language, "Today")}
             </button>
 
             {/* Chevron Prev / Next */}
@@ -943,51 +948,54 @@ export const PersonalCalendar: React.FC<PersonalCalendarProps> = ({
 
           {/* Right: Search & View Mode Switcher */}
           <div className="flex items-center gap-2">
-            {/* Instant Search Bar */}
-            <div className="relative hidden md:block">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#747775]" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Tìm kiếm sự kiện, việc cần làm..."
-                className="h-10 w-48 rounded-full border border-[#DADCE0] bg-[#F1F3F4] pl-9 pr-3 text-xs text-[#1F1F1F] outline-none transition-all focus:w-64 focus:border-[#1A73E8] focus:bg-white dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-white dark:focus:bg-[#1E1F20]"
-              />
-              {query && (
+            <GoogleCalendarControls
+              token={token}
+              onSynced={() => void reload()}
+              onNotify={onNotify}
+            />
+            {showSearch ? (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#747775]" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onBlur={() => { if (!query) setShowSearch(false); }}
+                  placeholder="Tìm kiếm sự kiện, việc cần làm..."
+                  className="h-10 w-52 rounded-full border border-[#DADCE0] bg-[#F1F3F4] pl-9 pr-8 text-xs text-[#1F1F1F] outline-none transition-all focus:w-64 focus:border-[#1A73E8] focus:bg-white dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-white dark:focus:bg-[#1E1F20]"
+                />
                 <button
-                  onClick={() => setQuery("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-[#747775] hover:bg-[#E0E0E0] dark:hover:bg-[#444746]"
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => { setQuery(""); setShowSearch(false); }}
+                  aria-label="Đóng tìm kiếm"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#747775] hover:bg-[#E0E0E0] dark:hover:bg-[#444746]"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
-              )}
-            </div>
-
-            {/* View Mode Switcher (Day / Week / Month / Schedule) */}
-            <div className="flex rounded-lg border border-[#747775]/40 bg-white p-0.5 shadow-2xs dark:border-[#5F6368] dark:bg-[#2D2E30]">
-              {(["day", "week", "month", "schedule"] as CalendarMode[]).map((item) => (
-                <button
-                  key={item}
-                  onClick={() => setMode(item)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-all ${
-                    mode === item
-                      ? "bg-[#D3E3FD] text-[#0B57D0] shadow-xs dark:bg-[#004A77] dark:text-[#C2E7FF]"
-                      : "text-[#444746] hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
-                  }`}
-                >
-                  {item === "day" ? "Ngày" : item === "week" ? "Tuần" : item === "month" ? "Tháng" : "Lịch biểu"}
-                </button>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setNow(new Date())}
-              aria-label="Làm mới lịch"
-              title="Làm mới"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowSearch(true)}
+                aria-label="Tìm kiếm lịch"
+                title="Tìm kiếm"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#F1F3F4] dark:text-[#C4C7C5] dark:hover:bg-[#282A2C]"
+              >
+                <Search className="h-5 w-5" />
+              </button>
+            )}
+            <select
+              value={mode}
+              onChange={(event) => setMode(event.target.value as CalendarMode)}
+              aria-label="Chế độ xem lịch"
+              className="h-9 rounded-lg border border-[#747775]/40 bg-white px-3 text-xs font-medium text-[#444746] outline-none transition-colors hover:bg-[#F1F3F4] focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#C4C7C5] dark:hover:bg-[#36373A]"
             >
-              <RefreshCw className="h-4 w-4" />
-            </button>
+              <option value="day">{tx(language, "Day")}</option>
+              <option value="week">{tx(language, "Week")}</option>
+              <option value="month">{tx(language, "Month")}</option>
+              <option value="schedule">{tx(language, "Schedule")}</option>
+            </select>
           </div>
         </header>
 
@@ -2255,14 +2263,16 @@ interface FullEventModalProps {
   initialEndTime?: string;
   initialTitle?: string;
   initialLocation?: string;
+  initialNote?: string;
   initialColorId?: string;
   initialIsAllDay?: boolean;
+  submitLabel?: string;
   onDraftChange?: (draft: { date: string; startTime: string; endTime: string; isAllDay: boolean }) => void;
   onClose: () => void;
   onSubmit: (task: CalendarTask) => void;
 }
 
-const FullEventModal: React.FC<FullEventModalProps> = ({
+export const FullEventModal: React.FC<FullEventModalProps> = ({
   token,
   popoverAnchor = null,
   initialTask,
@@ -2272,8 +2282,10 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   initialEndTime = "10:00",
   initialTitle = "",
   initialLocation = "",
+  initialNote = "",
   initialColorId,
   initialIsAllDay = false,
+  submitLabel,
   onDraftChange,
   onClose,
   onSubmit,
@@ -2309,7 +2321,9 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   const [suggestedUsers, setSuggestedUsers] = useState<ApiUser[]>([]);
   const [isSearchingGuests, setIsSearchingGuests] = useState(false);
   const [groups, setGroups] = useState<ApiConversation[]>([]);
-  const [showGroupPicker, setShowGroupPicker] = useState(false);
+  const [inviteMode, setInviteMode] = useState<"person" | "group">("person");
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [groupError, setGroupError] = useState("");
 
   // Màu sắc (11 màu chuẩn Google Calendar)
@@ -2338,7 +2352,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
   );
 
   // Ghi chú / Mô tả
-  const [note, setNote] = useState(initialTask?.note ?? "");
+  const [note, setNote] = useState(initialTask?.note ?? initialNote);
 
   useEffect(() => {
     onDraftChange?.({ date, startTime, endTime, isAllDay });
@@ -2429,18 +2443,23 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     setAttendees((current) => current.filter((attendee) => attendee.email !== email));
   };
 
-  const handleToggleGroupPicker = async () => {
-    if (showGroupPicker) {
-      setShowGroupPicker(false);
-      return;
-    }
+  const handleInviteModeChange = async (nextMode: "person" | "group") => {
+    setInviteMode(nextMode);
     setGroupError("");
+    if (nextMode === "person") return;
+    setIsLoadingGroups(true);
     try {
       const conversations = await listConversations(token);
-      setGroups(conversations.filter((conversation) => conversation.type === "group"));
-      setShowGroupPicker(true);
+      setGroups(
+        conversations.filter(
+          (conversation) => conversation.type === "group" && conversation.members.length > 2,
+        ),
+      );
+      setSelectedGroupId("");
     } catch {
       setGroupError("Không tải được danh sách nhóm.");
+    } finally {
+      setIsLoadingGroups(false);
     }
   };
 
@@ -2460,7 +2479,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
     }
     setAttendees((current) => [...current, ...membersToAdd]);
     setGroupError("");
-    setShowGroupPicker(false);
+    setSelectedGroupId("");
   };
 
   const updateReminder = (id: string, changes: Partial<EventReminder>) => {
@@ -2700,78 +2719,68 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <label className="text-xs font-medium text-[#3C4043] dark:text-[#C4C7C5]">
-                  <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm email người tham gia</span>
+                  <span className="flex items-center gap-1"><Users className="h-3.5 w-3.5 text-[#1A73E8]" />Thêm người tham gia</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => void handleToggleGroupPicker()}
-                  aria-expanded={showGroupPicker}
-                  className="shrink-0 rounded-lg border border-[#D2E3FC] bg-[#E8F0FE] px-2.5 py-1.5 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] dark:border-[#1A73E8]/40 dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
-                >
-                  + Thêm nhóm
-                </button>
               </div>
-              {showGroupPicker && (
-                <div className="overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-sm dark:border-[#5F6368] dark:bg-[#2D2E30]">
-                  {groups.length === 0 ? (
-                    <p className="px-2.5 py-2 text-xs text-[#70757A]">Chưa có nhóm trò chuyện.</p>
-                  ) : (
-                    groups.map((group) => (
-                      <button
-                        key={group.id}
-                        type="button"
-                        onClick={() => handleAddGroup(group)}
-                        className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
-                      >
-                        <span className="min-w-0 truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{group.title || "Nhóm chưa đặt tên"}</span>
-                        <span className="shrink-0 text-[11px] text-[#70757A]">{group.members.length} người</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
               {groupError && <p className="text-[11px] text-red-600 dark:text-red-300">{groupError}</p>}
               <div className="flex gap-2">
-                <div className="relative min-w-0 flex-1">
-                <input
-                  type="email"
-                  value={guestEmail}
-                  onChange={(e) => {
-                    setGuestEmail(e.target.value);
-                    if (guestError) setGuestError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAddGuest();
-                    }
-                  }}
-                  placeholder="Nhập email người tham gia"
-                  aria-invalid={Boolean(guestError)}
-                  aria-describedby={guestError ? "attendee-email-error" : undefined}
-                  className={`w-full rounded-lg border bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:bg-[#2D2E30] dark:text-[#E3E3E3] ${guestError ? "border-red-500" : "border-[#DADCE0] dark:border-[#5F6368]"}`}
-                />
-                {(isSearchingGuests || suggestedUsers.length > 0) && (
-                  <div className="absolute inset-x-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
-                    {isSearchingGuests && <p className="px-2.5 py-2 text-[11px] text-[#70757A]">Đang tìm liên hệ…</p>}
-                    {suggestedUsers.map((user) => (
-                      <button
-                        key={user.id}
-                        type="button"
-                        onClick={() => handleAddGuest(undefined, user.email)}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]"
-                      >
-                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#E8F0FE] text-[10px] font-bold text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">{(user.display_name || user.username || user.email).slice(0, 1).toUpperCase()}</span>
-                        <span className="min-w-0"><span className="block truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{user.display_name || user.username}</span><span className="block truncate text-[11px] text-[#70757A]">{user.email}</span></span>
-                      </button>
-                    ))}
+                <select
+                  value={inviteMode}
+                  onChange={(event) => void handleInviteModeChange(event.target.value as "person" | "group")}
+                  aria-label="Loại người tham gia"
+                  className="shrink-0 rounded-lg border border-[#DADCE0] bg-white px-2 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]"
+                >
+                  <option value="person">Thêm người</option>
+                  <option value="group">Thêm nhóm</option>
+                </select>
+                {inviteMode === "person" ? (
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      type="email"
+                      value={guestEmail}
+                      onChange={(e) => {
+                        setGuestEmail(e.target.value);
+                        if (guestError) setGuestError("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddGuest();
+                        }
+                      }}
+                      placeholder="Nhập email người tham gia"
+                      aria-invalid={Boolean(guestError)}
+                      aria-describedby={guestError ? "attendee-email-error" : undefined}
+                      className={`w-full rounded-lg border bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] dark:bg-[#2D2E30] dark:text-[#E3E3E3] ${guestError ? "border-red-500" : "border-[#DADCE0] dark:border-[#5F6368]"}`}
+                    />
+                    {(isSearchingGuests || suggestedUsers.length > 0) && (
+                      <div className="absolute inset-x-0 top-[calc(100%+0.35rem)] z-20 overflow-hidden rounded-xl border border-[#DADCE0] bg-white p-1 shadow-lg dark:border-[#5F6368] dark:bg-[#2D2E30]">
+                        {isSearchingGuests && <p className="px-2.5 py-2 text-[11px] text-[#70757A]">Đang tìm liên hệ…</p>}
+                        {suggestedUsers.map((user) => (
+                          <button key={user.id} type="button" onClick={() => handleAddGuest(undefined, user.email)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-[#F1F3F4] dark:hover:bg-[#36373A]">
+                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#E8F0FE] text-[10px] font-bold text-[#1A73E8] dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]">{(user.display_name || user.username || user.email).slice(0, 1).toUpperCase()}</span>
+                            <span className="min-w-0"><span className="block truncate text-xs font-medium text-[#1F1F1F] dark:text-[#E3E3E3]">{user.display_name || user.username}</span><span className="block truncate text-[11px] text-[#70757A]">{user.email}</span></span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  <select value={selectedGroupId} onChange={(event) => setSelectedGroupId(event.target.value)} disabled={isLoadingGroups} className="min-w-0 flex-1 rounded-lg border border-[#DADCE0] bg-white px-3 py-2 text-xs text-[#1F1F1F] outline-none focus:border-[#1A73E8] disabled:cursor-wait dark:border-[#5F6368] dark:bg-[#2D2E30] dark:text-[#E3E3E3]">
+                    <option value="">{isLoadingGroups ? "Đang tải nhóm…" : "Chọn nhóm chat"}</option>
+                    {groups.map((group) => <option key={group.id} value={group.id}>{group.title || "Nhóm chưa đặt tên"} · {group.members.length} người</option>)}
+                  </select>
                 )}
-                </div>
                 <button
                   type="button"
-                  onClick={() => handleAddGuest()}
-                  disabled={!guestEmail.trim()}
+                  onClick={() => {
+                    if (inviteMode === "person") handleAddGuest();
+                    else {
+                      const group = groups.find((item) => item.id === selectedGroupId);
+                      if (group) handleAddGroup(group);
+                    }
+                  }}
+                  disabled={inviteMode === "person" ? !guestEmail.trim() : !selectedGroupId || isLoadingGroups}
                   className="shrink-0 rounded-lg bg-[#E8F0FE] px-3.5 py-2 text-xs font-medium text-[#1A73E8] hover:bg-[#D2E3FC] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-[#1A73E8]/20 dark:text-[#A8C7FA]"
                 >
                   Thêm
@@ -2924,7 +2933,7 @@ const FullEventModal: React.FC<FullEventModalProps> = ({
             type="submit"
             className="rounded-full bg-[#1A73E8] px-6 py-2 text-xs font-medium text-white transition-all hover:bg-[#1557B0] shadow-sm active:scale-95"
           >
-            {initialTask ? "Lưu thay đổi" : "Lưu"}
+            {submitLabel ?? (initialTask ? "Lưu thay đổi" : "Lưu")}
           </button>
         </div>
       </form>

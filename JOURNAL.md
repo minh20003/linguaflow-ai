@@ -130,4 +130,121 @@ Tài liệu ghi nhận theo tuần: mục tiêu, kết quả đạt được, v�
 
 ---
 
-<!-- Bổ sung theo mẫu trên cho Tuần 4, 5, 6 -->
+## Tuần 4: 17/08/2026 - 23/08/2026 — Hoàn thiện nền tảng hội thoại, xác thực và agent
+
+### 4.1. Mục tiêu
+
+- [x] Hoàn thiện giao diện chat đa ngôn ngữ, đăng nhập và các thao tác hội thoại cốt lõi
+- [x] Hoàn thiện lớp dịch theo người đọc, glossary và đánh giá agent
+- [x] Bổ sung quản trị nhóm, tệp đính kèm, Google authentication và ổn định tích hợp nhánh
+
+### 4.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Chat và giao diện | Hoàn thiện bản địa hoá UI, chuyển tiếp tin nhắn, proxy API/WebSocket, cấu trúc component chat/auth dùng chung và các điều khiển tài khoản. |
+| Dịch và agent | Bổ sung dịch theo ngôn ngữ/vị thế người đọc, glossary có review queue, truy hồi ngữ cảnh, guardrail riêng tư, đánh giá retrieval/generation và tracing. |
+| Xác thực và nhóm | Hoàn thiện email OTP, Google authentication, Google Sign-In UI, quản trị nhóm, session handling và các migration liên quan. |
+| Calendar và tệp đính kèm | Tích hợp Supabase Storage có kiểm tra quyền; bổ sung lịch cá nhân, đề xuất được duyệt, reminder queue, REST calendar và luồng Google Calendar. |
+| Chất lượng và triển khai | Cải thiện khởi động production, cấu hình môi trường, test reconnect WebSocket, CI runner và tài liệu triển khai. |
+
+### 4.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| Nhiều feature branch cùng thay đổi frontend/chat và xác thực | Tách component theo feature, đồng bộ nhánh tích hợp và dùng migration/API contract làm mốc chung | Các luồng chat, auth và group có thể được merge mà không thay đổi ngầm hợp đồng dữ liệu |
+| Dịch theo ngữ cảnh dễ lộ thông tin hoặc áp nhầm bản dịch giữa người đọc | Gắn dữ liệu dịch với người đọc/vị thế, bổ sung guardrail, consent và kiểm thử đánh giá | Bản dịch hiển thị theo đúng phạm vi nhận; các trường hợp từ chối được ghi nhận rõ |
+| Storage ngoài database có nguy cơ làm lỏng quyền truy cập | Đặt kiểm tra xác thực và membership ở endpoint thay vì dựa vào URL file | File đính kèm giữ quyền truy cập theo hội thoại |
+
+### 4.4. Bài học rút ra
+
+1. Khi phát triển song song nhiều tính năng, migration, API contract và type frontend phải được xem như một đơn vị tích hợp.
+2. Tính năng AI cần được kiểm thử cả đúng ngữ cảnh và đúng quyền truy cập; độ chính xác đơn thuần không đủ.
+3. Cấu hình triển khai phải được kiểm chứng cùng với luồng người dùng, nhất là các provider xác thực và storage bên ngoài.
+
+### 4.5. Kế hoạch tuần tiếp theo
+
+- [x] Hoàn thiện admin realtime, telemetry và glossary workflow
+- [x] Mở rộng assistant, calendar/task inbox, voice và Google Calendar sync
+- [x] Tăng độ tin cậy CI/CD và chuẩn bị demo
+
+---
+
+## Tuần 5: 24/08/2026 - 30/08/2026 — Tích hợp sản phẩm, vận hành và demo readiness
+
+### 5.1. Mục tiêu
+
+- [x] Hoàn thiện các khoảng trống backend/frontend và dữ liệu quản trị
+- [x] Tích hợp calendar, task inbox, assistant consent/privacy và voice message
+- [x] Củng cố CI/CD, phát hành production và kiểm thử assistant
+
+### 5.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Admin và telemetry | Hoàn thiện feedback, glossary persistence, live translation, số liệu quản trị, chi phí theo model và dashboard admin. |
+| Assistant | Bổ sung consent theo scope, đề xuất có human gate, private assistant reply, retrieval/chunking/tools/evaluation, xử lý proposal thiếu thông tin và hành vi theo thời gian. |
+| Calendar và nhắc hẹn | Hoàn thiện REST calendar/reminder, đồng bộ hai chiều Google Calendar, bảo vệ token lưu trữ, personal calendar, task inbox và hành vi duyệt đề xuất. |
+| Voice và chat | Bổ sung Gemini STT, retry transcription, message voice, attachment access và các sửa lỗi UI/chat liên quan proposal. |
+| DevOps và kiểm thử | Hoàn thiện production workflow, self-hosted runner, test isolation, release transport, production readiness và kiểm thử assistant/retrieval. |
+
+### 5.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| Tích hợp assistant, calendar và UI trên nhiều nhánh dễ tạo xung đột hành vi | Giữ proposal là đối tượng có trạng thái rõ ràng, cập nhật contract và bổ sung kiểm thử theo từng điểm duyệt | Đề xuất, lịch và Task Inbox cùng dùng được nhưng không bỏ qua bước xác nhận của người dùng |
+| Provider AI/STT và local reranker có thể làm dịch vụ chậm hoặc dừng | Sửa retry, timeout, startup và fallback; cô lập kiểm thử agent | Luồng assistant/voice bền hơn khi provider hoặc local model lỗi |
+| Chuỗi phát hành có nhiều môi trường và runner | Chuẩn hoá CI/CD, rehearsal channel, kiểm tra runner và tài liệu deployment | Có đường phát hành `develop_v2` rõ ràng hơn và kiểm chứng được trước production |
+
+### 5.4. Bài học rút ra
+
+1. Tính năng assistant cần có điểm duyệt nghiệp vụ rõ ràng; không nên để model thực thi lịch hay công việc trực tiếp.
+2. Reliability cho AI không chỉ là retry: cần kiểm soát timeout, fallback, trạng thái xử lý và khả năng khởi động lại.
+3. CI/CD hiệu quả khi test được cô lập và môi trường phát hành có bước rehearsal, thay vì chỉ dựa vào một lần deploy thành công.
+
+### 5.5. Kế hoạch tuần tiếp theo
+
+- [x] Hoàn thiện tài liệu vận hành, demo script và presentation
+- [x] Rà soát biểu đạt thời gian, proposal và phạm vi dữ liệu assistant
+- [ ] Đưa các cải tiến reliability runtime qua review/commit riêng
+
+---
+
+## Tuần 6: 31/08/2026 - 06/09/2026 — Hoàn thiện tài liệu và rà soát reliability
+
+> Cập nhật đến ngày 01/09/2026.
+
+### 6.1. Mục tiêu
+
+- [x] Hoàn thiện tài liệu kỹ thuật, vận hành và bộ tài liệu demo
+- [x] Cải thiện assistant về ngôn ngữ thời gian, quyền riêng tư và phạm vi truy hồi
+- [x] Kiểm tra các cơ chế reliability runtime bằng kiểm thử tự động
+
+### 6.2. Kết quả đạt được
+
+| Hạng mục | Nội dung |
+|---|---|
+| Tài liệu | Bổ sung tài liệu vận hành runtime/feature operations, cập nhật contract/reconnect/README; bổ sung demo script, slide deck và script xây dựng presentation. |
+| Assistant | Cải thiện hiểu biểu đạt thời gian tự nhiên, gợi ý proposal theo múi giờ người nói, giữ mention/private chat trong đúng phạm vi và cho assistant private đọc ngữ cảnh tài khoản theo quyền. |
+| Reliability | Hoàn thiện kiểm thử cho rate limit, GZip, cursor pagination, translation cache, system health và circuit breaker; kết quả kiểm thử runtime hiện tại đạt 54/54. |
+| Môi trường | Kiểm tra Alembic revision local, bổ sung migration còn thiếu và xác nhận backend health endpoint hoạt động. |
+
+### 6.3. Vướng mắc và biện pháp xử lý
+
+| Vướng mắc | Biện pháp | Kết quả |
+|---|---|---|
+| API history có nguy cơ trả kiểu dữ liệu cũ khi dùng cursor pagination | Điều chỉnh nhánh trả response và kiểm thử phân trang theo cursor | Cursor pagination trả đúng envelope, không lặp hoặc bỏ sót message |
+| Database local có thể thiếu migration dù source đã cập nhật | Đối chiếu Alembic head, chạy migration và kiểm tra schema trước khi test luồng đăng nhập | Môi trường local khớp schema hiện hành |
+| Dịch vụ ngoài lỗi liên tiếp gây latency lớn | Bổ sung circuit breaker, cache và metric health để fail-fast/có thể quan sát | Cơ chế runtime có kiểm thử trạng thái lỗi và phục hồi |
+
+### 6.4. Bài học rút ra
+
+1. Tài liệu vận hành cần mô tả giới hạn thực thi thực tế, đặc biệt với state in-memory và triển khai single-process.
+2. Đối với phân trang, kiểm thử nhiều message cùng timestamp là cần thiết để phát hiện lỗi cursor composite.
+3. Việc kiểm tra schema phải là một bước trong quy trình chạy local, không chỉ là công việc khi deploy.
+
+### 6.5. Kế hoạch tuần tiếp theo
+
+- [ ] Commit và review độc lập các thay đổi runtime đang ở working tree
+- [ ] Kiểm tra E2E login, chat, calendar, OAuth và reminder trên môi trường deploy
+- [ ] Theo dõi health metrics sau phát hành để hiệu chỉnh ngưỡng vận hành

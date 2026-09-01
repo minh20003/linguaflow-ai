@@ -22,6 +22,7 @@ import sys
 from typing import Any
 
 from src.config import Settings, get_settings
+from src.core.circuit_breaker import CircuitBreaker, embedding_breaker, embedding_fallback_breaker
 from src.database.models import EMBEDDING_DIM
 
 logger = logging.getLogger(__name__)
@@ -141,9 +142,7 @@ def _build_client(provider: str, model: str, api_key: str) -> Any:
     if provider == "gemini":
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-        return GoogleGenerativeAIEmbeddings(
-            model=model, google_api_key=api_key, output_dimensionality=EMBEDDING_DIM
-        )
+        return GoogleGenerativeAIEmbeddings(model=model, google_api_key=api_key, output_dimensionality=EMBEDDING_DIM)
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
 
@@ -166,9 +165,7 @@ def _build_client(provider: str, model: str, api_key: str) -> Any:
     return HuggingFaceEmbeddings(model_name=model)
 
 
-def with_embedding(
-    settings: Settings, provider: str, model: str = ""
-) -> Settings:
+def with_embedding(settings: Settings, provider: str, model: str = "") -> Settings:
     """A copy of ``settings`` that embeds with a different model.
 
     Overriding the *settings* rather than threading `provider` and `model`
@@ -230,8 +227,7 @@ def get_embedder(settings: Settings | None = None) -> Any:
 
     if provider not in DEFAULT_MODELS:
         raise EmbeddingConfigError(
-            f"Unknown EMBEDDING_PROVIDER: {provider}. "
-            f"Expected one of: {', '.join(sorted(DEFAULT_MODELS))}"
+            f"Unknown EMBEDDING_PROVIDER: {provider}. Expected one of: {', '.join(sorted(DEFAULT_MODELS))}"
         )
 
     # Checked before the provider package is imported, so a missing key reports
@@ -261,9 +257,7 @@ def embedding_model_name(settings: Settings | None = None) -> str:
     wrong answer rather than an error.
     """
     settings = settings or get_settings()
-    return settings.embedding_model or DEFAULT_MODELS.get(
-        settings.embedding_provider, ""
-    )
+    return settings.embedding_model or DEFAULT_MODELS.get(settings.embedding_provider, "")
 
 
 # What a term has to score to be injected without an exact string match, per
@@ -329,9 +323,7 @@ def glossary_threshold_for(model: str, settings: Settings | None = None) -> floa
     return GLOSSARY_THRESHOLDS.get(model, UNMEASURED_GLOSSARY_THRESHOLD)
 
 
-async def embed_with_model(
-    text: str, *, settings: Settings | None = None
-) -> tuple[list[float] | None, str]:
+async def embed_with_model(text: str, *, settings: Settings | None = None) -> tuple[list[float] | None, str]:
     """Embed one string, and say which model actually produced the vector.
 
     The name is not decoration. Vectors from two models occupy different spaces;
@@ -351,7 +343,7 @@ async def embed_with_model(
         The vector and its model, or `(None, "")` when every provider failed.
     """
     settings = settings or get_settings()
-    vector = await embed(text, settings=settings)
+    vector = await embed(text, settings=settings, breaker=embedding_breaker)
     if vector is not None:
         return vector, embedding_model_name(settings)
 
@@ -390,13 +382,18 @@ async def embed_with_model(
             "embedding_model": DEFAULT_MODELS[fallback],
         }
     )
-    vector = await embed(text, settings=local)
+    vector = await embed(text, settings=local, breaker=embedding_fallback_breaker)
     if vector is None:
         return None, ""
     return vector, embedding_model_name(local)
 
 
-async def embed(text: str, *, settings: Settings | None = None) -> list[float] | None:
+async def embed(
+    text: str,
+    *,
+    settings: Settings | None = None,
+    breaker: CircuitBreaker = embedding_breaker,
+) -> list[float] | None:
     """Turn one piece of text into a vector, or return None.
 
     None on every failure, never an exception. Callers are a graph node that
@@ -415,16 +412,23 @@ async def embed(text: str, *, settings: Settings | None = None) -> list[float] |
     if not cleaned:
         return None
 
+    if not breaker.allow_request():
+        logger.info("Embedding circuit breaker is open; skipping provider call")
+        return None
+
     try:
         client = get_embedder(settings)
         vector = await client.aembed_query(cleaned)
     except Exception as exc:
+        breaker.record_failure()
         logger.warning("Embedding %d characters failed: %s", len(cleaned), exc)
         return None
 
     if not vector:
+        breaker.record_failure()
         return None
     if len(vector) != EMBEDDING_DIM:
+        breaker.record_failure()
         # Refused rather than truncated or padded. The column has a fixed width,
         # and a vector reshaped to fit it would be silently meaningless: every
         # distance computed against it would be wrong and nothing would say so.
@@ -435,4 +439,5 @@ async def embed(text: str, *, settings: Settings | None = None) -> list[float] |
             EMBEDDING_DIM,
         )
         return None
+    breaker.record_success()
     return list(vector)

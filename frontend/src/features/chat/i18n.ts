@@ -87,6 +87,27 @@ const phrases: Partial<Record<LanguageCode, Record<string, string>>> = {
   pt: {}, ru: {}, ar: {}, hi: {},
 };
 
+// Shared labels used by the proposal inbox. English is the source fallback;
+// Vietnamese keeps the current product's default display language.
+Object.assign(phrases.en!, {
+  Event: "Event", Events: "Events", Task: "Task", Tasks: "Tasks", Type: "Type",
+  Source: "Source", "Task inbox": "Task inbox",
+  "Review proposals from your assistant": "Review proposals from your assistant",
+  "Awaiting review": "Awaiting review", Processed: "Processed",
+  "Awaiting approval": "Awaiting approval", Approved: "Approved", Rejected: "Rejected",
+  Approve: "Approve", Reject: "Reject", "Created at": "Created at",
+  "Processed at": "Processed at", "Not processed": "Not processed",
+});
+Object.assign(phrases.vi!, {
+  Event: "Sự kiện", Events: "Sự kiện", Task: "Việc cần làm", Tasks: "Việc cần làm",
+  Type: "Loại", Source: "Nguồn", "Task inbox": "Hộp nhiệm vụ",
+  "Review proposals from your assistant": "Theo dõi và duyệt các đề xuất từ trợ lý",
+  "Awaiting review": "Cần duyệt", Processed: "Đã xử lý",
+  "Awaiting approval": "Chờ duyệt", Approved: "Đã duyệt", Rejected: "Đã từ chối",
+  Approve: "Duyệt", Reject: "Từ chối", "Created at": "Thời gian tạo",
+  "Processed at": "Thời gian xử lý", "Not processed": "Chưa xử lý",
+});
+
 // Complete every locale for every phrase the UI consumes. Keeping this separate
 // from the seed catalog makes coverage auditable while older translations stay intact.
 const phraseComplements: Record<Exclude<LanguageCode, 'en' | 'vi'>, Record<string, string>> = {

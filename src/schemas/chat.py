@@ -62,9 +62,7 @@ def validate_message_lifecycle(
             raise ValueError("completed voice messages require a full transcript")
         return
     if original_text != "":
-        raise ValueError(
-            "pending and failed voice messages must keep original_text empty"
-        )
+        raise ValueError("pending and failed voice messages must keep original_text empty")
 
 
 class ConversationCreateRequest(BaseModel):
@@ -147,9 +145,7 @@ class ConversationMemberSummary(BaseModel):
     @model_validator(mode="after")
     def fill_legacy_profile_names(self) -> "ConversationMemberSummary":
         """Apply the same fallback as UserDTO, so one member never renders blank."""
-        self.username, self.display_name = fallback_profile_names(
-            self.email, self.username, self.display_name
-        )
+        self.username, self.display_name = fallback_profile_names(self.email, self.username, self.display_name)
         return self
 
 
@@ -315,6 +311,14 @@ class MessageResponse(BaseModel):
             allow_redacted_completed_text=self.deleted_at is not None,
         )
         return self
+
+
+class MessageHistoryResponse(BaseModel):
+    """One deterministic page of conversation history."""
+
+    items: list[MessageResponse]
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
 class SavedMessageStateResponse(BaseModel):
@@ -588,9 +592,7 @@ class SendVoiceMessageEvent(BaseModel):
     attachment_id: str = Field(min_length=1, max_length=255)
     reply_to_message_id: str | None = Field(default=None, max_length=36)
 
-    @field_validator(
-        "client_message_id", "conversation_id", "attachment_id", "reply_to_message_id"
-    )
+    @field_validator("client_message_id", "conversation_id", "attachment_id", "reply_to_message_id")
     @classmethod
     def identifiers_must_not_be_blank(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():

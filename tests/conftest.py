@@ -61,6 +61,13 @@ from src import database as database_module
 from src.api.routes import router as api_router
 from src.api.websocket import get_connection_manager
 from src.api.websocket import router as websocket_router
+from src.core.circuit_breaker import (
+    embedding_breaker,
+    embedding_fallback_breaker,
+    fallback_translator_breaker,
+    llm_breaker,
+)
+from src.core.rate_limit import reset_rate_limits
 from src.core.security import create_access_token, get_password_hash
 from src.database import get_db
 from src.database.models import Base, Conversation, ConversationMember, User
@@ -71,6 +78,19 @@ from src.services import profile_inference as profile_inference_module
 from src.services import translation as translation_module
 from src.services import voice_transcription as voice_transcription_module
 from src.services.connection_manager import ConnectionManager
+
+
+@pytest.fixture(autouse=True)
+def reset_process_local_resilience_state():
+    """Keep singleton counters and breakers from leaking between tests."""
+    reset_rate_limits()
+    for breaker in (llm_breaker, embedding_breaker, embedding_fallback_breaker, fallback_translator_breaker):
+        breaker.reset()
+    yield
+    reset_rate_limits()
+    for breaker in (llm_breaker, embedding_breaker, embedding_fallback_breaker, fallback_translator_breaker):
+        breaker.reset()
+
 
 # ========================
 # Test Database Setup
@@ -124,9 +144,7 @@ async def _ensure_test_database() -> None:
     finally:
         await maintenance.dispose()
 
-    engine = create_async_engine(
-        TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT"
-    )
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -156,9 +174,7 @@ async def _run_on_test_database(statement: str) -> None:
     cosmetic and clears with `make reset-db`. The suite's job is to report pass
     or fail, not to be a database janitor.
     """
-    engine = create_async_engine(
-        TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT"
-    )
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SET lock_timeout = '15s'"))

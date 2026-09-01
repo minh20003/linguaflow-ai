@@ -24,6 +24,18 @@ export const DEFAULT_APPROVAL: ApprovalOptions = {
   reminderMinutesBefore: 15,
 };
 
+/** Preserve an end time that was explicitly present in the source message. */
+export function approvalOptionsFromProposal(proposal: ApiActionProposal): ApprovalOptions {
+  const start = proposal.scheduled_start_at || proposal.due_at;
+  const end = proposal.scheduled_end_at;
+  if (!start || !end) return DEFAULT_APPROVAL;
+
+  const duration = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000);
+  return Number.isFinite(duration) && duration >= 15 && duration <= 24 * 60
+    ? { ...DEFAULT_APPROVAL, durationMinutes: duration }
+    : DEFAULT_APPROVAL;
+}
+
 export const DURATION_CHOICES = [15, 30, 45, 60, 90, 120];
 
 export const REMINDER_CHOICES: Array<{ value: number | null; label: string }> = [
@@ -60,8 +72,9 @@ export function approvalCorrections(
     reminder_minutes_before: chosen.reminderMinutesBefore,
     resolved_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
-  if (proposal.scheduled_start_at) {
-    const start = new Date(proposal.scheduled_start_at);
+  const proposalStart = proposal.scheduled_start_at || proposal.due_at;
+  if (proposalStart) {
+    const start = new Date(proposalStart);
     body.scheduled_end_at = new Date(
       start.getTime() + chosen.durationMinutes * 60_000,
     ).toISOString();
@@ -182,12 +195,7 @@ export function decisionCorrections(
   return body;
 }
 
-/** What the assistant says once the proposal has been answered.
- *
- *  A decision is a turn in the conversation, so it reads as one: the card asks,
- *  the person answers, and the assistant confirms what it did with the answer.
- *  `null` while the question is still open — there is nothing to report yet.
- */
+/** Assistant-facing confirmation copy for an already decided inline proposal. */
 export function decisionReply(proposal: ApiActionProposal): string | null {
   switch (proposal.status) {
     case "confirmed":

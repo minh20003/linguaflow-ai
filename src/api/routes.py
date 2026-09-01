@@ -19,6 +19,7 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
@@ -36,6 +37,7 @@ from src.api.websocket import get_connection_manager
 from src.config import get_settings
 from src.core.crypto import encrypt as encrypt_secret
 from src.core.deps import get_current_user, get_user_by_token
+from src.core.rate_limit import llm_limit
 from src.core.security import (
     create_access_token,
     create_refresh_token,
@@ -119,6 +121,7 @@ from src.schemas.chat import (
     GroupTransferOwnerRequest,
     GroupUpdateRequest,
     MessageDeletedEvent,
+    MessageHistoryResponse,
     MessageReactionSummary,
     MessageReactionsUpdatedEvent,
     MessageReadEvent,
@@ -188,6 +191,8 @@ from src.services.chat import (
     TranslationNotFoundError,
     VoiceTranscriptionRetryAttachmentError,
     VoiceTranscriptionRetryStateError,
+    decode_message_cursor,
+    encode_message_cursor,
     message_mentions,
 )
 from src.services.connection_manager import ConnectionManager
@@ -2003,21 +2008,29 @@ async def list_conversations(
 
 @router.get(
     "/conversations/{conversation_id}/messages",
-    response_model=list[MessageResponse],
+    response_model=MessageHistoryResponse | list[MessageResponse],
 )
 async def get_conversation_messages(
     conversation_id: str,
     limit: int = Query(default=50, ge=1, le=100),
+    before: str | None = Query(default=None, description="Opaque composite message cursor"),
+    offset: int = Query(default=0, ge=0, le=10_000),
+    paginated: bool = Query(default=False, description="Return the cursor page envelope"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[MessageResponse]:
-    """Return recent original messages for an authorized conversation member."""
+) -> MessageHistoryResponse | list[MessageResponse]:
+    """Return a deterministic cursor page for an authorized member."""
     service = ChatService(db)
     try:
+        before_created_at, before_id = decode_message_cursor(before) if before else (None, None)
+        use_page_envelope = paginated or before is not None
         messages = await service.get_message_history(
             user_id=current_user.id,
             conversation_id=conversation_id,
-            limit=limit,
+            limit=limit + 1 if use_page_envelope else limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+            offset=offset,
         )
     except ConversationNotFoundError as exc:
         raise HTTPException(
@@ -2035,7 +2048,9 @@ async def get_conversation_messages(
             detail=str(exc),
         ) from exc
 
-    live_message_ids = [message.id for message in messages if message.deleted_at is None]
+    has_more = use_page_envelope and len(messages) > limit
+    page = messages[-limit:] if has_more else messages
+    live_message_ids = [message.id for message in page if message.deleted_at is None]
     translations = await _translations_by_message(
         db,
         live_message_ids,
@@ -2047,7 +2062,7 @@ async def get_conversation_messages(
         user_id=current_user.id, message_ids=live_message_ids
     )
     reactions_by_message = await service.reactions_by_message(message_ids=live_message_ids)
-    return [
+    items = [
         _message_response(
             message,
             translations=translations.get(message.id, []),
@@ -2055,8 +2070,15 @@ async def get_conversation_messages(
             is_saved=message.id in saved_message_ids,
             reactions=reactions_by_message.get(message.id, []),
         )
-        for message in messages
+        for message in page
     ]
+    if not use_page_envelope:
+        return items
+    return MessageHistoryResponse(
+        items=items,
+        has_more=has_more,
+        next_cursor=(encode_message_cursor(page[0].created_at, page[0].id) if has_more and page else None),
+    )
 
 
 def _message_response(
@@ -2396,9 +2418,12 @@ async def remove_message_reaction(
     response_model=TranslationRetryResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
+@llm_limit
 async def retry_message_translation(
     conversation_id: str,
     message_id: str,
+    request: Request,
+    response: Response,
     review_recipient: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -2490,9 +2515,12 @@ async def retry_voice_transcription(
     "/conversations/{conversation_id}/summary",
     response_model=ConversationSummaryResponse,
 )
+@llm_limit
 async def summarize_conversation(
     conversation_id: str,
-    request: ConversationSummaryRequest = Body(default_factory=ConversationSummaryRequest),
+    request: Request,
+    response: Response,
+    payload: ConversationSummaryRequest = Body(default_factory=ConversationSummaryRequest),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationSummaryResponse:
@@ -2503,8 +2531,8 @@ async def summarize_conversation(
             conversation_id=conversation_id,
             user_id=current_user.id,
             db=db,
-            message_limit=request.message_limit,
-            target_language=request.target_language,
+            message_limit=payload.message_limit,
+            target_language=payload.target_language,
         )
     except ConversationNotFoundError as exc:
         raise HTTPException(
@@ -2542,9 +2570,12 @@ async def summarize_conversation(
     "/conversations/{conversation_id}/messages/{message_id}/extract-actions",
     response_model=list[ActionProposalResponse],
 )
+@llm_limit
 async def extract_actions_from_message_endpoint(
     conversation_id: str,
     message_id: str,
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActionProposalResponse]:
@@ -2593,9 +2624,12 @@ async def extract_actions_from_message_endpoint(
     "/conversations/{conversation_id}/messages/{message_id}/clarify",
     response_model=ClarificationAnalysisResponse,
 )
+@llm_limit
 async def analyze_message_clarification(
     conversation_id: str,
     message_id: str,
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ClarificationAnalysisResponse:
@@ -2657,9 +2691,12 @@ async def analyze_message_clarification(
     "/conversations/{conversation_id}/messages/{message_id}/detect-commitments",
     response_model=list[ActionProposalResponse],
 )
+@llm_limit
 async def detect_message_self_commitments(
     conversation_id: str,
     message_id: str,
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ActionProposalResponse]:
