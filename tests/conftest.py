@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -180,7 +180,13 @@ async def _run_on_test_database(statement: str) -> None:
             await conn.execute(text("SET lock_timeout = '15s'"))
             try:
                 await conn.execute(text(statement))
-            except OperationalError:
+            except DBAPIError as exc:
+                # asyncpg's LockNotAvailableError is translated by SQLAlchemy
+                # into the generic DBAPIError wrapper, not OperationalError.
+                # Suppress only PostgreSQL's lock_not_available SQLSTATE; any
+                # other DDL failure still has to fail the suite.
+                if getattr(exc.orig, "sqlstate", None) != "55P03":
+                    raise
                 logging.getLogger(__name__).warning(
                     "Timed out on: %s — a background task is still holding a lock. "
                     "The schema is left behind; `make reset-db` clears it.",
